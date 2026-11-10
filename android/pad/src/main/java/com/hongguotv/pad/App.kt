@@ -193,7 +193,8 @@ fun App() {
             enteringContent = false
         }
     }
-    // 启动默认焦点落在侧栏「当前分类」上（原来悬空，←/↓ 都没反应）
+    // 启动默认焦点落在侧栏「当前分类」上（原来悬空，←/↓ 都没反应）。
+    // 只对 TV 有意义：平板触屏不该启动就高亮任何项（高亮≠可用，还会误导）。
     androidx.compose.runtime.LaunchedEffect(Unit) {
         // 启动后窗口可能还没拿到焦点，requestFocus 会被静默忽略（而且它返回 Unit，
         // 「没抛异常」不等于「焦点真落上了」）。这里以侧栏项的 onFocusChanged 为准：
@@ -202,19 +203,20 @@ fun App() {
         // 万一确认信号哪天又失效，最多干扰到第一次按键，而不是整整 6 秒。
         repeat(20) { n ->
             kotlinx.coroutines.delay(150)
-            if (railFocused != null || userActed) return@LaunchedEffect
+            if (railFocused != null || userActed || !railLockable) return@LaunchedEffect
             android.util.Log.i("focusdbg", "try #")
             runCatching { railEntry.requestFocus() }
                 .onFailure { android.util.Log.e("focusdbg", "rail focus fail", it) }
         }
     }
-    // 从详情/播放退回顶层页面时，决定焦点交给谁：
+    // 从详情/播放退回顶层页面时，决定焦点交给谁（只对 TV 有意义：平板不锁侧栏、
+    // 也不主动送焦点，触屏谁被点谁有焦点）：
     // - 侧栏没锁（在导航层）：还给侧栏「当前分类」。不还的话侧栏刚恢复可聚焦，
     //   焦点会被系统丢到第一项（推荐）上，而高亮的是别的分类 —— 看着像"光标跑错地方"。
     // - 侧栏锁着（在板块里）：还给内容区第一个控件，别让焦点悬空。退回来之后侧栏
     //   仍然是锁的，再按一次返回才回到导航层。
     androidx.compose.runtime.LaunchedEffect(stack.size) {
-        if (stack.size == 1) {
+        if (stack.size == 1 && railLockable) {
             androidx.compose.runtime.withFrameNanos { }
             if (railLocked) {
                 if (!focusIntoContent(current)) {
@@ -248,15 +250,21 @@ fun App() {
             // 等同按确定选中该分类：清掉叠加页、切到目标页
             while (stack.size > 1) stack.removeAt(stack.lastIndex)
             stack[0] = screen
-            // 进板块 = 锁侧栏（平板不锁）
-            if (railLockable) railLocked = true
-            bridgeScope.launch {
-                if (!focusIntoContent(screen)) {
-                    // 重试耗尽（比如空页面）：解锁，焦点留在侧栏，不悬空也不把人锁在门外
-                    railLocked = false
-                    runCatching { railEntry.requestFocus() }
+            if (railLockable) {
+                // TV：进板块 = 锁侧栏 + 焦点送进内容区（遥控器没有"点"，必须自动送焦点）
+                railLocked = true
+                bridgeScope.launch {
+                    if (!focusIntoContent(screen)) {
+                        // 重试耗尽（比如空页面）：解锁，焦点留在侧栏，不悬空也不把人锁在门外
+                        railLocked = false
+                        runCatching { railEntry.requestFocus() }
+                    }
                 }
             }
+            // 平板（触屏）：什么都不做。以前照搬 TV 也会把焦点塞进内容区第一个控件
+            // ——找剧页=搜索框、设置页=匹配码输入框，一进页面键盘就自动弹出来；
+            // 而且侧栏被锁灰，想去别的板块还得先按返回。触屏直接点侧栏就行，
+            // 焦点应该留给用户第一次真正点到的控件。
         }
     }
     // 找剧页的焦点入口（绑在搜索框上）：几何搜索在这个页面不可靠，直接点名

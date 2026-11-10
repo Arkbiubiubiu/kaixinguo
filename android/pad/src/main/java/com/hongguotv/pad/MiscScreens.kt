@@ -3057,9 +3057,16 @@ fun SettingsScreen() {
                                 checking = true
                                 status = null
                                 upScope.launch {
-                                    val r = runCatching { Updater.check(Store.appContext) }.getOrNull()
+                                    // check() 在「全部更新源连不上」时会抛 CheckException：
+                                    // 必须如实显示失败，不能当成「已是最新」（外网 2.2.73 谎报事故）
+                                    val r = runCatching { Updater.check(Store.appContext) }
                                     checking = false
-                                    if (r == null) status = "已是最新版本" else info = r
+                                    r.getOrNull()?.let { info = it }
+                                    if (r.exceptionOrNull() is Updater.CheckException) {
+                                        status = "检查失败：网络连不上更新源，请重试"
+                                    } else if (r.getOrNull() == null) {
+                                        status = "已是最新版本"
+                                    }
                                 }
                             }
                             status?.let {

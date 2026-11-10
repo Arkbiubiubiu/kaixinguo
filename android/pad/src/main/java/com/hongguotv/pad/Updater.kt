@@ -76,10 +76,17 @@ object Updater {
     private const val GITHUB_LATEST =
         "https://github.com/Arkbiubiubiu/kaixinguo/releases/latest/download"
 
+    /**
+     * 过渡更新源（自建静态镜像，只放清单+安装包，不涉及内容服务）。
+     * GitHub 在无代理的大陆家宽经常握手失败，实测外网设备「检查更新」永远拿不到清单，
+     * 还被误报成「已是最新」——所以公开包默认带上它做兜底：GitHub 三连败后走这里。
+     */
+    private const val MIRROR_LATEST = "https://hgtv.fabao.xin"
+
     private val BASES = BuildConfig.UPDATE_BASES
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }
         .map { it to if (it.contains("192.168.")) 2_500 else 8_000 }
-        .ifEmpty { listOf(GITHUB_LATEST to 8_000) }
+        .ifEmpty { listOf(GITHUB_LATEST to 8_000, MIRROR_LATEST to 8_000) }
 
     /** 两个包共用一套代码：按包名挑清单，免得依赖 BuildConfig 的 flavor 字段 */
     private fun manifestOf(pkg: String): String =
@@ -95,14 +102,19 @@ object Updater {
     }.getOrDefault("")
 
     /**
-     * 拉清单：有新版返回 UpdateInfo，已是最新或全都不通返回 null。
+     * 拉清单：有新版返回 UpdateInfo，已是最新返回 null。
+     * 全部地址都连不上时抛 [CheckException]——调用方要把「检查失败」和
+     * 「已是最新」分开显示，绝不能把连不上谎报成最新（外网 2.2.73 的事故）。
      *
-     * 公网那条链路（cloudflared 隧道）偶尔会挑到一条断掉的边缘连接，
-     * 表现是一次 TLS handshake 超时；所以每个地址重试 3 次再换下一个。
+     * 公网链路（GitHub / cloudflared 隧道）偶尔挑到断边，表现是一次 TLS
+     * handshake 超时；每个地址重试 3 次再换下一个。
      */
+    class CheckException(message: String) : Exception(message)
+
     suspend fun check(context: Context): UpdateInfo? = withContext(Dispatchers.IO) {
         val name = manifestOf(context.packageName)
         val cur = versionCode(context)
+        var lastError: String? = null
         for ((base, timeout) in BASES) {
             var attempt = 0
             while (attempt < 3) {
@@ -112,10 +124,13 @@ object Updater {
                     // 能拿到清单就说明通道是通的：不比当前新就直接结束
                     return@withContext if (info.versionCode > cur) info else null
                 }
+                lastError = "清单请求失败（${
+                    if (base.contains("github")) "GitHub" else "镜像"
+                } 第 $attempt 次）"
                 if (attempt < 3) delay(700L * attempt)
             }
         }
-        null
+        throw CheckException(lastError ?: "所有更新源都连不上")
     }
 
     private fun fetch(url: String, base: String, timeoutMs: Int): UpdateInfo {
