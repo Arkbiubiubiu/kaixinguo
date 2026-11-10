@@ -436,11 +436,14 @@ private sealed class Route {
 
 @Composable
 private fun AppRoot() {
-    var page = RouteHolder.page.value
-    var collapsed = RouteHolder.collapsed.value
+    // 这几个值背后是 mutableState：必须直接读写 holder，
+    // 不能 `var x = holder.value` 再局部赋值——那样只改了闭包里的副本，
+    // 既不触发重组、也写不回状态（表现为输入框打不进字、返回没反应）。
+    val page = RouteHolder.page.value
+    val collapsed = RouteHolder.collapsed.value
+    val search = SearchHolder.query.value
     var tab by remember { mutableStateOf(0) }
     var refresh by remember { mutableStateOf(0) }
-    var search = SearchHolder.query.value
     var route by remember { mutableStateOf<Route?>(null) }
     // 追更未读角标（旧版侧栏 badge）：启动查一次，之后每 20 分钟一轮
     // （旧版 follow_service 同周期；未登录时空转）
@@ -487,11 +490,11 @@ private fun AppRoot() {
                         "刷剧" -> FeedPlayerPage(
                             onDetail = { route = Route.Detail(it) },
                             onComments = { route = Route.Detail(it, tab = 1) },
-                            onExit = { page = "推荐" },
+                            onExit = { RouteHolder.select("推荐") },
                         )
                         "找剧" -> FindPage(
                             search,
-                            onSearch = { search = it },
+                            onSearch = { SearchHolder.query.value = it },
                             onOpen = { route = Route.Detail(it) },
                             onPlay = { id -> route = Route.Player(id) },
                         )
