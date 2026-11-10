@@ -144,7 +144,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("加载失败，检查网络或签名服务", color = Color.White, fontSize = 14.sp)
+                Text("加载失败，检查网络后重试", color = Color.White, fontSize = 14.sp)
                 Spacer(Modifier.height(12.dp))
                 SecondaryButton("返回", onClick = onBack)
             }
@@ -649,3 +649,4 @@ fun fmtTime(ms: Long): String {
     val h = s / 3600
     return if (h > 0) "%d:%02d:%02d".format(h, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
+

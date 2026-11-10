@@ -1,4 +1,4 @@
-@file:OptIn(
+﻿@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -344,7 +344,7 @@ private fun AppShell(onExit: () -> Unit) {
                     Text("开箱即用", color = Palette.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "内容接口用的是内置签名，取流用的是随安装包分发的本机服务——装好就能浏览和播放，不需要填任何服务器地址。想换成自己的取流服务，可以在「设置 → 服务配置」里改。",
+                        "内容服务和播放服务都已内置，装好就能浏览和播放，不需要填任何服务器地址。想换成自己的服务，可以在「设置 → 服务配置」里改。",
                         color = Palette.dim, fontSize = 13.sp, lineHeight = 20.sp,
                     )
                     Spacer(Modifier.height(18.dp))
@@ -588,7 +588,7 @@ private fun HomePage(
         }
         page = cur
         cursor = cur
-        error = if (cur == null || cur.cards.isEmpty()) "没有拿到数据（检查签名服务 / 网络）" else null
+        error = if (cur == null || cur.cards.isEmpty()) "暂时没能加载出来 · 检查网络后重试" else null
         loading = false
         // 换 tab / 换一批回到墙顶（滚动状态是常驻的，不重置会停在上一次的底部）
         runCatching { wallScroll.scrollTo(0) }
@@ -810,7 +810,7 @@ private fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> U
         loading -> CenterLoading()
         current == null -> EmptyState(
             title = "没有拿到推荐",
-            hint = "检查网络或签名服务后重试",
+            hint = "检查网络后重试",
             icon = Icons.Filled.PlayArrow,
         )
         else -> PlayerScreen(
@@ -842,6 +842,8 @@ private fun FindPage(
     var page by remember { mutableStateOf<FeedPage?>(null) }
     var loading by remember { mutableStateOf(false) }
     var moreLoading by remember { mutableStateOf(false) }
+    /** 「搜索」按钮的重搜信号：输入是即时的，按钮只是手动再来一次 */
+    var searchTick by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     // 整页一个滚动容器（旧版同款：筛选随内容一起滚走，不是上半屏钉死）
     val pageScroll = rememberScrollState()
@@ -862,7 +864,7 @@ private fun FindPage(
         rowsLoading = false
     }
 
-    LaunchedEffect(selected, search) {
+    LaunchedEffect(selected, search, searchTick) {
         loading = true
         val result = withContext(Dispatchers.IO) {
             runCatching {
@@ -938,7 +940,7 @@ private fun FindPage(
                 }
             }
             Spacer(Modifier.width(10.dp))
-            PrimaryButton("搜索", null) { }
+            PrimaryButton("搜索", null) { searchTick++ }
             Spacer(Modifier.width(14.dp))
             Text("共 ${page?.cards?.size ?: 0} 部", color = Palette.dim, fontSize = 12.sp)
         }
@@ -960,7 +962,7 @@ private fun FindPage(
         }
         rows.forEach { row ->
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                Modifier.fillMaxWidth().padding(vertical = 5.dp),
                 verticalAlignment = Alignment.Top,
             ) {
                 Text(
@@ -1142,7 +1144,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
         // 大类 tab（旧版页内第一行：全部/系列剧/漫剧/真人剧/AI剧）
         Row(
-            Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 10.dp),
+            Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1152,7 +1154,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         }
         if (tab != null && tab.subs.isNotEmpty()) {
             Row(
-                Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1167,27 +1169,34 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                         p.items.firstOrNull { it.id == panel && it.id.isNotEmpty() }?.name
                     }
                     Row(
-                        Modifier.height(32.dp).clip(Radius.chip)
-                            .background(if (panel.isNotEmpty()) Palette.accentFill else Palette.panel)
-                            .clickable { filterOpen = !filterOpen }.padding(horizontal = 12.dp),
+                        Modifier.height(28.dp).clip(Radius.chip)
+                            .background(
+                                if (panel.isNotEmpty()) Palette.accent.copy(alpha = 0.16f) else Palette.panel,
+                            )
+                            .border(
+                                1.dp,
+                                if (panel.isNotEmpty()) Palette.accent.copy(alpha = 0.45f) else Palette.line,
+                                Radius.chip,
+                            )
+                            .clickable { filterOpen = !filterOpen }.padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Icon(
                             Icons.Filled.Tune,
                             contentDescription = null,
-                            tint = if (panel.isNotEmpty()) Color.White else Palette.dim,
+                            tint = if (panel.isNotEmpty()) Palette.accentHover else Palette.dim,
                             modifier = Modifier.size(14.dp),
                         )
                         Text(
                             selectedName ?: "筛选",
-                            color = if (panel.isNotEmpty()) Color.White else Palette.dim,
+                            color = if (panel.isNotEmpty()) Palette.accentHover else Palette.dim,
                             fontSize = 13.sp,
                         )
                         Icon(
                             Icons.Filled.ArrowDropDown,
                             contentDescription = null,
-                            tint = if (panel.isNotEmpty()) Color.White else Palette.dim,
+                            tint = if (panel.isNotEmpty()) Palette.accentHover else Palette.dim,
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -1360,7 +1369,7 @@ private fun RankRow(rank: Int, card: SeriesCard, onClick: () -> Unit, onPlay: ()
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, if (hovered) Color(0x4DFFFFFF) else Palette.line, RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Color(0x33FFFFFF) else Palette.line, RoundedCornerShape(12.dp))
             .background(Palette.panel)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -1572,7 +1581,7 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         // 视图 tab：剧剧推荐 / 上新日历（旧版页内第一行）
         Row(
-            Modifier.fillMaxWidth().padding(start = 24.dp, top = 16.dp, end = 24.dp, bottom = 10.dp),
+            Modifier.fillMaxWidth().padding(start = 24.dp, top = 16.dp, end = 24.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1589,7 +1598,7 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         // 频道筛选：只对「新剧推荐」有效（日历接口按官方日历走，不分男女频）
         if (view == 0) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 listOf("全部", "男频", "女频").forEachIndexed { i, label ->
@@ -1786,23 +1795,27 @@ private fun CalendarDateCell(date: String, active: Boolean, count: Int?, onClick
     Column(
         Modifier
             .width(76.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (active) Palette.accentFill else Palette.panel)
-            .border(1.dp, if (active) Color.Transparent else Palette.line, RoundedCornerShape(10.dp))
+            .clip(Radius.chip)
+            .background(if (active) Palette.accent.copy(alpha = 0.16f) else Palette.panel)
+            .border(
+                1.dp,
+                if (active) Palette.accent.copy(alpha = 0.45f) else Palette.line,
+                Radius.chip,
+            )
             .clickable { onClick() }
             .padding(vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             label,
-            color = if (active) Color.White else Palette.text,
+            color = if (active) Palette.accentHover else Palette.text,
             fontSize = 13.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
         )
         Spacer(Modifier.height(2.dp))
         Text(
             if (count != null && count > 0) "$weekday · $count" else weekday,
-            color = if (active) Color.White.copy(alpha = 0.8f) else Palette.faint,
+            color = if (active) Palette.accentHover.copy(alpha = 0.85f) else Palette.faint,
             fontSize = 10.sp,
         )
     }
@@ -1821,7 +1834,7 @@ private fun CalendarRow(item: CalendarItem, onClick: () -> Unit, onPlay: () -> U
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, if (hovered) Color(0x4DFFFFFF) else Palette.line, RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Color(0x33FFFFFF) else Palette.line, RoundedCornerShape(12.dp))
             .background(Palette.panel)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -2061,7 +2074,7 @@ private fun HistoryRow(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, if (hovered) Color(0x4DFFFFFF) else Palette.line, RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Color(0x33FFFFFF) else Palette.line, RoundedCornerShape(12.dp))
             .background(Palette.panel)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -2320,7 +2333,7 @@ private fun ReservationRow(card: SeriesCard, onOpen: () -> Unit, onPlay: () -> U
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, if (hovered) Color(0x4DFFFFFF) else Palette.line, RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Color(0x33FFFFFF) else Palette.line, RoundedCornerShape(12.dp))
             .background(Palette.panel)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -2937,18 +2950,17 @@ fun StepBox(symbol: String, enabled: Boolean = true, onClick: () -> Unit) {
     }
 }
 
-/** 筛选选项胶囊（旧版找剧筛选规格）：未选中也有「身体」——卡面底 + 描边 +
- *  hover 抬亮；选中 = 红底白字。纯文字胶囊在多行筛选里会「飘」，行与行
- *  看不出结构（旧版实测反馈「乱糟糟」后的修正）。 */
+/** 筛选选项芯片（找剧/排行榜共用）：未选中=卡面底+发丝边；选中=红色薄底+
+ *  红字+细红边（实心红只给动作按钮，几十个选项里不能每个都像主按钮）。 */
 @Composable
 fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
     var hovered by remember { mutableStateOf(false) }
     Row(
         Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(Radius.chip)
             .background(
                 when {
-                    active -> Palette.accentFill
+                    active -> Palette.accent.copy(alpha = 0.16f)
                     hovered -> Palette.panelHi
                     else -> Palette.panel
                 },
@@ -2956,19 +2968,19 @@ fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
             .border(
                 1.dp,
                 when {
-                    active -> Palette.accentFill
+                    active -> Palette.accent.copy(alpha = 0.45f)
                     hovered -> Palette.dim.copy(alpha = 0.30f)
                     else -> Palette.line
                 },
-                RoundedCornerShape(50),
+                Radius.chip,
             )
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,
-            color = if (active) Color.White else Palette.dim,
+            color = if (active) Palette.accentHover else Palette.dim,
             fontSize = 13.sp,
             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,
@@ -3012,3 +3024,7 @@ fun CenterMessage(text: String) {
         Text(text, color = Palette.dim, fontSize = 14.sp)
     }
 }
+
+
+
+

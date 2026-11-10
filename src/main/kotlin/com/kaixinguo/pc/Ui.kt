@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DateRange
@@ -44,6 +43,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
@@ -173,11 +173,12 @@ fun HeatBadge(hot: String, big: Boolean = false, prefix: String = "") {
 private val HoverEase = tween<Float>(durationMillis = 150)
 
 private val NAV = listOf(
-    "推荐" to Icons.Filled.Whatshot,
+    // 火焰只属于「热度」这一个签名符号，导航不再抢它
+    "推荐" to Icons.Filled.Home,
     "刷剧" to Icons.Filled.Movie,
     "找剧" to Icons.Filled.Explore,
     "排行榜" to Icons.Filled.EmojiEvents,
-    "新剧" to Icons.Filled.AutoAwesome,
+    "新剧" to Icons.Filled.NewReleases,
     "历史" to Icons.Filled.History,
     "追更" to Icons.Filled.Tv,
     "预约" to Icons.Filled.NotificationsActive,
@@ -205,53 +206,69 @@ fun Sidebar(selected: String, collapsed: Boolean, onSelect: (String) -> Unit, on
 @Composable
 private fun NavItem(label: String, icon: ImageVector, active: Boolean, badge: Int = 0, onClick: () -> Unit) {
     var hovered by remember { mutableStateOf(false) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                when {
-                    active -> Palette.accentFill
-                    hovered -> Palette.panelHi
-                    else -> Color.Transparent
-                },
+    // 选中态从「整块亮红」收成「抬一档的卡面 + 红图标」，红只留一条 2dp 指示条。
+    // 侧栏在每个页面都在，整块红会让全站一直有个红色大按钮抢焦点。
+    Box(Modifier.fillMaxWidth()) {
+        if (active) {
+            Box(
+                Modifier.align(Alignment.CenterStart).padding(start = 2.dp)
+                    .width(2.dp).height(22.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(Palette.accent),
             )
-            .onPointerEvent(PointerEventType.Enter) { hovered = true }
-            .onPointerEvent(PointerEventType.Exit) { hovered = false }
-            .clickable { onClick() }
-            .padding(vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box {
-            Icon(
-                icon,
-                contentDescription = label,
-                tint = if (active) Color.White else Palette.text.copy(alpha = 0.8f),
-                modifier = Modifier.size(20.dp),
-            )
-            if (badge > 0) {
-                Text(
-                    if (badge > 99) "99+" else "$badge",
-                    color = Color.White,
-                    fontSize = 9.sp,
-                    lineHeight = 10.sp,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 14.dp, y = (-5).dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Palette.accentFill)
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
-                )
-            }
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            label,
-            color = if (active) Color.White else Palette.text.copy(alpha = 0.8f),
-            fontSize = 12.sp,
-            fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
-        )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(
+                    when {
+                        active -> Palette.panelHi
+                        hovered -> Palette.panelHi.copy(alpha = 0.6f)
+                        else -> Color.Transparent
+                    },
+                )
+                .onPointerEvent(PointerEventType.Enter) { hovered = true }
+                .onPointerEvent(PointerEventType.Exit) { hovered = false }
+                .clickable { onClick() }
+                .padding(vertical = 9.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    tint = when {
+                        active -> Palette.accent
+                        hovered -> Palette.text
+                        else -> Palette.dim
+                    },
+                    modifier = Modifier.size(20.dp),
+                )
+                if (badge > 0) {
+                    Text(
+                        if (badge > 99) "99+" else "$badge",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        lineHeight = 10.sp,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 14.dp, y = (-5).dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Palette.accentFill)
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(7.dp))
+            Text(
+                label,
+                color = if (active) Palette.text else Palette.dim,
+                fontSize = 12.sp,
+                fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+            )
+        }
     }
 }
 
@@ -296,7 +313,7 @@ fun TopBar(
 fun HeaderAction(text: String, onClick: () -> Unit, icon: ImageVector? = Icons.Filled.Refresh) {
     var hovered by remember { mutableStateOf(false) }
     Row(
-        Modifier.height(32.dp).clip(RoundedCornerShape(50))
+        Modifier.height(32.dp).clip(Radius.chip)
             .background(if (hovered) Palette.panelHi else Color.Transparent)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -350,6 +367,7 @@ fun OutlineButton(text: String, icon: ImageVector? = null, modifier: Modifier = 
             .clickable { onClick() }
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = Palette.text, modifier = Modifier.size(14.dp))
@@ -367,7 +385,7 @@ private fun TextAction(text: String, onClick: () -> Unit) {
         color = if (hovered) Palette.text else Palette.dim,
         fontSize = 14.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(Radius.chip)
             .background(if (hovered) Palette.panelHi else Color.Transparent)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -379,24 +397,35 @@ private fun TextAction(text: String, onClick: () -> Unit) {
 @Composable
 fun TabChip(label: String, active: Boolean, onClick: () -> Unit) {
     var hovered by remember { mutableStateOf(false) }
+    // 选中 = 红色薄底 + 红字 + 细红边；实心红留给「动作」（播放/搜索/登录），
+    // 页面里一屏能有十几个 tab，整块实心红会把主按钮压掉。
     val bg = when {
-        active -> Palette.accentFill
+        active -> Palette.accent.copy(alpha = 0.16f)
         hovered -> Palette.panelHi
         else -> Palette.panel
     }
-    Text(
-        label,
-        color = if (active) Color.White else Palette.dim,
-        fontSize = 14.sp,
-        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
-        modifier = Modifier
+    Row(
+        Modifier
             .clip(Radius.chip)
             .background(bg)
+            .border(
+                1.dp,
+                if (active) Palette.accent.copy(alpha = 0.45f) else Palette.line,
+                Radius.chip,
+            )
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-    )
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            color = if (active) Palette.accentHover else Palette.dim,
+            fontSize = 13.sp,
+            fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+        )
+    }
 }
 
 @Composable
@@ -669,6 +698,7 @@ fun PrimaryButton(text: String, icon: ImageVector?, modifier: Modifier, onClick:
             .clickable { onClick() }
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
@@ -695,6 +725,7 @@ fun SecondaryButton(
             .clickable { onClick() }
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(14.dp))
@@ -730,7 +761,7 @@ fun PosterCard(
         Modifier
             .clip(RoundedCornerShape(12.dp))
             .background(Palette.panel)
-            .border(1.dp, if (hovered) Palette.accent.copy(alpha = 0.5f) else Palette.line, RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Color(0x33FFFFFF) else Palette.line, RoundedCornerShape(12.dp))
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
             .onPointerEvent(PointerEventType.Press) { ev ->
@@ -982,4 +1013,6 @@ fun EmptyState(
         }
     }
 }
+
+
 
