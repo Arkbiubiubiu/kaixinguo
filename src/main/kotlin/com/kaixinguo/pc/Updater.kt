@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.nio.charset.Charset
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -151,22 +152,46 @@ object PcUpdater {
         }
 
     /**
-     * 装包：写一个临时 .bat，等 msiexec 跑完再把程序拉起来，然后自己退出。
-     * 必须把 INSTALLDIR 指回当前程序目录，否则 MSI 会装到默认位置，
-     * D:\Kaixinguo 这份还是旧的。安装到机器级目录会弹一次 UAC，这是 Windows 的规矩。
+     * 装包：写一个临时 .bat，跑完安装再把程序拉起来，然后自己退出。
+     *
+     * 安装用 `msiexec /a`（管理解包）+ robocopy 覆盖当前目录 —— 免提权，
+     * 这是这台机器验证过的唯一不弹 UAC 的路子；`msiexec /i` 机器级安装没有
+     * 管理员权限会静默失败（1925），不能用。
+     *
+     * **.bat 必须按系统 ANSI 码页（中文系统=GBK）写**：cmd 按 ANSI 读脚本，
+     * Java 18+ 默认 UTF-8，用 UTF-8 写「开心果」就是乱码 `寰╂灉鏋?.exe`
+     * （1.2.11 事故：更新装完 start 找不到 exe）。MSI 路径全 ASCII 不受影响，
+     * 但 exe 路径和 /a 解包出的「开心果」目录都是中文，绕不过去。
      */
     fun installAndRestart(msi: File) {
         val exe = ProcessHandle.current().info().command().orElse("")
         val dir = File(exe).parentFile?.absolutePath.orEmpty()
         val relaunch = if (exe.contains("java", ignoreCase = true)) "" else
             "start \"\" \"$exe\"\r\n"
-        val bat = File(msi.parentFile, "install.bat")
-        bat.writeText(
+        val parent = msi.parentFile?.absolutePath ?: System.getProperty("java.io.tmpdir")
+        // /a 会把 MSI 自身也复制进 TARGETDIR —— 指向 MSI 所在目录会自我复制失败（1603），
+        // 必须给一个独立的 stage 子目录
+        val stage = "$parent\\stage"
+        val log = File(parent, "install.log")
+        val ansi = runCatching { Charset.forName(System.getProperty("sun.jnu.encoding")) }
+            .getOrDefault(Charset.forName("GBK"))
+        val batText =
             "@echo off\r\n" +
-                "start \"\" /wait msiexec /i \"${msi.absolutePath}\" /qb INSTALLDIR=\"$dir\"\r\n" +
-                relaunch,
-            Charsets.UTF_8,
-        )
+                "echo [%date% %time%] update start >> \"$log\"\r\n" +
+                // 等正在运行的旧版退出，exe 文件才不会被 robocopy 锁住
+                "ping -n 4 127.0.0.1 >nul\r\n" +
+                "start \"\" /wait msiexec /a \"${msi.absolutePath}\" /qn TARGETDIR=\"$stage\"\r\n" +
+                "echo msiexec exit %errorlevel% >> \"$log\"\r\n" +
+                "robocopy \"$stage\\开心果\" \"$dir\" /MIR /R:2 /W:2 >> \"$log\"\r\n" +
+                "echo robocopy exit %errorlevel% >> \"$log\"\r\n" +
+                "if not exist \"$exe\" goto fail\r\n" +
+                relaunch +
+                "goto done\r\n" +
+                ":fail\r\n" +
+                "echo exe missing after install >> \"$log\"\r\n" +
+                ":done\r\n"
+        val bat = File(msi.parentFile, "install.bat")
+        bat.writeText(batText, ansi)
         runCatching {
             ProcessBuilder("cmd", "/c", bat.absolutePath)
                 .redirectErrorStream(true)
