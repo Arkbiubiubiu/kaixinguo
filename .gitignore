@@ -1,0 +1,39 @@
+# Gradle / Kotlin
+.gradle/
+build/
+out/
+*.hprof
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 本地配置与日志
+local.properties
+*.log
+captures/
+
+# 设备身份（真实设备指纹，绝不公开）
+device.json
+
+# 打包/运行时产物
+runtime/
+pack/
+tools/
+
+# 本地开发账本（含内网地址与本机路径，不随仓库公开）
+UI-STATUS.md
+AUDIT.md
+HANDOFF.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时产物
+*.class
+*.jar.original
+run_out.txt
+# 签名实现（私有，不随仓库公开）
+src/main/kotlin/com/hongguotv/pad/sign/
