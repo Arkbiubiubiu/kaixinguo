@@ -747,6 +747,9 @@ fun RankScreen(
     // 这一屏榜单数据真正的拉取时刻（0 = 还没拿到）。来自服务端返回的 age：
     // age 是「这份数据离从上游拉下来过去了多久」，所以真实时刻 = 现在 - age。
     var dataAt by remember { mutableStateOf(0L) }
+    // 榜单元数据（子榜的「N月N日已更新」）上次拉取时刻：挂着过夜时切榜要重拉，
+    // 否则描述行一直停在昨天（PC 端同一时刻显示今天的日期，两端对不上）
+    var metaAt by remember { mutableStateOf(0L) }
     // 服务器下发的筛选项与月榜。空串 = 不加这两个参数（等价于「总榜」/「当前榜」）
     var panelSel by remember { mutableStateOf(RankMemo.panelSel) }
     var monthSel by remember { mutableStateOf(RankMemo.monthSel) }
@@ -768,6 +771,7 @@ fun RankScreen(
         val t = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
         tabs.clear()
         tabs.addAll(t)
+        metaAt = System.currentTimeMillis()
         // 记忆里的下标可能因为上游改榜而越界：钳回去，别让页面卡在空分类上
         if (tabs.isEmpty()) return@LaunchedEffect
         val ti = tabIdx.coerceIn(tabs.indices)
@@ -798,6 +802,15 @@ fun RankScreen(
     // 等分类到位再整页清空重来，列表闪一下、焦点也被打散。
     LaunchedEffect(tabIdx, subIdx, tabs.size, panelSel, monthSel) {
         if (tabs.isEmpty()) return@LaunchedEffect
+        // 挂着过夜再切榜：元数据超过 1 分钟就重拉一次，描述行别停在昨天
+        if (System.currentTimeMillis() - metaAt > 60_000) {
+            val fresh = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
+            if (fresh.isNotEmpty()) {
+                tabs.clear()
+                tabs.addAll(fresh)
+                metaAt = System.currentTimeMillis()
+            }
+        }
         loading = true
         error = null
         hasMore = true

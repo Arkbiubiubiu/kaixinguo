@@ -1019,9 +1019,14 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var filterOpen by remember { mutableStateOf(false) }
     var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    /** 这一页榜单数据到底是什么时候拉下来的（描述行的兜底时间，别装成「今天刚更新」） */
+    var dataAt by remember { mutableStateOf(0L) }
+    /** 榜单元数据（含各子榜的「N月N日已更新」）上次拉取时刻；超过 1 分钟再进/切榜就重拉 */
+    var metaAt by remember { mutableStateOf(0L) }
 
     LaunchedEffect(Unit) {
         tabs = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
+        metaAt = System.currentTimeMillis()
     }
 
     val tab = tabs.getOrNull(tabIndex)
@@ -1029,6 +1034,15 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
 
     LaunchedEffect(tab?.id, sub?.id, panel) {
         val t = tab ?: return@LaunchedEffect
+        // 榜单元数据（子榜的「N月N日已更新」）只在进页面时拉一次的话，
+        // 挂着过夜就会一直显示昨天。切榜/换筛选时顺手刷新一下（1 分钟内不重复拉）。
+        if (System.currentTimeMillis() - metaAt > 60_000) {
+            val fresh = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
+            if (fresh.isNotEmpty()) {
+                tabs = fresh
+                metaAt = System.currentTimeMillis()
+            }
+        }
         loading = true
         cards = withContext(Dispatchers.IO) {
             // 优先走官方榜单（带筛选面板），失败再退回服务器聚合的 chart
@@ -1038,6 +1052,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             if (ranked.isNotEmpty()) ranked
             else runCatching { Api.chart(metric = sub?.id ?: "", genre = t.id, limit = 60) }.getOrDefault(emptyList())
         }
+        dataAt = System.currentTimeMillis()
         loading = false
     }
 
@@ -1107,7 +1122,21 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.width(8.dp))
-            Text("${java.time.LocalDate.now().monthValue}月${java.time.LocalDate.now().dayOfMonth}日已更新 · 基于红果热度及个人数据推荐", color = Palette.faint, fontSize = 12.sp)
+            // 描述行用上游给的「N月N日已更新…」；没有就老实写「数据 HH:mm 拉取」。
+            // 以前这里写 LocalDate.now()，等于假装今天刚更新过——TV 端显示的是上游日期，
+            // 于是同一时刻两端日期对不上（用户实测：TV 11-9 / PC 11-10）。
+            Text(
+                sub?.desc?.takeIf { it.isNotBlank() }
+                    ?: run {
+                        val stamp = if (dataAt > 0L) {
+                            val t = java.time.Instant.ofEpochMilli(dataAt)
+                                .atZone(java.time.ZoneId.systemDefault())
+                            "数据 %02d:%02d 拉取".format(t.hour, t.minute)
+                        } else ""
+                        (if (stamp.isEmpty()) "" else "$stamp · ") + "基于红果热度及个人数据推荐"
+                    },
+                color = Palette.faint, fontSize = 12.sp,
+            )
         }
         // 子榜筛选已收进上方「筛选」按钮弹层（旧版 FilterPanelButton 同构），
         // 不再整面平铺——面板只在子榜自带选项时出现，且不占版面。
