@@ -1034,15 +1034,11 @@ object Api {
 
     /** 本机签名直发（兜底路径）。 */
     private fun directSignedPost(path: String, body: JSONObject): JSONObject? = runCatching {
-        val signReq = JSONObject()
-            .put("origin", LAND_ORIGIN)
-            .put("path", path)
-            .put("query", JSONArray())
-            .put("body", body)
-        val resp = JSONObject(request(App.state.signUrl.trimEnd('/') + "/sign", signReq.toString()))
-        val url = resp.optString("url")
-        if (url.isEmpty()) return null
-        val headers = resp.optJSONObject("headers") ?: JSONObject()
+        // 必须走 signEndpoint：签名地址留空（公开版）时要回落到内置本地签名。
+        // 以前这里直接拼 "$signUrl/sign"，空地址会变成 "/sign" 非法 URL，
+        // 结果 landpage 全挂——找剧筛选面板只剩体裁、列表永远是 0 条。
+        val (url, headers) = signEndpoint(LAND_ORIGIN, path, JSONArray(), body.toString())
+            ?: return null
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"

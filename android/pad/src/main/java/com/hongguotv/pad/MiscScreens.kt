@@ -294,28 +294,6 @@ fun FindScreen(
 
 
     Column(Modifier.fillMaxSize()) {
-        // 固定头：筛选计数胶囊（原版：筛选 N · 清除）+ 计数。
-        // **不显示页面大标题**——与 PC 一致：导航位置由左侧栏高亮表达，
-        // 页面顶部直接从内容开始（PC 端全站页面都没有标题行）。
-        Row(
-            Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selected.isNotEmpty()) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Red)
-                        .clickable { selected.clear() }
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                ) {
-                    Text("筛选 ${selected.size} · 清除", color = Color.White, fontSize = 13.sp)
-                }
-            }
-            Spacer(Modifier.weight(1f))
-            // 与 PC 同文案：「共 N 部」（原来写「已加载 N 部」）
-            Text("共 ${cards.size} 部", color = TextDim, fontSize = 14.sp)
-        }
 
         /**
          * 整页只有一个滚动容器（LazyVerticalGrid），搜索行 + 筛选区是它的**头部**。
@@ -328,24 +306,13 @@ fun FindScreen(
          * 但不超过 0.72 封面比例的卡片自然高度（否则封面会被拉长）。
          */
         BoxWithConstraints(Modifier.fillMaxSize().weight(1f)) {
-            val totalH = maxHeight
             val totalW = maxWidth
-            // 搜索行实际高度 = 42dp 输入框 + 10dp 下边距
-            val searchH = 52.dp
             val showFilter = searchQuery == null
-            val n = rows.size.coerceAtLeast(1)
-            // 筛选行按自然高度排，不再为塞进半屏而压缩
-            val chipH = 27.dp
-            val chipGap = 9.dp
-            val filterNat = chipH * n + chipGap * (n - 1)
-            val gapBelowFilter = if (showFilter) 14.dp else 0.dp
             // 卡片宽 =（屏宽 - 左右 padding - 5 个间距）/ 6
             val cardW = (totalW - 48.dp - 60.dp) / 6
-            val natural = cardW / 0.72f + 66.dp
-            // 再扣 12dp：网格的 verticalArrangement 会在头部和第一行卡片之间再加一道间距，
-            // 不扣的话首屏最后一行卡片会被切掉一句（标题在、标签没了）。
-            val firstRow = (totalH - searchH - filterNat - gapBelowFilter - 12.dp).coerceAtLeast(160.dp)
-            val rowH = minOf(firstRow, natural).coerceAtLeast(160.dp)
+            // 筛选区改成 PC 同款多行换行后高度不再固定，卡片统一按自然高度排，
+            // 整页跟着滚动（和 PC 的找剧页一致），不再硬算首屏塞几行。
+            val rowH = (cardW / 0.72f + 66.dp).coerceAtLeast(160.dp)
 
             // 滚到接近底部就续页。头部占一个 item，所以卡片索引要 -1。
             LaunchedEffect(Unit) {
@@ -410,7 +377,7 @@ fun FindScreen(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = if (showFilter) 10.dp else 4.dp),
+                                .padding(top = 16.dp, bottom = if (showFilter) 10.dp else 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
@@ -598,6 +565,8 @@ fun FindScreen(
                                     fontWeight = FontWeight.Medium,
                                 )
                             }
+                            // 与 PC 同位置：搜索按钮右侧「共 N 部」
+                            Text("共 ${cards.size} 部", color = TextDim, fontSize = 14.sp)
                         }
 
                         if (showFilter) {
@@ -606,23 +575,15 @@ fun FindScreen(
                                     LoadingSpinner(size = 24.dp, stroke = 2.5.dp)
                                 }
                             }
-                            rows.forEachIndexed { idx, row ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        row.name,
-                                        color = TextDim,
-                                        fontSize = 13.sp,
-                                        lineHeight = 15.sp,
-                                        modifier = Modifier.width(42.dp),
-                                    )
-                                    ChipRow(
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rows.forEachIndexed { idx, row ->
+                                    FilterGroup(
+                                        label = row.name,
                                         items = listOf("全部") + row.items.map { it.label },
                                         ids = listOf("") + row.items.map { it.id },
                                         selectedId = selectedMap[row.key] ?: "",
-                                        height = chipH,
                                         // 第一行第一颗 chip 就是「搜索框按 ↓」的落点
                                         firstFocus = if (idx == 0) chipEntry else null,
-                                        modifier = Modifier.weight(1f),
                                         onPick = { id ->
                                             if (row.key == "genre") {
                                                 // 换体裁 = 整套主题/设定/背景都换了一套 id，
@@ -637,9 +598,22 @@ fun FindScreen(
                                         },
                                     )
                                 }
-                                if (idx != rows.lastIndex) Spacer(Modifier.height(chipGap))
+                                // 与 PC 同款：有选择时在筛选区右下角出现「重置筛选」
+                                if (selected.isNotEmpty()) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                        Text(
+                                            "重置筛选",
+                                            color = Red,
+                                            fontSize = 12.sp,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .clickable { selected.clear() }
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        )
+                                    }
+                                }
                             }
-                            Spacer(Modifier.height(gapBelowFilter))
+                            Spacer(Modifier.height(12.dp))
                         }
                     }
                 }
@@ -684,42 +658,59 @@ fun FindScreen(
 
 
 
+/**
+ * 筛选组（对齐 PC 找剧页）：左侧组名 + 右侧多行换行芯片。
+ * 原来是单行横向滚动，选项被藏在屏幕外（主题 26 个、设定 50+），
+ * 和 PC 的「全部摊开」完全不是一回事——用户反馈筛选框不对就是这里。
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChipRow(
+private fun FilterGroup(
+    label: String,
     items: List<String>,
     ids: List<String>,
     selectedId: String,
-    modifier: Modifier = Modifier,
-    height: androidx.compose.ui.unit.Dp = 27.dp,
-    /** 指定第一个 chip 的焦点请求器：给「搜索框按 ↓ 落到筛选区」用 */
-    firstFocus: FocusRequester? = null,
+    firstFocus: FocusRequester?,
     onPick: (String) -> Unit,
 ) {
-    Row(
-        modifier.androidHorizontalScroll(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        items.forEachIndexed { i, label ->
-            val id = ids.getOrElse(i) { "" }
-            val sel = id == selectedId
-            Box(
-                Modifier
-                    .then(if (i == 0 && firstFocus != null) Modifier.focusRequester(firstFocus) else Modifier)
-                    .height(height)
-                    .clip(RoundedCornerShape(height / 2))
-                    .background(if (sel) Red else PanelHi)
-                    .clickable { onPick(if (sel) "" else id) }
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    label,
-                    color = if (sel) Color.White else TextDim,
-                    fontSize = 13.sp,
-                    lineHeight = 15.sp,
-                    maxLines = 1,
-                )
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(
+            label,
+            color = TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.width(56.dp).padding(top = 8.dp),
+        )
+        FlowRow(
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items.forEachIndexed { i, text ->
+                val id = ids.getOrElse(i) { "" }
+                val sel = id == selectedId
+                Box(
+                    Modifier
+                        .then(if (i == 0 && firstFocus != null) Modifier.focusRequester(firstFocus) else Modifier)
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        // 与 PC 一致：选中是红薄底 + 红字 + 细红边，实心红只给动作按钮
+                        .background(if (sel) Red.copy(alpha = 0.16f) else Panel)
+                        .border(
+                            1.dp,
+                            if (sel) Red.copy(alpha = 0.45f) else Color(0x1AFFFFFF),
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable { onPick(if (sel) "" else id) }
+                        .padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text,
+                        color = if (sel) Color(0xFFFF6B6D) else TextDim,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -3420,23 +3411,12 @@ private fun hmOf(ts: Long): String =
  */
 private val PC_FILTER_ROW_ORDER = listOf(
     "genre", "category_dim_theme", "category_dim_role", "category_dim_epoch",
-    "sort", "gender", "online_time", "duration", "creation_status",
+    "sort", "gender", "creation_status", "online_time",
 )
 
 private fun normalizeFilterRows(rows: MutableList<FilterRow>) {
-    if (rows.none { it.key == "duration" }) {
-        rows.add(
-            FilterRow(
-                key = "duration",
-                name = "长度",
-                items = listOf(
-                    FilterItem("duration_0_60", "0-60分钟"),
-                    FilterItem("duration_60_120", "60-120分钟"),
-                    FilterItem("duration_120_plus", "120分钟以上"),
-                ),
-            ),
-        )
-    }
+    // 只做排序，不再补「长度」行：那三个 id（duration_0_60…）上游根本没有，
+    // 选中必空，等于给用户埋了个「一点就 0 条」的假筛选项（PC 端没有这行）。
     val sorted = rows.sortedBy {
         val i = PC_FILTER_ROW_ORDER.indexOf(it.key)
         if (i < 0) PC_FILTER_ROW_ORDER.size else i
