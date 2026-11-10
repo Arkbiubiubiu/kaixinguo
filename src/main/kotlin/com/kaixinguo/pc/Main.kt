@@ -98,7 +98,7 @@ import kotlin.math.roundToInt
  * 数据层来自共享模块 core（Api / 签名 / 解密），这里只负责界面与交互。
  * 排版按真实像素：1dp = 1px，窗口拉大只增加列数。
  */
-/** 品牌图标：与安装包 / 安卓启动图标同一张（红底开心果笑脸）。 */
+/** 品牌图标：与安装包 / 安卓启动图标同一张（红底竖屏 + 播放孔）。 */
 private val brandBitmap: ImageBitmap? by lazy {
     runCatching {
         val stream = object {}.javaClass.getResourceAsStream("/brand.png")
@@ -2445,7 +2445,7 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    Text("开心果 PC 版 1.2.3", color = Palette.text, fontSize = 14.sp)
+                    Text("开心果 PC 版 1.2.4", color = Palette.text, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
