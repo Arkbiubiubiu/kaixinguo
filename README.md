@@ -1,6 +1,18 @@
 # 开心果（Kaixinguo）
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Arkbiubiubiu/kaixinguo)](https://github.com/Arkbiubiubiu/kaixinguo/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android%20TV%20%7C%20Android-2ea44f)](#下载)
+
 **三端短剧客户端**：同一套数据层，三个端各自有独立界面。
+
+## 下载
+
+| 端 | 文件 | 说明 |
+|---|---|---|
+| PC（Windows） | [kaixinguo-1.0.0.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.0.0/kaixinguo-1.0.0.msi) | 安装包，内含 FFmpeg（GPLv3） |
+| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.0.0/pad-pad-debug.apk) | Android 8.0+ |
+| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.0.0/pad-tv-debug.apk) | Android TV 8.0+ |
 
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
