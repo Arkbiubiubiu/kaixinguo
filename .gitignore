@@ -37,3 +37,4 @@ Thumbs.db
 run_out.txt
 # 签名实现（私有，不随仓库公开）
 src/main/kotlin/com/hongguotv/pad/sign/
+android/core/src/main/kotlin/com/hongguotv/pad/sign/

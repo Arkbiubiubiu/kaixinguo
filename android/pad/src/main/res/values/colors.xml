@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 图标底色：与图稿里的品牌红一致，自适应图标裁圆时边缘才不会露出色差 -->
+    <color name="ic_launcher_bg">#FE2B2A</color>
+</resources>

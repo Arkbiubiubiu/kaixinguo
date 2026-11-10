@@ -1,0 +1,24 @@
+# Gradle / Kotlin 编译产物
+build/
+*/build/
+.gradle/
+.kotlin/
+*.hprof
+
+# 本机环境配置（各机器不同，不进库）
+local.properties
+
+# 安装包与签名
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+*.pepk
+
+# 编辑器 / 系统
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+captures/

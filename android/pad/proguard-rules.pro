@@ -1,0 +1,2 @@
+-keep class com.hongguotv.pad.** { *; }
+-dontwarn org.bouncycastle.**

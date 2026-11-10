@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TV flavor 专用 manifest 片段：强制用位图图标。
+
+  电视桌面（实测小米电视 Android 9 / MIUI TV）不认 adaptive icon：
+  manifest 里指向 mipmap-anydpi-v26/ic_launcher.xml，桌面按位图去解码失败，
+  直接退回系统默认的机器人图标（Pad 上是好的，所以只影响 TV）。
+  这里把 TV 的图标换成只存在于各 dpi 目录的位图 ic_tv.png。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:icon="@mipmap/ic_tv"
+        android:roundIcon="@mipmap/ic_tv"
+        tools:replace="android:icon,android:roundIcon" />
+</manifest>
