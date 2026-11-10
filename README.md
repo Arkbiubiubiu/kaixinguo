@@ -11,8 +11,8 @@
 | 端 | 文件 | 说明 |
 |---|---|---|
 | PC（Windows） | [kaixinguo-1.1.1.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.1/kaixinguo-1.1.1.msi) | 安装包，内含 FFmpeg（GPLv3）与本机取流服务 |
-| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-pad-debug.apk) | Android 8.0+（播放需自备取流服务） |
-| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-tv-debug.apk) | Android TV 8.0+（播放需自备取流服务） |
+| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.0/pad-pad-debug.apk) | Android 8.0+ |
+| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.0/pad-tv-debug.apk) | Android TV 8.0+ |
 
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
@@ -23,10 +23,10 @@
 三个端共用 `core` 数据层（接口、签名对接、播放地址解析），界面各自独立：
 PC 用 Compose Desktop，电视/平板是 Android 原生。同一版本发布时三端一起出。
 
-> ✅ **PC 版下载即看**：内容接口内置签名，取流用随安装包分发的本机服务（只监听 127.0.0.1），
-> 装好直接浏览 + 播放，不需要填任何服务器地址、不需要账号。
+> ✅ **三端下载即看**：内容接口内置签名；取流核心随包分发（PC 是 `streamsrv.exe`，
+> 平板/电视是 gomobile 编译的 `libgojni.so`），只在本机运行，不经过任何服务器。
+> 装好直接浏览 + 播放，不需要填地址、不需要账号。
 > 🔧 想换成自己的取流服务，在「设置 → 服务配置 → 取流服务」填地址即可；留空用内置。
-> 📱 平板/电视版目前内容开箱即用，播放需自备取流服务（客户端侧的取流核心还在接）。
 > 与任何内容平台的官方均无关联，仅供学习与技术研究。
 
 ## 功能

@@ -48,7 +48,9 @@ Copyright (C) 2026 Kaixinguo PC Authors
    - 随 PC 安装包分发的是其 `cmd/streamsrv` 的编译产物（streamsrv.exe），
      并按本项目需要做了修改：增加 `/api/playinfo` 与 `/health` 两个入口，
      去掉未使用的 `/seasons`。修改后的源码见本仓库 `resolver/` 目录。
-   - 仅在本机 127.0.0.1 上运行，不对外提供服务
+   - 平板/电视 APK 内是同一模块经 gomobile 编译的 `libgojni.so` + `classes.jar`
+     （`bindings/mobile/core`，未修改）。
+   - 仅在本机/应用进程内运行，不对外提供服务
 
 完整依赖清单见 `build.gradle.kts`。
 

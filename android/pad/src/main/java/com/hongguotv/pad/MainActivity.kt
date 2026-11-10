@@ -19,6 +19,9 @@ object AppLifecycle {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.sink = { level, tag, message ->
+            android.util.Log.println(if (level == "E") android.util.Log.ERROR else android.util.Log.DEBUG, tag, message)
+        }
         Store.init(this)
         App.state = Store
         App.playToken = BuildConfig.PLAY_TOKEN
@@ -28,6 +31,9 @@ class MainActivity : ComponentActivity() {
         App.deviceId = BuildConfig.DEVICE_ID
         App.deviceCdid = BuildConfig.DEVICE_CDID
         FeedCache.init(this)
+        // 本机取流：Go 绑定（随 APK 打包），没有配置服务器时用它
+        DeviceResolver.init(this)
+        LocalResolverProvider.play = { vid, want -> DeviceResolver.play(vid, want) }
         setContent {
             TvRoot { App() }
         }

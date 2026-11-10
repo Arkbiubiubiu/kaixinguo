@@ -9,6 +9,15 @@ import java.util.LinkedHashMap
 import java.util.zip.GZIPInputStream
 
 /**
+ * 本机取流钩子：Android 端在启动时注入 Go 绑定实现（[dev.openhongguo.core]），
+ * 没有注入时（例如纯 UI 调试）返回 null，走原来的服务器路径。
+ */
+object LocalResolverProvider {
+    @Volatile
+    var play: ((vid: String, want: Int) -> PlayInfo?)? = null
+}
+
+/**
  * 番茄接口访问层。
  *
  * 两条路：
@@ -365,13 +374,17 @@ object Api {
             Log.d("PadPlayer", "playFromServer ok ${it.definition} ${it.size}")
             return it
         }
+        LocalResolverProvider.play?.invoke(vid, want)?.let {
+            Log.d("PadPlayer", "localResolver ok ${it.definition} ${it.size}")
+            return it
+        }
         // 本机直连从 2026-10-30 15:32 起已彻底失效：上游取流网关要求官方签名头
         // （X-Argus/X-Gorgon/X-Ladon），OkHttp 在这里发多少次都是 HTTP 200 空包，
         // 唯一的效果是让用户白等 30 秒连接+读超时才看到报错。
         // 服务器那边的签名通道已经接管，这里直接快速失败；留开关是为了上游哪天放开能一键恢复。
         if (!LOCAL_DIRECT_PLAY) {
             Log.d("PadPlayer", "playFromServer miss，本机直连已停用")
-            error("取流失败：服务器没有返回播放地址")
+            error("取流失败：没有可用的取流通道")
         }
         Log.d("PadPlayer", "playFromServer miss，走本机直连")
 

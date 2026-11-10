@@ -13,7 +13,7 @@ android {
         targetSdk = 36
         versionCode = 189
         versionName = "2.2.69"
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
         // 公开版什么都不传 → 三个值都是空，由使用者在「设置」里自己填，仓库里也不会泄露任何地址。
@@ -77,6 +77,8 @@ android {
 dependencies {
     // 三端共用逻辑（模型 / 解密 / 签名 / 取流代理）
     implementation(project(":core"))
+    // 本机取流：gomobile 生成的 Go 绑定（Apache-2.0，见 NOTICE）
+    implementation(files("libs/openhongguo.jar"))
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

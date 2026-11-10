@@ -33,7 +33,9 @@ android/core/src/main/kotlin/com/hongguotv/pad/LocalSign.kt
 这些身份只存在于用户自己的机器和 IP 上，**与作者的服务器、账号、私用设备身份完全无关**。
 用户也可以不用内置服务，在「设置 → 取流服务」填写自己的地址。
 
-> 平板/电视版的取流核心还在接（gomobile），当前版本播放仍需自备取流服务。
+> 平板/电视用同一份取流核心的 gomobile 编译产物（`libgojni.so` + `classes.jar`），
+> 在应用进程内调用，策略与 PC 一致：每次取流注册一台新的匿名设备，
+> 档案落在应用私有目录（`files/ohg`），取完即删。
 
 ## 源码里怎么切
 
