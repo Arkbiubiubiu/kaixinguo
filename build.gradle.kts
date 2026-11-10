@@ -26,7 +26,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "开心果"
-            packageVersion = "1.1.1"
+            packageVersion = "1.2.1"
             // 把 ffmpeg.exe 一起打进安装包（HEIC 封面 + HEVC 播放都靠它）
             appResourcesRootDir.set(project.layout.projectDirectory.dir("pack"))
         }

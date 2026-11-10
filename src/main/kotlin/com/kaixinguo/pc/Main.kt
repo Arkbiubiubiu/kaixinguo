@@ -2417,7 +2417,7 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    Text("开心果 PC 版 1.1.1", color = Palette.text, fontSize = 14.sp)
+                    Text("开心果 PC 版 1.2.1", color = Palette.text, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))

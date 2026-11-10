@@ -132,7 +132,9 @@ class VideoEngine(private val sourceUrl: String) {
         baseNanos = System.nanoTime()
         positionMs = atMs
         pausedAtMs = atMs
-        playing = true
+        // 先不起「在播」：等视频首帧到了再放行，否则声音先走、时钟先跑，
+        // 迟到的视频帧会被 pumpLoop 整段丢掉（画面定住、声音正常）。
+        playing = false
         queue.clear()
 
         val i = info ?: return
@@ -141,11 +143,25 @@ class VideoEngine(private val sourceUrl: String) {
                 allocPixels(ImageInfo(outWidth, outHeight, ColorType.BGRA_8888, ColorAlphaType.OPAQUE))
             }
         }
-        startAudio(atMs)
         startVideo(atMs, i)
         pumpJob?.cancel()
         pumpJob = scope.launch { pumpLoop() }
         scope.launch { readFrames(i) }
+
+        // 等首帧（最多 4 秒）：无视频/解码失败时照样走，退化成「只有声音」。
+        val t0 = System.currentTimeMillis()
+        val deadline = t0 + 4_000
+        while (!stopping && queue.isEmpty() &&
+            videoProc?.isAlive == true && System.currentTimeMillis() < deadline
+        ) {
+            kotlinx.coroutines.delay(20)
+        }
+        if (stopping) return
+        println("[player] 首帧等待 ${System.currentTimeMillis() - t0}ms（队列 ${queue.size}）")
+        // 视频和声音从同一时刻起步：baseNanos 重置，声轨时钟也从 0 开始
+        baseNanos = System.nanoTime()
+        playing = true
+        startAudio(atMs)
     }
 
     fun pause() {
