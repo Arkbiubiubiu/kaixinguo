@@ -556,6 +556,8 @@ private fun HomePage(
     var cursor by remember { mutableStateOf<FeedPage?>(null) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    /** 推荐墙的滚动状态：滚到靠底就自动续拉，不再放按钮 */
+    val wallScroll = rememberScrollState()
 
     val tabTypes = listOf("2", "3", "4")
 
@@ -585,6 +587,8 @@ private fun HomePage(
         cursor = cur
         error = if (cur == null || cur.cards.isEmpty()) "没有拿到数据（检查签名服务 / 网络）" else null
         loading = false
+        // 换 tab / 换一批回到墙顶（滚动状态是常驻的，不重置会停在上一次的底部）
+        runCatching { wallScroll.scrollTo(0) }
     }
 
     val cards = page?.cards.orEmpty()
@@ -622,7 +626,41 @@ private fun HomePage(
                 cursor = r
             }
             moreLoading = false
+            runCatching { wallScroll.scrollTo(0) }
         }
+    }
+
+    /** 自动续拉下一页：滚到靠底 / 首屏不满两屏时都会被调用 */
+    fun loadMore() {
+        val c = cursor ?: return
+        if (moreLoading || !c.hasMore) return
+        moreLoading = true
+        scope.launch {
+            val type = tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]
+            val next = withContext(Dispatchers.IO) {
+                runCatching {
+                    Api.feedNext(type, c.cellId, c.planId, c.sessionId, c.nextOffset, cards.map { it.seriesId })
+                }.getOrNull()
+            }
+            val cur = page
+            if (next != null && next.cards.isNotEmpty() && cur != null) {
+                val known = cur.cards.map { it.seriesId }.toSet()
+                page = next.copy(cards = cur.cards + next.cards.filter { it.seriesId !in known })
+                cursor = next
+            } else {
+                cursor = c.copy(hasMore = false)
+            }
+            moreLoading = false
+        }
+    }
+
+    // 滚到离底 700px 内自动拉下一页（用户要求：不要按钮，滑到底自己出）
+    LaunchedEffect(wallScroll, cursor?.hasMore, cursor?.nextOffset, moreLoading) {
+        if (cursor?.hasMore != true) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow { wallScroll.value to wallScroll.maxValue }
+            .collect { (v, max) ->
+                if (max > 0 && max - v < 700) loadMore()
+            }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -645,7 +683,7 @@ private fun HomePage(
                     // 首屏骨架（旧版 WallSkeleton：墙形灰砖比转圈更像成品）
                     loading && page == null -> Box(Modifier.fillMaxSize().padding(top = 8.dp)) { SkeletonWall() }
                     error != null && (page?.cards.isNullOrEmpty()) -> CenterMessage(error!!)
-                    else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    else -> Column(Modifier.fillMaxSize().verticalScroll(wallScroll)) {
                         if (hero != null) {
                             HeroCard(
                                 hero,
@@ -666,38 +704,29 @@ private fun HomePage(
                             onCollect = { PcStore.toggle("favorite", it.seriesId) },
                             scrollable = false,
                         )
+                        // 底部只是一行状态：滚动到底自动续拉，不再有「加载更多」按钮
                         val c = cursor
-                        if (c != null && c.hasMore) {
-                            Spacer(Modifier.height(16.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                                SecondaryButton(if (moreLoading) "加载中…" else "加载更多") {
-                                    if (moreLoading || c.cards.isEmpty()) return@SecondaryButton
-                                    moreLoading = true
-                                    scope.launch(Dispatchers.IO) {
-                                        val next = runCatching {
-                                            Api.feedNext(
-                                                tabType = tabTypes[tab.coerceIn(0, tabTypes.lastIndex)],
-                                                cellId = c.cellId,
-                                                planId = c.planId,
-                                                sessionId = c.sessionId,
-                                                offset = c.nextOffset,
-                                                seen = cards.map { it.seriesId },
-                                            )
-                                        }.getOrNull()
-                                        withContext(Dispatchers.Main) {
-                                            if (next != null && next.cards.isNotEmpty()) {
-                                                val known = cards.map { it.seriesId }.toSet()
-                                                page = next.copy(cards = cards + next.cards.filter { it.seriesId !in known })
-                                                cursor = next
-                                            } else {
-                                                cursor = c.copy(hasMore = false)
-                                            }
-                                            moreLoading = false
-                                        }
-                                    }
+                        if (page != null) {
+                            Spacer(Modifier.height(20.dp))
+                            Row(
+                                Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (moreLoading) {
+                                    CircularProgressIndicator(
+                                        color = Palette.accent,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text("正在加载更多…", color = Palette.faint, fontSize = 12.sp)
+                                } else if (c != null && !c.hasMore && cards.isNotEmpty()) {
+                                    Text("已经到底了 · 共 ${cards.size} 部", color = Palette.faint, fontSize = 12.sp)
+                                } else if (c != null && c.hasMore && cards.isNotEmpty()) {
+                                    Text("继续下滑，自动加载更多", color = Palette.faint, fontSize = 12.sp)
                                 }
                             }
-                            Spacer(Modifier.height(24.dp))
                         }
                     }
                 }
