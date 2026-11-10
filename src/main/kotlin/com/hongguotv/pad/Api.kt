@@ -1636,7 +1636,11 @@ object Api {
             rankMetaAt = System.currentTimeMillis()
             return fresh
         }
-        return rankMetaCache ?: rankSelectors()
+        // 公开版没有自建服务器：用打包进程序的线上菜单兜底，
+        // 否则子榜没有 panels/months，排行榜的「筛选 / 月榜」入口会消失。
+        return rankMetaCache
+            ?: runCatching { parseRankMeta(RANK_META_FALLBACK_JSON) }.getOrNull()?.takeIf { it.isNotEmpty() }
+            ?: rankSelectors()
     }
 
     private fun parseRankOptions(arr: JSONArray?): List<RankOption> {
@@ -1660,49 +1664,55 @@ object Api {
                 conn.inputStream.bufferedReader().use { it.readText() }
             }.getOrNull()
             if (text.isNullOrEmpty()) continue
-            val root = runCatching { JSONObject(text) }.getOrNull() ?: continue
-            val cats = root.optJSONArray("cats") ?: continue
-            val out = mutableListOf<RankTabsel>()
-            for (i in 0 until cats.length()) {
-                val c = cats.optJSONObject(i) ?: continue
-                val cid = c.optString("id")
-                val cname = c.optString("name")
-                if (cid.isEmpty() || cname.isEmpty()) continue
-                val subsArr = c.optJSONArray("subs") ?: continue
-                val subs = mutableListOf<RankSub>()
-                for (j in 0 until subsArr.length()) {
-                    val s = subsArr.optJSONObject(j) ?: continue
-                    val sid = s.optString("id")
-                    val sname = s.optString("name")
-                    if (sid.isEmpty() || sname.isEmpty()) continue
-                    val panels = mutableListOf<RankPanel>()
-                    s.optJSONArray("panels")?.let { pa ->
-                        for (k in 0 until pa.length()) {
-                            val p = pa.optJSONObject(k) ?: continue
-                            val items = parseRankOptions(p.optJSONArray("items"))
-                            if (items.isNotEmpty()) {
-                                panels.add(RankPanel(p.optString("key"), p.optString("name"), items))
-                            }
-                        }
-                    }
-                    subs.add(
-                        RankSub(
-                            id = sid,
-                            label = sname,
-                            desc = s.optString("desc"),
-                            panels = panels,
-                            months = parseRankOptions(s.optJSONArray("months")),
-                        ),
-                    )
-                }
-                if (subs.isNotEmpty()) out.add(RankTabsel(cid, cname, subs))
-            }
+            val out = runCatching { parseRankMeta(text) }.getOrNull() ?: continue
             if (out.isNotEmpty()) {
                 preferredBase = base
                 return out
             }
         }
         return null
+    }
+
+    /** 解析 /api/rankmeta（线上接口与打包兜底共用同一份结构）。 */
+    private fun parseRankMeta(text: String): List<RankTabsel>? {
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        val cats = root.optJSONArray("cats") ?: return null
+        val out = mutableListOf<RankTabsel>()
+        for (i in 0 until cats.length()) {
+            val c = cats.optJSONObject(i) ?: continue
+            val cid = c.optString("id")
+            val cname = c.optString("name")
+            if (cid.isEmpty() || cname.isEmpty()) continue
+            val subsArr = c.optJSONArray("subs") ?: continue
+            val subs = mutableListOf<RankSub>()
+            for (j in 0 until subsArr.length()) {
+                val s = subsArr.optJSONObject(j) ?: continue
+                val sid = s.optString("id")
+                val sname = s.optString("name")
+                if (sid.isEmpty() || sname.isEmpty()) continue
+                val panels = mutableListOf<RankPanel>()
+                s.optJSONArray("panels")?.let { pa ->
+                    for (k in 0 until pa.length()) {
+                        val p = pa.optJSONObject(k) ?: continue
+                        val items = parseRankOptions(p.optJSONArray("items"))
+                        if (items.isNotEmpty()) {
+                            panels.add(RankPanel(p.optString("key"), p.optString("name"), items))
+                        }
+                    }
+                }
+                subs.add(
+                    RankSub(
+                        id = sid,
+                        label = sname,
+                        desc = s.optString("desc"),
+                        panels = panels,
+                        months = parseRankOptions(s.optJSONArray("months")),
+                    ),
+                )
+            }
+            if (subs.isNotEmpty()) out.add(RankTabsel(cid, cname, subs))
+        }
+        return out
     }
 
     /**

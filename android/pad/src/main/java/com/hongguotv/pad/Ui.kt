@@ -84,9 +84,13 @@ fun TvChip(
     Box(
         modifier
             .height(if (large) 40.dp else 34.dp)
-            .background(
-                if (selected) Red else PanelHi,
-                RoundedCornerShape(if (large) 20.dp else 17.dp),
+            // 与 PC 一致：选中是红薄底 + 红字 + 细红边，实心红只给动作按钮。
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) Red.copy(alpha = 0.16f) else Panel)
+            .border(
+                1.dp,
+                if (selected) Red.copy(alpha = 0.45f) else Color(0x1AFFFFFF),
+                RoundedCornerShape(8.dp),
             )
             .clickable { onClick() }
             .padding(horizontal = if (large) 20.dp else 16.dp),
@@ -94,9 +98,9 @@ fun TvChip(
     ) {
         Text(
             text,
-            color = if (selected) Color.White else TextDim,
+            color = if (selected) Color(0xFFFF6B6D) else TextDim,
             fontSize = if (large) 15.sp else 13.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
         )
     }
 }
