@@ -24,6 +24,9 @@ class MainActivity : ComponentActivity() {
         App.playToken = BuildConfig.PLAY_TOKEN
         App.playBases = BuildConfig.DEFAULT_PLAY_BASES.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         App.historyBase = BuildConfig.HISTORY_BASE
+        App.deviceIid = BuildConfig.DEVICE_IID
+        App.deviceId = BuildConfig.DEVICE_ID
+        App.deviceCdid = BuildConfig.DEVICE_CDID
         FeedCache.init(this)
         setContent {
             TvRoot { App() }

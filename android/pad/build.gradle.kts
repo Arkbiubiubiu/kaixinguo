@@ -23,6 +23,9 @@ android {
         buildConfigField("String", "PLAY_TOKEN", "\"${prop("playToken")}\"")
         buildConfigField("String", "UPDATE_BASES", "\"${prop("updateBases")}\"")
         buildConfigField("String", "HISTORY_BASE", "\"${prop("historyBase")}\"")
+        buildConfigField("String", "DEVICE_IID", "\"${prop("deviceIid")}\"")
+        buildConfigField("String", "DEVICE_ID", "\"${prop("deviceId")}\"")
+        buildConfigField("String", "DEVICE_CDID", "\"${prop("deviceCdid")}\"")
     }
 
     // 原项目就是两个包名两个包：TV 与 Pad 共用同一份源码

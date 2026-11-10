@@ -57,7 +57,7 @@ data class UpdateInfo(
  * 在线更新。
  *
  * 局域网优先、外网兜底：在家走内网 8080（40ms，不绕公网隧道）；
- * `hgtv.fabao.xin` 是同一个更新目录的公网入口，人在外面时靠它拉清单和整包。
+ * public entry point is injected by build params; source has no domain.
  *
  * 清单格式（服务端 /srv/hgtv-update 下）：
  * `{versionCode, versionName, url, path, size, sha256, notes}`，`url` 为空时
