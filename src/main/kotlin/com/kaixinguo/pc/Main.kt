@@ -2566,7 +2566,7 @@ private fun SettingsPage() {
                     ServiceField(
                         "更新源",
                         upBase,
-                        "留空 = GitHub 最新版；也可以填自己的更新目录（含 version-pc.json）",
+                        "留空 = 自建服务器（推荐）；也可填自己的更新目录（含 version-pc.json）",
                     ) { upBase = it }
                     Spacer(Modifier.height(8.dp))
                     var did by remember { mutableStateOf(PcStore.deviceId) }

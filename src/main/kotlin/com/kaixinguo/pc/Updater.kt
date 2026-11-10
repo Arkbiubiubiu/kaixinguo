@@ -30,8 +30,8 @@ import java.security.MessageDigest
 
 /** 版本号唯一来源：发版时只改这里（与 build.gradle.kts 的 packageVersion 对齐）。 */
 object BuildInfo {
-    const val VERSION = "1.2.11"
-    const val CODE = 10211
+    const val VERSION = "1.2.12"
+    const val CODE = 10212
 }
 
 data class PcUpdate(
@@ -46,16 +46,18 @@ data class PcUpdate(
 /**
  * PC 在线更新。
  *
- * 清单放在 GitHub「最新 release」的固定地址下（同名资产），
- * 清单里的 path 是安装包资产名，用同一个 base 拼下载地址 —— 换版本不用改代码。
+ * 唯一更新源 = 自建服务器（https://hgtv.fabao.xin，Cloudflare 边缘缓存 APK，
+ * 大陆实测 0.1~2 MB/s；GitHub release 大陆只有几十 KB/s，2026-11-11 起弃用）。
+ * 清单 path 是安装包文件名，用同一个 base 拼下载地址 —— 换版本不用改代码。
  * 下载完校验 sha256，再交给一个临时 .bat：等 msiexec 装完、自动把新版本拉起来。
+ * 设置里的「更新源」字段保留：留空用上面的默认源，填了就覆盖（自建多入口时用）。
  */
 object PcUpdater {
 
-    /** 公开默认走 GitHub；设置里填了「更新源」就用用户自己的（自建/镜像）。 */
+    /** 留空 = 自建服务器；设置里填了「更新源」就用用户自己的。 */
     private fun base(): String =
         PcStore.updateBase.trim().trimEnd('/').ifBlank {
-            "https://github.com/Arkbiubiubiu/kaixinguo/releases/latest/download"
+            "https://hgtv.fabao.xin"
         }
 
     private fun fetchManifest(): PcUpdate? {

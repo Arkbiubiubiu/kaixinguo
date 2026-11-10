@@ -50,7 +50,7 @@ object PcStore : AccountState {
         props.setProperty(key, value); save()
     }
 
-    /** 在线更新源（留空 = GitHub 最新 release）。自建服务可填自己的更新目录。 */
+    /** 在线更新源（留空 = 自建服务器 hgtv.fabao.xin）。自建多入口时可填自己的更新目录。 */
     var updateBase: String
         get() = str("update_base", "")
         set(v) { put("update_base", v.trim()) }

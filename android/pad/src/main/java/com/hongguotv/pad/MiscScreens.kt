@@ -3046,7 +3046,7 @@ fun SettingsScreen() {
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "更新会优先走局域网的更新地址，出门自动切公网入口",
+                            "更新走自建服务器，边缘节点加速下载",
                             color = TextDim,
                             fontSize = 12.sp,
                         )

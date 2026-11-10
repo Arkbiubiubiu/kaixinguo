@@ -56,8 +56,10 @@ data class UpdateInfo(
 /**
  * 在线更新。
  *
- * 局域网优先、外网兜底：在家走内网 8080（40ms，不绕公网隧道）；
- * public entry point is injected by build params; source has no domain.
+ * 唯一更新源 = 自建服务器（Cloudflare 隧道回源 /srv/hgtv-update）。
+ * GitHub release 从大陆实测只有几十 KB/s 且经常握手失败，已弃用；
+ * 「局域网优先」也取消：域名走 Cloudflare 边缘，命中缓存后不回源，
+ * 内外网速度同一水平，没必要分叉。
  *
  * 清单格式（服务端 /srv/hgtv-update 下）：
  * `{versionCode, versionName, url, path, size, sha256, notes}`，`url` 为空时
@@ -66,27 +68,14 @@ data class UpdateInfo(
 object Updater {
 
     /**
-     * 地址表来自构建参数（`-PupdateBases=a,b`），源码里不写任何服务器地址。
-     * 内网地址给 2.5 秒连接超时——不在同一网段时迅速失败，别让人干等 8 秒。
-     *
-     * 公开包不带构建参数：默认走 GitHub 的「最新 release」固定地址。
-     * 清单和安装包都挂在该 release 下，清单里的 path 是资产名，
-     * fetch() 会用同一个 base 拼出下载地址 —— 换版本不用改代码。
+     * 唯一更新源。构建参数 `updateBases` 可覆盖（自建集群多入口时用），公开包不带参数。
      */
-    private const val GITHUB_LATEST =
-        "https://github.com/Arkbiubiubiu/kaixinguo/releases/latest/download"
-
-    /**
-     * 过渡更新源（自建静态镜像，只放清单+安装包，不涉及内容服务）。
-     * GitHub 在无代理的大陆家宽经常握手失败，实测外网设备「检查更新」永远拿不到清单，
-     * 还被误报成「已是最新」——所以公开包默认带上它做兜底：GitHub 三连败后走这里。
-     */
-    private const val MIRROR_LATEST = "https://hgtv.fabao.xin"
+    private const val UPDATE_BASE = "https://hgtv.fabao.xin"
 
     private val BASES = BuildConfig.UPDATE_BASES
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }
-        .map { it to if (it.contains("192.168.")) 2_500 else 8_000 }
-        .ifEmpty { listOf(GITHUB_LATEST to 8_000, MIRROR_LATEST to 8_000) }
+        .map { it to 8_000 }
+        .ifEmpty { listOf(UPDATE_BASE to 8_000) }
 
     /** 两个包共用一套代码：按包名挑清单，免得依赖 BuildConfig 的 flavor 字段 */
     private fun manifestOf(pkg: String): String =
@@ -106,8 +95,8 @@ object Updater {
      * 全部地址都连不上时抛 [CheckException]——调用方要把「检查失败」和
      * 「已是最新」分开显示，绝不能把连不上谎报成最新（外网 2.2.73 的事故）。
      *
-     * 公网链路（GitHub / cloudflared 隧道）偶尔挑到断边，表现是一次 TLS
-     * handshake 超时；每个地址重试 3 次再换下一个。
+     * Cloudflare 隧道偶尔挑到断边，表现是一次 TLS handshake 超时；
+     * 每个地址重试 3 次（间隔递增）再判定失败。
      */
     class CheckException(message: String) : Exception(message)
 
@@ -124,13 +113,11 @@ object Updater {
                     // 能拿到清单就说明通道是通的：不比当前新就直接结束
                     return@withContext if (info.versionCode > cur) info else null
                 }
-                lastError = "清单请求失败（${
-                    if (base.contains("github")) "GitHub" else "镜像"
-                } 第 $attempt 次）"
+                lastError = "更新源连不上（第 $attempt 次）"
                 if (attempt < 3) delay(700L * attempt)
             }
         }
-        throw CheckException(lastError ?: "所有更新源都连不上")
+        throw CheckException(lastError ?: "更新源连不上")
     }
 
     private fun fetch(url: String, base: String, timeoutMs: Int): UpdateInfo {
@@ -161,7 +148,13 @@ object Updater {
         }
     }
 
-    /** 下载整包到 files/update/update.apk，校验 sha256。失败返回 null。 */
+    /**
+     * 下载整包到 files/update/update.apk，校验 sha256。失败返回 null。
+     *
+     * **分段并行**：Cloudflare 免费隧道单连接吞吐有限（实测 0.1~0.3 MB/s），
+     * 6 条分段连接（Range 请求）能叠到 1 MB/s 上下；每段带断点续传，
+     * 段中断了从段内 offset 接着拉，不重下整包。段数少（文件 < 8MB）时退回单连接。
+     */
     suspend fun download(
         context: Context,
         info: UpdateInfo,
@@ -171,43 +164,100 @@ object Updater {
         val out = File(dir, "update.apk")
         runCatching {
             if (out.exists()) out.delete()
-            val conn = (URL(info.url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15_000
-                readTimeout = 60_000
-                instanceFollowRedirects = true
-            }
+            out.createNewFile()
+            // 用 RandomAccessFile 按段写；进度按字节聚合
+            val total = if (info.size > 0) info.size else contentLength(info.url)
+            if (total <= 0) error("无法获知安装包大小")
+            val segments = if (total >= 8L * 1024 * 1024) 6 else 1
+            val segLen = total / segments
+            val done = java.util.concurrent.atomic.AtomicLong(0)
+            val lastPct = java.util.concurrent.atomic.AtomicInteger(-1)
+            val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(segments)
             try {
-                if (conn.responseCode !in 200..299) error("下载 HTTP ${conn.responseCode}")
-                val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.size
-                var read = 0L
-                conn.inputStream.use { input ->
-                    out.outputStream().use { output ->
-                        val buf = ByteArray(64 * 1024)
-                        // 单次读满 45 秒没数据就判定断流。HTTP 的 readTimeout 只兜单次 read，
-                        // 有些网络会「每 50 秒挤几个字节」吊着不结束，进度条就永远差最后一点。
-                        var lastReadAt = System.currentTimeMillis()
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n <= 0) break
-                            val now = System.currentTimeMillis()
-                            if (now - lastReadAt > 45_000) error("下载超时（网络中断），请重试")
-                            lastReadAt = now
-                            output.write(buf, 0, n)
-                            read += n
-                            if (total > 0) onProgress((read * 100 / total).toInt().coerceIn(0, 100))
+                val futures = (0 until segments).map { i ->
+                    pool.submit(java.util.concurrent.Callable {
+                        val a = i.toLong() * segLen
+                        val b = if (i == segments - 1) total - 1 else (i + 1).toLong() * segLen - 1
+                        var pos = a
+                        var attempt = 0
+                        while (pos <= b && attempt < 6 && !failed.get()) {
+                            attempt++
+                            try {
+                                val conn = (URL(info.url).openConnection() as HttpURLConnection).apply {
+                                    connectTimeout = 15_000
+                                    readTimeout = 30_000
+                                    instanceFollowRedirects = true
+                                    setRequestProperty("Range", "bytes=$pos-$b")
+                                    setRequestProperty("User-Agent", "Dalvik/2.1.0")
+                                }
+                                try {
+                                    if (conn.responseCode !in 200..299) error("分段 HTTP ${conn.responseCode}")
+                                    conn.inputStream.use { input ->
+                                        java.io.RandomAccessFile(out, "rw").use { raf ->
+                                            raf.seek(pos)
+                                            val buf = ByteArray(128 * 1024)
+                                            var lastReadAt = System.currentTimeMillis()
+                                            while (pos <= b) {
+                                                val want = minOf(buf.size, (b - pos + 1).toInt())
+                                                val n = input.read(buf, 0, want)
+                                                if (n <= 0) break
+                                                raf.write(buf, 0, n)
+                                                pos += n
+                                                val d = done.addAndGet(n.toLong())
+                                                val p = (d * 100 / total).toInt().coerceIn(0, 100)
+                                                val prev = lastPct.getAndSet(p)
+                                                if (p != prev) onProgress(p)
+                                                if (System.currentTimeMillis() - lastReadAt > 45_000) {
+                                                    error("分段下载超时")
+                                                }
+                                                lastReadAt = System.currentTimeMillis()
+                                            }
+                                        }
+                                    }
+                                } finally {
+                                    conn.disconnect()
+                                }
+                            } catch (e: Exception) {
+                                if (attempt >= 6) failed.set(true)
+                                // 线程池里不是协程：用 Thread.sleep 退避
+                                Thread.sleep(500L * attempt)
+                            }
                         }
-                    }
+                        if (pos <= b) failed.set(true)
+                    })
                 }
+                futures.forEach { it.get() }
+                if (done.get() != total) error("下载不完整（${done.get()}/$total），请重试")
             } finally {
-                conn.disconnect()
+                pool.shutdown()
             }
-            if (out.length() <= 0) error("下载内容为空")
             if (info.sha256.isNotEmpty() && !info.sha256.equals(sha256Of(out), ignoreCase = true)) {
                 out.delete()
                 error("安装包校验失败（可能下到半截），请重试")
             }
             out
         }.getOrNull()
+    }
+
+    /** 探一下整包大小（HEAD 不被所有源支持，用 Range 0-0 的 Content-Range 兜底）。 */
+    private fun contentLength(url: String): Long {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 12_000
+            instanceFollowRedirects = true
+            setRequestProperty("Range", "bytes=0-0")
+            setRequestProperty("User-Agent", "Dalvik/2.1.0")
+        }
+        try {
+            if (conn.responseCode == 206) {
+                // Content-Range: bytes 0-0/36591346
+                conn.getHeaderField("Content-Range")?.split("/")?.lastOrNull()?.toLongOrNull()?.let { return it }
+            }
+            return conn.contentLengthLong.takeIf { it > 0 } ?: 0L
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun sha256Of(file: File): String {
