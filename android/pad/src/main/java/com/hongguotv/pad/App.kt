@@ -83,6 +83,9 @@ private val navItems = listOf(
     // 「我的」与 PC 同名同义（PC 的我的页 = 账户 + 收藏/点赞 + 登录入口）；
     // TV 因登录方式不同额外含设备配对码，但命名与入口位置对齐 PC。
     NavItem("我的", Icons.Filled.Person, null, Screen.Account),
+    // 打赏作者：纯自愿入口，点开弹窗看收款码（DonateDialog.kt）；不走 Screen 路由。
+    // 图标走 custom 手绘（安卓没有 material-icons-extended，LocalCafe 引不到）
+    NavItem("打赏", null, "cafe", Screen.Donate),
     NavItem("设置", Icons.Filled.Settings, null, Screen.Settings),
 )
 
@@ -100,6 +103,9 @@ fun App() {
         update = runCatching { Updater.check(Store.appContext) }.getOrNull()
     }
     update?.let { info -> UpdateDialog(info) { update = null } }
+    // 打赏弹窗：侧栏「打赏」入口，纯展示不接支付，不进路由栈
+    var donateOpen by remember { mutableStateOf(false) }
+    if (donateOpen) DonateDialog { donateOpen = false }
     val current = stack.last()
 
     fun push(screen: Screen) {
@@ -235,16 +241,21 @@ fun App() {
      * 彻底消灭「按了没反应」的空格。
      */
     val enterContent: (Screen) -> Unit = { screen ->
-        // 等同按确定选中该分类：清掉叠加页、切到目标页
-        while (stack.size > 1) stack.removeAt(stack.lastIndex)
-        stack[0] = screen
-        // 进板块 = 锁侧栏（平板不锁）
-        if (railLockable) railLocked = true
-        bridgeScope.launch {
-            if (!focusIntoContent(screen)) {
-                // 重试耗尽（比如空页面）：解锁，焦点留在侧栏，不悬空也不把人锁在门外
-                railLocked = false
-                runCatching { railEntry.requestFocus() }
+        // 打赏不走路由：弹窗盖在当前页上，栈和焦点都不动
+        if (screen is Screen.Donate) {
+            donateOpen = true
+        } else {
+            // 等同按确定选中该分类：清掉叠加页、切到目标页
+            while (stack.size > 1) stack.removeAt(stack.lastIndex)
+            stack[0] = screen
+            // 进板块 = 锁侧栏（平板不锁）
+            if (railLockable) railLocked = true
+            bridgeScope.launch {
+                if (!focusIntoContent(screen)) {
+                    // 重试耗尽（比如空页面）：解锁，焦点留在侧栏，不悬空也不把人锁在门外
+                    railLocked = false
+                    runCatching { railEntry.requestFocus() }
+                }
             }
         }
     }
@@ -546,6 +557,44 @@ private fun RailIcon(kind: String, tint: Color) {
         val w = size.width
         val h = size.height
         when (kind) {
+            "cafe" -> {
+                // 咖啡杯（打赏入口）：杯身圆角方 + 杯柄 + 热气两缕，同 Canvas 线稿风格
+                val cr = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+                val sw = 1.4.dp.toPx()
+                // 杯身
+                drawRoundRect(
+                    tint,
+                    topLeft = Offset(w * 0.16f, h * 0.34f),
+                    size = Size(w * 0.52f, h * 0.46f),
+                    cornerRadius = cr,
+                    style = Stroke(sw),
+                )
+                // 杯柄
+                drawArc(
+                    tint,
+                    startAngle = -75f,
+                    sweepAngle = 220f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.6f, h * 0.42f),
+                    size = Size(w * 0.26f, h * 0.3f),
+                    style = Stroke(sw),
+                )
+                // 热气两缕
+                drawLine(
+                    tint,
+                    start = Offset(w * 0.34f, h * 0.1f),
+                    end = Offset(w * 0.34f, h * 0.24f),
+                    strokeWidth = sw,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+                drawLine(
+                    tint,
+                    start = Offset(w * 0.54f, h * 0.1f),
+                    end = Offset(w * 0.54f, h * 0.24f),
+                    strokeWidth = sw,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+            }
             "rank" -> {
                 val bw = w * 0.2f
                 val cr = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx())

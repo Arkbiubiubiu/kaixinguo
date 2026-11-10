@@ -445,6 +445,8 @@ private fun AppRoot() {
     var tab by remember { mutableStateOf(0) }
     var refresh by remember { mutableStateOf(0) }
     var route by remember { mutableStateOf<Route?>(null) }
+    // 打赏浮层：侧栏「打赏」入口，纯展示不接支付
+    var donateOpen by remember { mutableStateOf(false) }
     // 追更未读角标（旧版侧栏 badge）：启动查一次，之后每 20 分钟一轮
     // （旧版 follow_service 同周期；未登录时空转）
     var unreadNotices by remember { mutableStateOf(PcStore.unreadNoticeCount()) }
@@ -470,7 +472,9 @@ private fun AppRoot() {
             Sidebar(
                 if (route is Route.Player) "刷剧" else page,
                 collapsed,
-                onSelect = { RouteHolder.select(it); route = null },
+                onSelect = {
+                    if (it == "打赏") donateOpen = true else { RouteHolder.select(it); route = null }
+                },
                 onToggle = { RouteHolder.toggle() },
                 badge = unreadNotices,
             )
@@ -538,6 +542,8 @@ private fun AppRoot() {
             }
         }
     }
+    // 打赏浮层盖在最上层（侧栏/播放页都在它下面）
+    if (donateOpen) DonateOverlay(onClose = { donateOpen = false })
 }
 
 // ---------------------------------------------------------------- 首页

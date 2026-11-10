@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Notifications
@@ -199,6 +200,8 @@ fun Sidebar(selected: String, collapsed: Boolean, onSelect: (String) -> Unit, on
             NavItem(label, icon, selected == label, if (label == "追更") badge else 0) { onSelect(label) }
         }
         Spacer(Modifier.weight(1f))
+        // 打赏作者：纯自愿入口，点开浮层看赞赏码（Donate.kt）
+        NavItem("打赏", Icons.Filled.LocalCafe, false, 0) { onSelect("打赏") }
         NavItem("设置", Icons.Filled.Settings, selected == "设置", 0) { onSelect("设置") }
     }
 }

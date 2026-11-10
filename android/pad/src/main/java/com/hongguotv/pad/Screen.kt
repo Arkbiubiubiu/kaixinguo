@@ -12,6 +12,8 @@ sealed class Screen {
     object Follow : Screen()
     object Reserve : Screen()
     object Settings : Screen()
+    /** 打赏作者：侧栏入口弹 DonateDialog，不进路由栈（见 App.kt 的 navItems）。 */
+    object Donate : Screen()
     object Login : Screen()
     object Account : Screen()
     data class Detail(val seriesId: String) : Screen()
