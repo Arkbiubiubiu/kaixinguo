@@ -216,6 +216,8 @@ fun PlayerScreen(
     // 新引擎从创建到首帧这段时间 playing 也是 false（v1.2.1 的首帧门控），
     // 以前把它当暂停 → 自动切下一集时控制栏会闪一下。
     var userPaused by remember { mutableStateOf(false) }
+    // 纯键盘暂停（空格）：控制栏不因此弹出来；鼠标点的暂停才常驻控制栏
+    var keyboardPaused by remember { mutableStateOf(false) }
     // 引擎创建时刻：起播/换集后 6 秒内不算「暂停」，避免控制栏闪
     var engineReadyAt by remember { mutableStateOf(0L) }
     // 刷剧页（onWheelStep 非空）：控制栏常驻、不倒计时。
@@ -228,13 +230,22 @@ fun PlayerScreen(
             val idle = now - lastInputAt > 3_000
             val e = engine
             val starting = e != null && !e.playing && now - engineReadyAt < 6_000
-            chromeVisible = pinChrome || !idle || chromeHovered || userPaused ||
-                (e != null && !e.playing && !starting)
+            chromeVisible = pinChrome || !idle || chromeHovered ||
+                (!keyboardPaused && (userPaused || (e != null && !e.playing && !starting)))
         }
     }
     fun chromeWake() {
         lastInputAt = System.currentTimeMillis()
         chromeVisible = true
+    }
+    // 空格键动作：纯键盘暂停只停画面，不唤醒/常驻控制栏（鼠标点的暂停才常驻）
+    fun togglePlayByKeyboard() {
+        val e = engine ?: return
+        if (e.playing) {
+            e.pause(); userPaused = true; keyboardPaused = true
+        } else {
+            e.resume(); userPaused = false; keyboardPaused = false
+        }
     }
     // 评论面板加载（首屏 need_count 带回总数；翻页带回 cursor）
     fun loadComments(reset: Boolean) {
@@ -434,6 +445,7 @@ fun PlayerScreen(
         engine = eng
         // 换集/起播：新引擎从 0 开始播，暂停状态和「启动宽限」一起重置
         userPaused = false
+        keyboardPaused = false
         engineReadyAt = System.currentTimeMillis()
         withContext(Dispatchers.IO) {
             runCatching { eng.probe() }
@@ -575,9 +587,11 @@ fun PlayerScreen(
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key) {
-                    Key.Spacebar -> { chromeWake(); engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }; true }
-                    Key.DirectionLeft -> { chromeWake(); engine?.seekTo((engine?.positionMs ?: 0) - 5_000); true }
-                    Key.DirectionRight -> { chromeWake(); engine?.seekTo((engine?.positionMs ?: 0) + 5_000); true }
+                    // 纯键盘操作（空格/左右）不弹控制栏：只执行播放/快进，不唤醒 chrome。
+                    // 鼠标移动/点击才唤醒；刷剧页本来就常驻。
+                    Key.Spacebar -> { togglePlayByKeyboard(); true }
+                    Key.DirectionLeft -> { engine?.seekTo((engine?.positionMs ?: 0) - 5_000); true }
+                    Key.DirectionRight -> { engine?.seekTo((engine?.positionMs ?: 0) + 5_000); true }
                     // 刷剧页面（onWheelStep 非空）：上/下 = 上一部 / 下一部剧，和滚轮同语义。
                     // 只有从详情进来看完整短剧时才是切上一集/下一集。
                     Key.DirectionUp -> {
@@ -640,7 +654,10 @@ fun PlayerScreen(
                     if (now - clickAt < 350) return@clickable   // 连击/误触冷却（旧版 picker cooldown 同思路）
                     clickAt = now
                     chromeWake()
-                    engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }
+                    engine?.let {
+                        if (it.playing) { it.pause(); userPaused = true; keyboardPaused = false }
+                        else { it.resume(); userPaused = false; keyboardPaused = false }
+                    }
                 }
                 .pointerInput(Unit) {
                     // 纯 hover 的 Move 事件泵：onPointerEvent(Move) 在 Desktop 对
@@ -871,7 +888,10 @@ fun PlayerScreen(
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 CtrlIcon(if (engine?.playing == true) Icons.Filled.Pause else Icons.Filled.PlayArrow) {
-                    engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }
+                    engine?.let {
+                        if (it.playing) { it.pause(); userPaused = true; keyboardPaused = false }
+                        else { it.resume(); userPaused = false; keyboardPaused = false }
+                    }
                 }
                 CtrlIcon(Icons.Filled.SkipPrevious, enabled = index > 1) { if (index > 1) index -= 1 }
                 CtrlIcon(Icons.Filled.SkipNext, enabled = index < episodes.size) { if (index < episodes.size) index += 1 }
