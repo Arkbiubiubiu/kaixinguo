@@ -43,6 +43,13 @@ Copyright (C) 2026 Kaixinguo PC Authors
 5. org.json
    - 许可证：Public Domain（JSON.org）
 
+6. openhongguo（取流解析核心）
+   - 许可证：Apache License 2.0
+   - 随 PC 安装包分发的是其 `cmd/streamsrv` 的编译产物（streamsrv.exe），
+     并按本项目需要做了修改：增加 `/api/playinfo` 与 `/health` 两个入口，
+     去掉未使用的 `/seasons`。修改后的源码见本仓库 `resolver/` 目录。
+   - 仅在本机 127.0.0.1 上运行，不对外提供服务
+
 完整依赖清单见 `build.gradle.kts`。
 
 ================================================================

@@ -10,9 +10,9 @@
 
 | 端 | 文件 | 说明 |
 |---|---|---|
-| PC（Windows） | [kaixinguo-1.1.0.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/kaixinguo-1.1.0.msi) | 安装包，内含 FFmpeg（GPLv3） |
-| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-pad-debug.apk) | Android 8.0+ |
-| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-tv-debug.apk) | Android TV 8.0+ |
+| PC（Windows） | [kaixinguo-1.1.1.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.1/kaixinguo-1.1.1.msi) | 安装包，内含 FFmpeg（GPLv3）与本机取流服务 |
+| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-pad-debug.apk) | Android 8.0+（播放需自备取流服务） |
+| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-tv-debug.apk) | Android TV 8.0+（播放需自备取流服务） |
 
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
@@ -23,10 +23,10 @@
 三个端共用 `core` 数据层（接口、签名对接、播放地址解析），界面各自独立：
 PC 用 Compose Desktop，电视/平板是 Android 原生。同一版本发布时三端一起出。
 
-> ✅ **下载即用**：内容接口的签名算法已内置，安装后直接就能浏览推荐、搜索、详情、评论、排行榜、历史，不需要任何配置。
-> 🎬 **播放需要自备「取流服务」**：上游取流网关只放行首次请求的匿名设备，客户端单靠固定身份拿不到播放地址。
-> 想看视频，请在「设置 → 服务配置 → 取流服务」填入你自己的取流服务地址（需提供 `POST /api/playinfo`）；
-> 不填也能正常浏览全部内容，播放页会给出提示。
+> ✅ **PC 版下载即看**：内容接口内置签名，取流用随安装包分发的本机服务（只监听 127.0.0.1），
+> 装好直接浏览 + 播放，不需要填任何服务器地址、不需要账号。
+> 🔧 想换成自己的取流服务，在「设置 → 服务配置 → 取流服务」填地址即可；留空用内置。
+> 📱 平板/电视版目前内容开箱即用，播放需自备取流服务（客户端侧的取流核心还在接）。
 > 与任何内容平台的官方均无关联，仅供学习与技术研究。
 
 ## 功能
@@ -47,7 +47,7 @@ PC 用 Compose Desktop，电视/平板是 Android 原生。同一版本发布时
 | 层 | 技术 |
 |---|---|
 | UI | Kotlin 2.0 + Compose Multiplatform 1.7（Desktop） |
-| 播放 | FFmpeg（内置 exe，remux/解码） |
+| 播放 | FFmpeg（内置 exe，remux/解码）+ 本机取流服务（streamsrv，仅 127.0.0.1） |
 | 数据 | Kotlin 协程 + org.json，内置本地签名（x-argus / x-gorgon / x-khronos / x-medusa） |
 | 打包 | Gradle + jpackage（exe / MSI） |
 
@@ -83,14 +83,14 @@ gradle packageMsi
 
 ## 服务配置
 
-内容接口**开箱即用**（内置签名，无需配置）。只有播放需要额外填写：
+PC 版**开箱即用**（内容内置签名 + 本机取流服务），不需要任何配置。可选覆盖：
 
 | 项 | 说明 |
 |---|---|
-| 取流服务 | 你的取流/中转服务地址（必须提供 `POST /api/playinfo`）；不填 = 只能浏览 |
+| 取流服务 | 留空 = 用内置本机取流（推荐）；填地址 = 用你自己的 `POST /api/playinfo` 服务 |
 | 签名服务 | 留空 = 用内置本地签名（推荐）；填地址 = 走你自己的代签服务 |
-| 取流令牌 | 取流服务的 `X-Token`（可留空） |
-| 历史基址 | 云端历史接口基址（可留空，默认与取流服务同源） |
+| 取流令牌 | 自备取流服务的 `X-Token`（可留空） |
+| 历史基址 | 云端历史接口基址（可留空） |
 
 保存后立即生效，无需重启。
 

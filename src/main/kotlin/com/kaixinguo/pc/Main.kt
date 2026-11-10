@@ -313,10 +313,10 @@ private fun AppShell(onExit: () -> Unit) {
                         .border(1.dp, Palette.line, RoundedCornerShape(14.dp))
                         .padding(24.dp),
                 ) {
-                    Text("播放需要取流服务（可选）", color = Palette.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Text("开箱即用", color = Palette.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "内容浏览开箱即用，已内置签名，无需任何配置。只有播放视频需要你自己的取流服务地址：在「设置 → 服务配置 → 取流服务」里填写；不填也能正常浏览、搜索、看详情和评论。",
+                        "内容接口用的是内置签名，取流用的是随安装包分发的本机服务——装好就能浏览和播放，不需要填任何服务器地址。想换成自己的取流服务，可以在「设置 → 服务配置」里改。",
                         color = Palette.dim, fontSize = 13.sp, lineHeight = 20.sp,
                     )
                     Spacer(Modifier.height(18.dp))
@@ -370,20 +370,29 @@ private fun boot() {
     Log.sink = { level, tag, message -> println("$level/$tag: $message") }
     App.state = PcStore
     Palette.applyTheme(PcStore.theme)
-    App.playToken = PcStore.playToken
-    App.playBases = PcStore.playBases.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    App.historyBase = PcStore.historyBase
+    applyServiceConfig()
     App.deviceIid = PcStore.deviceIid
     App.deviceId = PcStore.deviceId
     App.deviceCdid = PcStore.deviceCdid
     val root = File(System.getenv("APPDATA") ?: ".", "KaixinguoPC").apply { mkdirs() }
     println("数据目录 ${root.absolutePath}")
+    Runtime.getRuntime().addShutdownHook(Thread { Resolver.stop() })
+}
+
+/** 取流服务：用户填了就用用户的；没填就用随包分发的本机服务。 */
+private fun configuredPlayBases(): List<String> {
+    val custom = PcStore.playBases.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    if (custom.isNotEmpty()) return custom
+    Resolver.start()
+    return listOf(Resolver.base)
 }
 
 /** 把设置页改过的服务配置同步进 App（保存后调用，免重启）。 */
 fun applyServiceConfig() {
-    App.playToken = PcStore.playToken
-    App.playBases = PcStore.playBases.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    val custom = PcStore.playBases.isNotBlank()
+    App.playBases = configuredPlayBases()
+    // 本机服务用内置 token；用户自填的取流服务用他自己的 token
+    App.playToken = if (custom) PcStore.playToken else Resolver.token
     App.historyBase = PcStore.historyBase
     App.deviceIid = PcStore.deviceIid
     App.deviceId = PcStore.deviceId
@@ -2110,12 +2119,12 @@ private fun SettingsPage() {
                     var hist by remember { mutableStateOf(PcStore.historyBase) }
                     if (!PcStore.configured) {
                         Text(
-                            "内容浏览开箱即用（已内置签名）。播放需要你自己的取流服务地址；不填就只能浏览。",
+                            "已内置本机取流服务，装好就能看。想换成自己的取流服务，在下面填地址即可。",
                             color = Palette.accent, fontSize = 12.sp,
                         )
                         Spacer(Modifier.height(10.dp))
                     }
-                    ServiceField("取流服务", bases, "http://你的取流服务:端口（不填=不能播放）") { bases = it }
+                    ServiceField("取流服务", bases, "留空 = 用内置本机取流（推荐）") { bases = it }
                     Spacer(Modifier.height(8.dp))
                     ServiceField(
                         "签名服务",
@@ -2408,7 +2417,7 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    Text("开心果 PC 版 1.1.0", color = Palette.text, fontSize = 14.sp)
+                    Text("开心果 PC 版 1.1.1", color = Palette.text, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
