@@ -162,7 +162,9 @@ fun PlayerScreen(
 
     var title by remember { mutableStateOf("") }
     var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
-    var index by remember { mutableStateOf(startIndex.coerceAtLeast(1)) }
+    // 按 seriesId 重置：刷剧页切到下一部剧时，上一部看到第几集的状态不能带过来。
+    // 以前没带 key，第一部自动播到第 2 集后，后面每部都从第 2 集开始。
+    var index by remember(seriesId) { mutableStateOf(startIndex.coerceAtLeast(1)) }
     var engine by remember { mutableStateOf<VideoEngine?>(null) }
     var remote by remember { mutableStateOf<RemoteVideo?>(null) }
     var proxy by remember { mutableStateOf<StreamProxy?>(null) }
@@ -216,6 +218,9 @@ fun PlayerScreen(
     var userPaused by remember { mutableStateOf(false) }
     // 引擎创建时刻：起播/换集后 6 秒内不算「暂停」，避免控制栏闪
     var engineReadyAt by remember { mutableStateOf(0L) }
+    // 刷剧页（onWheelStep 非空）：控制栏常驻、不倒计时。
+    // 只有从详情点「观看完整短剧」进来的播放页才用 3 秒自动淡出。
+    val pinChrome = onWheelStep != null
     LaunchedEffect(Unit) {
         while (true) {
             delay(500)
@@ -223,7 +228,7 @@ fun PlayerScreen(
             val idle = now - lastInputAt > 3_000
             val e = engine
             val starting = e != null && !e.playing && now - engineReadyAt < 6_000
-            chromeVisible = !idle || chromeHovered || userPaused ||
+            chromeVisible = pinChrome || !idle || chromeHovered || userPaused ||
                 (e != null && !e.playing && !starting)
         }
     }
@@ -616,7 +621,11 @@ fun PlayerScreen(
                 if (onWheelStep != null) onWheelStep.invoke(dir) else step(dir)
             }
             .onPointerEvent(PointerEventType.Enter) { chromeVisible = true }
-            .onPointerEvent(PointerEventType.Exit) { chromeVisible = false; cursorVisible = true }
+            .onPointerEvent(PointerEventType.Exit) {
+                // 刷剧页常驻，指针离开也不收
+                if (!pinChrome) chromeVisible = false
+                cursorVisible = true
+            }
             .pointerHoverIcon(PointerIcon.Default),
     ) {
         // 单击画面 = 播放/暂停（旧版 onStageClick）。选集改走控制栏按钮，
