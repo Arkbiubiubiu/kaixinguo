@@ -1,4 +1,4 @@
-@file:OptIn(
+﻿@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -339,10 +339,10 @@ fun ListSearchBox(value: String, onChange: (String) -> Unit, hint: String) {
 
 /** 描边小按钮（旧版 outline sm：高 32、圆角 8、细边框）。 */
 @Composable
-fun OutlineButton(text: String, icon: ImageVector? = null, onClick: () -> Unit) {
+fun OutlineButton(text: String, icon: ImageVector? = null, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var hovered by remember { mutableStateOf(false) }
     Row(
-        Modifier.height(32.dp).clip(RoundedCornerShape(8.dp))
+        modifier.height(32.dp).clip(RoundedCornerShape(8.dp))
             .border(1.dp, if (hovered) Color(0x4DFFFFFF) else Palette.line, RoundedCornerShape(8.dp))
             .background(if (hovered) Palette.panelHi else Color.Transparent)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
@@ -655,10 +655,14 @@ private fun HeroArrow(icon: ImageVector, onClick: () -> Unit) {
 }
 
 @Composable
-fun PrimaryButton(text: String, icon: ImageVector?, onClick: () -> Unit) {
+fun PrimaryButton(text: String, icon: ImageVector?, onClick: () -> Unit) =
+    PrimaryButton(text, icon, Modifier, onClick)
+
+@Composable
+fun PrimaryButton(text: String, icon: ImageVector?, modifier: Modifier, onClick: () -> Unit) {
     var hovered by remember { mutableStateOf(false) }
     Row(
-        Modifier.height(36.dp).clip(RoundedCornerShape(8.dp))
+        modifier.height(36.dp).clip(RoundedCornerShape(8.dp))
             .background(if (hovered) Palette.accentHover else Palette.accentFill)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -679,11 +683,12 @@ fun SecondaryButton(
     text: String,
     icon: ImageVector? = null,
     iconTint: Color = Palette.dim,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     var hovered by remember { mutableStateOf(false) }
     Row(
-        Modifier.height(36.dp).clip(RoundedCornerShape(8.dp))
+        modifier.height(36.dp).clip(RoundedCornerShape(8.dp))
             .background(if (hovered) Palette.panelHi else Color(0x1AFFFFFF))
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
             .onPointerEvent(PointerEventType.Exit) { hovered = false }
@@ -977,3 +982,4 @@ fun EmptyState(
         }
     }
 }
+

@@ -1308,6 +1308,47 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     }
 }
 
+/**
+ * 行卡右侧动作列（排行榜 / 上新日历共用）：
+ * 时间（可选）→ 播放/预约 → 详情，三行右对齐、宽度固定，按钮同宽。
+ * 之前详情是一个裸文字、还带自己的 padding，和按钮对不齐也不像按钮。
+ */
+@Composable
+private fun RowActions(
+    onPlay: () -> Unit,
+    onDetail: () -> Unit,
+    timeLabel: String? = null,
+    upcoming: Boolean = false,
+    reserved: Boolean = false,
+    onReserve: (() -> Unit)? = null,
+) {
+    Column(
+        Modifier.width(104.dp),
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (!timeLabel.isNullOrBlank()) {
+            Text(timeLabel, color = Palette.faint, fontSize = 12.sp, maxLines = 1)
+        }
+        when {
+            !upcoming -> PrimaryButton("播放", Icons.Filled.PlayArrow, Modifier.fillMaxWidth(), onPlay)
+            onReserve != null -> SecondaryButton(
+                if (reserved) "已预约" else "预约",
+                icon = if (reserved) Icons.Filled.Check else Icons.Filled.Add,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onReserve,
+            )
+            else -> Text(
+                if (reserved) "已预约" else "待上线",
+                color = if (reserved) Palette.dim else Palette.accent,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+        }
+        OutlineButton("详情", null, Modifier.fillMaxWidth(), onDetail)
+    }
+}
+
 @Composable
 private fun RankRow(rank: Int, card: SeriesCard, onClick: () -> Unit, onPlay: () -> Unit) {
     var hovered by remember { mutableStateOf(false) }
@@ -1387,19 +1428,12 @@ private fun RankRow(rank: Int, card: SeriesCard, onClick: () -> Unit, onPlay: ()
             }
         }
         Spacer(Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (card.upcoming) {
-                SecondaryButton(if (card.reserved) "已预约" else "预约", icon = if (card.reserved) Icons.Filled.Check else Icons.Filled.Add) { }
-            } else {
-                PrimaryButton("播放", Icons.Filled.PlayArrow, onPlay)
-                Text(
-                    "详情",
-                    color = if (hovered) Palette.text else Palette.dim,
-                    fontSize = 12.sp,
-                    modifier = Modifier.clickable { onClick() }.padding(horizontal = 10.dp, vertical = 2.dp),
-                )
-            }
-        }
+        RowActions(
+            onPlay = onPlay,
+            onDetail = onClick,
+            upcoming = card.upcoming,
+            reserved = card.reserved,
+        )
     }
 }
 
@@ -1643,7 +1677,7 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                                 when {
                                     calMoreLoading -> "加载中…"
                                     calMore[calDate] != null -> "下滑加载更多"
-                                    else -> "已经到底了 · 共 ${calDayItems.size} 部"
+                                    else -> "已经到底了"
                                 },
                                 color = Palette.faint, fontSize = 12.sp,
                             )
@@ -1813,16 +1847,6 @@ private fun CalendarRow(item: CalendarItem, onClick: () -> Unit, onPlay: () -> U
                         Text(it, color = Palette.star, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
-                if (!item.online) {
-                    Text(
-                        if (reserved) "已预约" else "待上线",
-                        color = if (reserved) Palette.dim else Palette.accent,
-                        fontSize = 10.sp,
-                        modifier = Modifier
-                            .border(1.dp, if (reserved) Palette.line else Palette.accent.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp),
-                    )
-                }
             }
             val meta = listOfNotNull(
                 item.category.takeIf { it.isNotBlank() },
@@ -1840,32 +1864,25 @@ private fun CalendarRow(item: CalendarItem, onClick: () -> Unit, onPlay: () -> U
             }
         }
         Spacer(Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (item.timeSec > 0) {
-                Text(
-                    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA)
-                        .format(java.util.Date(item.timeSec)),
-                    color = Palette.dim, fontSize = 12.sp,
-                )
-            }
-            if (item.online) {
-                PrimaryButton("播放", Icons.Filled.PlayArrow, onPlay)
-            } else {
-                SecondaryButton(
-                    if (reserved) "已预约" else "预约",
-                    icon = if (reserved) Icons.Filled.Check else Icons.Filled.Add,
-                ) {
-                    if (reserved) return@SecondaryButton
-                    scope.launch {
-                        val ok = withContext(Dispatchers.IO) {
-                            runCatching { Api.reserveToggle(item.seriesId, true) }.getOrDefault(false)
-                        }
-                        if (ok) reserved = true
+        RowActions(
+            onPlay = onPlay,
+            onDetail = onClick,
+            timeLabel = if (item.timeSec > 0) {
+                java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA)
+                    .format(java.util.Date(item.timeSec))
+            } else null,
+            upcoming = !item.online,
+            reserved = reserved,
+            onReserve = {
+                scope.launch {
+                    val target = !reserved
+                    val ok = withContext(Dispatchers.IO) {
+                        runCatching { Api.reserveToggle(item.seriesId, target) }.getOrDefault(false)
                     }
+                    if (ok) reserved = target
                 }
-            }
-            Text("详情", color = if (hovered) Palette.text else Palette.dim, fontSize = 12.sp)
-        }
+            },
+        )
     }
 }
 
