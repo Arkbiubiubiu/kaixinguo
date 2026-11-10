@@ -792,19 +792,26 @@ fun PlayerScreen(
             val intro = detail?.intro.orEmpty()
             val seriesTitle = title.ifBlank { "播放" }
             Column(Modifier.widthIn(max = 620.dp).padding(end = 80.dp)) {
-                Text(
-                    "@$seriesTitle",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "第 $index 集" + if (episodes.isNotEmpty()) " · 全 ${detail?.episodeCount ?: episodes.size} 集" else "",
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 12.sp,
-                )
+                // 标题区（@剧名 + 第N集）点一下进详情：旧版就有这个入口，
+                // 重写播放器时只留了刷剧页那颗胶囊，正片里的入口漏了
+                Column(
+                    Modifier.pointerHoverIcon(PointerIcon.Hand)
+                        .clickable(enabled = chromeVisible) { onDetail() },
+                ) {
+                    Text(
+                        "@$seriesTitle",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "第 $index 集" + if (episodes.isNotEmpty()) " · 全 ${detail?.episodeCount ?: episodes.size} 集" else "",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                    )
+                }
                 if (intro.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Row(Modifier.widthIn(max = 420.dp), verticalAlignment = Alignment.Bottom) {
