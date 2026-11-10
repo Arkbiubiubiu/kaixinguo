@@ -62,6 +62,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.text.font.FontWeight
@@ -94,6 +98,15 @@ import kotlin.math.roundToInt
  * 数据层来自共享模块 core（Api / 签名 / 解密），这里只负责界面与交互。
  * 排版按真实像素：1dp = 1px，窗口拉大只增加列数。
  */
+/** 品牌图标：与安装包 / 安卓启动图标同一张（红底开心果笑脸）。 */
+private val brandBitmap: ImageBitmap? by lazy {
+    runCatching {
+        val stream = object {}.javaClass.getResourceAsStream("/brand.png")
+            ?: return@runCatching null
+        stream.use { javax.imageio.ImageIO.read(it).toComposeImageBitmap() }
+    }.getOrNull()
+}
+
 fun main() = application {
     boot()
     val state = rememberWindowState(width = 1440.dp, height = 900.dp)
@@ -104,6 +117,7 @@ fun main() = application {
         state = state,
         undecorated = true,
         transparent = false,
+        icon = brandBitmap?.let { BitmapPainter(it) },
     ) {
         val awt = java.awt.Window.getWindows().filterIsInstance<java.awt.Frame>().firstOrNull()
         // 窗口最小化 → 播放暂停（回到前台不自动续播）
@@ -280,8 +294,22 @@ private fun AppShell(onExit: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Spacer(Modifier.width(12.dp))
-                Box(Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).background(Palette.accentFill), contentAlignment = Alignment.Center) {
-                    Text("果", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Box(
+                    Modifier.size(20.dp).clip(RoundedCornerShape(6.dp))
+                        .background(Palette.accentFill),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val bmp = brandBitmap
+                    if (bmp != null) {
+                        androidx.compose.foundation.Image(
+                            bmp,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        )
+                    } else {
+                        Text("果", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
                 Spacer(Modifier.width(8.dp))
                 Text("开心果", color = Palette.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -2417,7 +2445,7 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    Text("开心果 PC 版 1.2.2", color = Palette.text, fontSize = 14.sp)
+                    Text("开心果 PC 版 1.2.3", color = Palette.text, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
