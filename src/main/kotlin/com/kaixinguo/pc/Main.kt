@@ -1416,29 +1416,103 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     // 推荐视图滚动容器（滚动近底部自动翻页）
     val newScroll = rememberScrollState()
 
-    // 日历：日期条 + 当日上新行卡列表
-    var calDates by remember { mutableStateOf<List<String>>(emptyList()) }
-    /** 日历周偏移（0=本周，±1 前后一周；旧版日历分页） */
-    var calWeek by remember { mutableStateOf(0) }
+    // 日历：日期条 + 当日上新行卡列表。
+    // 官方口径（对齐 Android CalendarTab / Windows calendar.rs）：
+    // 1. 首屏不带 target_date：服务端回 calendar_schema.date_list + 当天那批；
+    // 2. 切日期要带 target_date 重新请求，不能拿当天那批按天过滤（其它日期会全空）；
+    // 3. 条目有两套 schema：当天批是嵌套 subscribe_data.*，其它日期是扁平 name/item_id；
+    // 4. 发布时间 schedule_publish_time（秒）要连日期一起显示（MM-dd HH:mm）。
+    var calDays by remember { mutableStateOf<List<String>>(emptyList()) }
     var calDate by remember { mutableStateOf("") }
-    var calItems by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
+    var calByDay by remember { mutableStateOf<Map<String, List<CalendarItem>>>(emptyMap()) }
+    /** date → (nextOffset, sessionId)；有值表示这天还能翻 */
+    var calMore by remember { mutableStateOf<Map<String, Pair<Int, String>>>(emptyMap()) }
     var calLoading by remember { mutableStateOf(false) }
+    var calMoreLoading by remember { mutableStateOf(false) }
+    var calInit by remember { mutableStateOf(false) }
+    val calList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val dayFmt = remember { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.CHINA) }
 
-    LaunchedEffect(view, gender, calWeek) {
+    LaunchedEffect(view, gender) {
         if (view == 0) {
             loading = true
             page = withContext(Dispatchers.IO) { runCatching { Api.newDrama(gender, 0, "") }.getOrNull() }
             loading = false
-        } else {
-            calLoading = true
-            val root = withContext(Dispatchers.IO) { runCatching { Api.calendar(calDate) }.getOrNull() }
-            // 日期条：官方日期未带独立列表时本地生成（按周偏移，7 天/页）
-            val today = java.time.LocalDate.now().plusDays(calWeek * 7L)
-            calDates = (0..6).map { today.plusDays(it.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")) }
-            if (calDate.isEmpty() || calDates.none { it == calDate }) calDate = calDates.first()
-            calItems = parseCalendarItems(root)
-            calLoading = false
         }
+    }
+
+    // 日历首屏（只跑一次）：日期表 + 当天条目
+    LaunchedEffect(view) {
+        if (view != 1 || calInit) return@LaunchedEffect
+        calLoading = true
+        val root = withContext(Dispatchers.IO) { runCatching { Api.calendar() }.getOrNull() }
+        val data = root?.optJSONObject("data")
+        val schema = data?.optJSONObject("calendar_schema")
+        val days = mutableListOf<String>()
+        schema?.optJSONArray("date_list")?.let { arr ->
+            for (i in 0 until arr.length()) arr.optString(i).takeIf { it.length == 8 }?.let(days::add)
+        }
+        val items = parseCalendarDay(root)
+        val today = dayFmt.format(java.util.Date())
+        val grouped = items.groupBy { it.dayKey().ifEmpty { today } }
+        calDays = days.ifEmpty { grouped.keys.sorted() }
+        val def = schema?.optString("default_date").orEmpty()
+        calDate = when {
+            def.isNotEmpty() && calDays.contains(def) -> def
+            calDays.contains(today) -> today
+            else -> calDays.firstOrNull().orEmpty()
+        }
+        calByDay = grouped
+        data?.let { d ->
+            if (d.optBoolean("has_more", false)) {
+                calMore = mapOf(today to (d.optInt("next_offset", items.size) to d.optString("session_id")))
+            }
+        }
+        calInit = true
+        calLoading = false
+    }
+
+    // 选中尚未拉过的日期：带 target_date 重新请求
+    LaunchedEffect(calDate) {
+        if (view != 1 || !calInit || calDate.isEmpty() || calByDay.containsKey(calDate)) return@LaunchedEffect
+        calLoading = true
+        val root = withContext(Dispatchers.IO) { runCatching { Api.calendar(calDate) }.getOrNull() }
+        val list = parseCalendarDay(root)
+        calByDay = calByDay + (calDate to list)
+        val d = root?.optJSONObject("data")
+        calMore = if (d != null && d.optBoolean("has_more", false)) {
+            calMore + (calDate to (d.optInt("next_offset", list.size) to d.optString("session_id")))
+        } else {
+            calMore - calDate
+        }
+        calLoading = false
+    }
+
+    // 日历翻页：滚到接近底部自动续拉（接口返回空页就当到底）
+    LaunchedEffect(view, calDate, calList) {
+        if (view != 1) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow { calList.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { last ->
+                val items = calByDay[calDate].orEmpty()
+                val more = calMore[calDate] ?: return@collect
+                if (calLoading || calMoreLoading || items.isEmpty() || last < items.size - 2) return@collect
+                calMoreLoading = true
+                val (offset, session) = more
+                val root = withContext(Dispatchers.IO) {
+                    runCatching { Api.calendar(calDate, offset, session) }.getOrNull()
+                }
+                val extra = parseCalendarDay(root)
+                if (extra.isNotEmpty()) {
+                    calByDay = calByDay + (calDate to (items + extra).distinctBy { it.seriesId })
+                }
+                val d = root?.optJSONObject("data")
+                calMore = if (d != null && d.optBoolean("has_more", false) && extra.isNotEmpty()) {
+                    calMore + (calDate to (d.optInt("next_offset", offset + extra.size) to d.optString("session_id")))
+                } else {
+                    calMore - calDate
+                }
+                calMoreLoading = false
+            }
     }
 
     // 滚动加载（推荐视图）：近底部 500px 自动翻页
@@ -1461,14 +1535,6 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         moreLoading = false
     }
 
-    LaunchedEffect(calDate) {
-        if (view != 1 || calDate.isEmpty()) return@LaunchedEffect
-        calLoading = true
-        val root = withContext(Dispatchers.IO) { runCatching { Api.calendar(calDate) }.getOrNull() }
-        calItems = parseCalendarItems(root)
-        calLoading = false
-    }
-
     Column(Modifier.fillMaxSize()) {
         // 视图 tab：剧剧推荐 / 上新日历（旧版页内第一行）
         Row(
@@ -1480,42 +1546,43 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 TabChip(label, view == i) { view = i }
             }
             Spacer(Modifier.weight(1f))
-            Text("共 ${page?.cards?.size ?: 0} 部", color = Palette.faint, fontSize = 12.sp)
+            Text(
+                if (view == 1) "共 ${calByDay[calDate]?.size ?: 0} 部"
+                else "共 ${page?.cards?.size ?: 0} 部",
+                color = Palette.faint, fontSize = 12.sp,
+            )
         }
-        // 频道筛选：全部 / 男频 / 女频
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            listOf("全部", "男频", "女频").forEachIndexed { i, label ->
-                TabChip(label, gender == i) { gender = i }
-                Spacer(Modifier.width(8.dp))
+        // 频道筛选：只对「新剧推荐」有效（日历接口按官方日历走，不分男女频）
+        if (view == 0) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                listOf("全部", "男频", "女频").forEachIndexed { i, label ->
+                    TabChip(label, gender == i) { gender = i }
+                    Spacer(Modifier.width(8.dp))
+                }
             }
         }
         if (view == 1) {
-            // 日期条：星期小字 + 日期大字，选中主色底（旧版官方同款）；
-            // 左右箭头按周翻页（旧版日历分页同语义）
+            // 日期条：用官方的 calendar_schema.date_list（约 15 天），
+            // 每格「今天/明天/MM月DD日 + 周几 · 当天条数」，横向可滚。
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 24.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(Modifier.clip(RoundedCornerShape(8.dp)).clickable { calWeek -= 1 }.padding(6.dp)) {
-                    Icon(Icons.Filled.ChevronLeft, contentDescription = "上一周", tint = Palette.dim, modifier = Modifier.size(18.dp))
-                }
                 Row(
                     Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    calDates.take(7).forEach { d ->
-                        NewDateCell(d, calDate == d) { calDate = d }
+                    calDays.forEach { d ->
+                        CalendarDateCell(d, calDate == d, calByDay[d]?.size) { calDate = d }
                     }
-                }
-                Box(Modifier.clip(RoundedCornerShape(8.dp)).clickable { calWeek += 1 }.padding(6.dp)) {
-                    Icon(Icons.Filled.ChevronRight, contentDescription = "下一周", tint = Palette.dim, modifier = Modifier.size(18.dp))
                 }
             }
             Spacer(Modifier.height(8.dp))
         }
+        val calDayItems = calByDay[calDate].orEmpty()
         Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp)) {
             when {
                 view == 0 && loading && page == null -> CenterLoading()
@@ -1552,21 +1619,35 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                         )
                     }
                 }
-                calLoading && calItems.isEmpty() -> CenterLoading()
-                calItems.isEmpty() -> EmptyState(title = "这一天没有上新", hint = "换一天看看")
+                calLoading && calDayItems.isEmpty() -> CenterLoading()
+                calDayItems.isEmpty() -> EmptyState(title = "这一天没有上新", hint = "换一天看看")
                 else -> androidx.compose.foundation.lazy.LazyColumn(
                     Modifier.fillMaxSize(),
+                    state = calList,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
                 ) {
-                    items(calItems, key = { it.seriesId }) { card ->
-                        // 日历行卡 = 排行榜行同骨架；行尾按上线状态分
-                        RankRow(
-                            rank = 0,
-                            card = card,
-                            onClick = { onOpen(card.seriesId) },
-                            onPlay = { onPlay(card.seriesId) },
+                    items(calDayItems, key = { it.seriesId }) { item ->
+                        CalendarRow(
+                            item = item,
+                            onClick = { onOpen(item.seriesId) },
+                            onPlay = { onPlay(item.seriesId) },
                         )
+                    }
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                when {
+                                    calMoreLoading -> "加载中…"
+                                    calMore[calDate] != null -> "下滑加载更多"
+                                    else -> "已经到底了 · 共 ${calDayItems.size} 部"
+                                },
+                                color = Palette.faint, fontSize = 12.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -1574,62 +1655,217 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     }
 }
 
-/** 日历响应 → SeriesCard 列表（subscribe_items 的扁平卡片，带 is_online 分组）。 */
-private fun parseCalendarItems(root: JSONObject?): List<SeriesCard> {
-    if (root == null) return emptyList()
-    val items = root.optJSONObject("data")?.optJSONArray("subscribe_items") ?: return emptyList()
-    val out = mutableListOf<SeriesCard>()
-    for (i in 0 until items.length()) {
-        val o = items.optJSONObject(i) ?: continue
-        val sd = o.optJSONObject("subscribe_data") ?: o
-        val online = when (o.optString("is_online")) {
-            "true" -> true
-            "false" -> false
-            else -> sd.optInt("episode_cnt", 0) > 0
+/** 上新日历的一条（字段口径对齐 Android CalendarTab / Windows calendar.rs）。 */
+private data class CalendarItem(
+    val seriesId: String,
+    val title: String,
+    val cover: String,
+    /** subscribe_data.video_desc（不是 description） */
+    val desc: String,
+    /** 橙色那格：已上线「333万播放」/ 待上线「1570.3万人预约」 */
+    val heat: String,
+    val score: String,
+    val category: String,
+    val episodeCount: Int,
+    /** schedule_publish_time，毫秒 */
+    val timeSec: Long,
+    val online: Boolean,
+    val subscribed: Boolean,
+)
+
+private fun CalendarItem.dayKey(): String =
+    if (timeSec <= 0) "" else
+        java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.CHINA).format(java.util.Date(timeSec))
+
+/**
+ * 日历响应 → CalendarItem。
+ * 两套 schema 都要认：当天那批是嵌套 `subscribe_data.*`，其它日期是扁平
+ * `name / item_id / cover`；标题、series_id、封面都要按这个顺序回退。
+ */
+private fun parseCalendarDay(root: JSONObject?): List<CalendarItem> {
+    val data = root?.optJSONObject("data") ?: return emptyList()
+    val arr = data.optJSONArray("subscribe_items") ?: return emptyList()
+    val out = mutableListOf<CalendarItem>()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val sd = o.optJSONObject("subscribe_data")
+        val title = sd?.optString("title").orEmpty()
+            .ifEmpty { o.optString("name") }
+            .ifEmpty { sd?.optString("series_title").orEmpty() }
+        if (title.isEmpty()) continue
+        val sid = sd?.optString("series_id").orEmpty()
+            .ifEmpty { o.optString("item_id") }
+            .ifEmpty { o.optString("series_id") }
+        if (sid.isEmpty() || sid == "0") continue
+        var ts = o.optLong("schedule_publish_time", 0L)
+        if (ts in 1..9_999_999_999L) ts *= 1000
+        var heat = ""
+        o.optJSONArray("rec_tags")?.let { a ->
+            for (k in 0 until a.length()) {
+                val node = a.optJSONObject(k) ?: continue
+                val t = node.optString("text").ifEmpty { node.optString("content") }
+                if (t.isNotBlank()) {
+                    heat = t
+                    break
+                }
+            }
+        }
+        if (heat.isEmpty()) {
+            val plays = sd?.optLong("play_cnt", 0L) ?: 0L
+            heat = if (plays > 0) com.hongguotv.pad.formatCount(plays.toString()) + "播放"
+            else o.optString("expected_rec_text")
         }
         out.add(
-            SeriesCard(
-                seriesId = sd.optString("series_id").ifEmpty { sd.optString("book_id") },
-                title = sd.optString("book_name").ifEmpty { sd.optString("title") },
-                cover = sd.optString("thumb_url").ifEmpty { sd.optString("cover") },
-                episodeCount = sd.optInt("episode_cnt", 0),
-                score = sd.optString("score"),
-                tags = listOfNotNull(sd.optString("category").takeIf { it.isNotEmpty() }),
-                desc = sd.optString("description").takeIf { it.isNotEmpty() },
-                upcoming = !online,
+            CalendarItem(
+                seriesId = sid,
+                title = title,
+                cover = sd?.optString("cover").orEmpty().ifEmpty { o.optString("cover") },
+                desc = sd?.optString("video_desc").orEmpty().ifEmpty { o.optString("item_desc") },
+                heat = heat,
+                score = sd?.optString("score").orEmpty(),
+                category = o.optString("category").ifEmpty { sd?.optString("category").orEmpty() },
+                episodeCount = sd?.optInt("episode_cnt", 0) ?: o.optInt("episode_cnt", 0),
+                timeSec = ts,
+                online = o.optBoolean("is_online", false),
+                subscribed = o.optBoolean("has_subscribed", false),
             ),
         )
     }
-    return out.filter { it.seriesId.isNotEmpty() }
+    return out
 }
 
+/** 日期格：「今天 / 明天 / M月D日」+「周几 · 当天条数」。 */
 @Composable
-private fun NewDateCell(date: String, active: Boolean, onClick: () -> Unit) {
-    // "20261109" → 周几 + 「11月9日」
-    val day = runCatching {
-        java.time.LocalDate.parse(date.take(4) + "-" + date.drop(4).take(2) + "-" + date.drop(6).take(2))
-    }.getOrNull()
-    val weekday = day?.dayOfWeek?.let {
+private fun CalendarDateCell(date: String, active: Boolean, count: Int?, onClick: () -> Unit) {
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")
+    val d = runCatching { java.time.LocalDate.parse(date, fmt) }.getOrNull()
+    val today = java.time.LocalDate.now()
+    val label = when {
+        d == null -> date
+        d == today -> "今天"
+        d == today.plusDays(1) -> "明天"
+        else -> "${d.monthValue}月${d.dayOfMonth}日"
+    }
+    val weekday = d?.dayOfWeek?.let {
         listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")[it.value - 1]
     }.orEmpty()
-    val label = day?.let { "${it.monthValue}月${it.dayOfMonth}日" } ?: date
     Column(
         Modifier
             .width(76.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(if (active) Palette.accentFill else Palette.panel)
-            .border(1.dp, if (active) Color.Transparent else Palette.line, RoundedCornerShape(8.dp))
+            .border(1.dp, if (active) Color.Transparent else Palette.line, RoundedCornerShape(10.dp))
             .clickable { onClick() }
-            .padding(vertical = 8.dp),
+            .padding(vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(weekday, color = if (active) Color.White else Palette.dim, fontSize = 12.sp)
         Text(
             label,
             color = if (active) Color.White else Palette.text,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
         )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            if (count != null && count > 0) "$weekday · $count" else weekday,
+            color = if (active) Color.White.copy(alpha = 0.8f) else Palette.faint,
+            fontSize = 10.sp,
+        )
+    }
+}
+
+/**
+ * 日历行：封面 + 标题/评分/上线状态 + 分类·集数 + 热度 + 两行简介，
+ * 右侧是「MM-dd HH:mm」发布时间 + 播放/预约（旧版 render_calendar_row 同信息量）。
+ */
+@Composable
+private fun CalendarRow(item: CalendarItem, onClick: () -> Unit, onPlay: () -> Unit) {
+    var hovered by remember { mutableStateOf(false) }
+    var reserved by remember(item.seriesId) { mutableStateOf(item.subscribed) }
+    val scope = rememberCoroutineScope()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Color(0x4DFFFFFF) else Palette.line, RoundedCornerShape(12.dp))
+            .background(Palette.panel)
+            .onPointerEvent(PointerEventType.Enter) { hovered = true }
+            .onPointerEvent(PointerEventType.Exit) { hovered = false }
+            .clickable { onClick() }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RemoteImage(
+            item.cover,
+            Modifier.width(88.dp).aspectRatio(3f / 4f).clip(RoundedCornerShape(8.dp)),
+            fallback = item.title,
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    item.title, color = Palette.text, fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                item.score.takeIf { it.isNotBlank() }?.let {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Icon(Icons.Filled.Star, contentDescription = null, tint = Palette.star, modifier = Modifier.size(12.dp))
+                        Text(it, color = Palette.star, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+                if (!item.online) {
+                    Text(
+                        if (reserved) "已预约" else "待上线",
+                        color = if (reserved) Palette.dim else Palette.accent,
+                        fontSize = 10.sp,
+                        modifier = Modifier
+                            .border(1.dp, if (reserved) Palette.line else Palette.accent.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            val meta = listOfNotNull(
+                item.category.takeIf { it.isNotBlank() },
+                if (item.episodeCount > 0) "全 ${item.episodeCount} 集" else null,
+            ).joinToString(" · ")
+            if (meta.isNotBlank()) {
+                Text(meta, color = Palette.dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (item.heat.isNotBlank()) HeatBadge(item.heat)
+            item.desc.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it, color = Palette.dim.copy(alpha = 0.8f), fontSize = 12.sp,
+                    lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (item.timeSec > 0) {
+                Text(
+                    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA)
+                        .format(java.util.Date(item.timeSec)),
+                    color = Palette.dim, fontSize = 12.sp,
+                )
+            }
+            if (item.online) {
+                PrimaryButton("播放", Icons.Filled.PlayArrow, onPlay)
+            } else {
+                SecondaryButton(
+                    if (reserved) "已预约" else "预约",
+                    icon = if (reserved) Icons.Filled.Check else Icons.Filled.Add,
+                ) {
+                    if (reserved) return@SecondaryButton
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) {
+                            runCatching { Api.reserveToggle(item.seriesId, true) }.getOrDefault(false)
+                        }
+                        if (ok) reserved = true
+                    }
+                }
+            }
+            Text("详情", color = if (hovered) Palette.text else Palette.dim, fontSize = 12.sp)
+        }
     }
 }
 
