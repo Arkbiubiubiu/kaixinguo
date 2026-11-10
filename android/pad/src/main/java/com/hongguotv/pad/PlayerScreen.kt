@@ -282,10 +282,17 @@ fun PlayerScreen(
     // ---- 换集最后一帧定格 ----
     // 播放器切到下一集的瞬间，画面缓冲区会被清掉，新一集要等解码器吐出第一帧
     // 才有内容 —— 电视上就是「黑一下 / 像刷新了一遍」。这里在快播完时把当前
-    // 这一帧抓成图先顶着，新一集真正出画（onRenderedFirstFrame）再撤。
+    // 这一帧抓成图，**等这一集真正结束再盖上去**（heldVisible），新一集出画
+    // （onRenderedFirstFrame）就撤。
+    //
+    // 注意：抓帧时机是片尾前几百毫秒，如果抓到就立刻显示，等于把最后一秒的
+    // 画面冻住 —— 这正是「每次切集画面定住一下」的由来。所以抓和显示必须分开。
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     var heldFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var heldVisible by remember { mutableStateOf(false) }
     var heldAt by remember { mutableStateOf(0L) }
+    /** 定格帧盖上去的时刻（3 秒兜底用）；heldAt 是抓帧时刻（6 秒新鲜度用） */
+    var heldShownAt by remember { mutableStateOf(0L) }
 
     fun captureLastFrame() {
         val surface = playerViewRef?.videoSurfaceView as? android.view.SurfaceView ?: return
@@ -341,6 +348,13 @@ fun PlayerScreen(
              * 所以没有解码器重建、没有画面定格。要做的只是把状态对齐到新的那一集。
              */
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // 换源这一拍解码器已释放、画面是黑的：抓到过片尾帧就立刻盖上。
+                // 加 isPlaying 判断——万一回调晚于新一集出画，宁可不盖，也别糊住正在播的画面
+                val now = System.currentTimeMillis()
+                if (heldFrame != null && !heldVisible && !player.isPlaying && now - heldAt < 6_000) {
+                    heldVisible = true
+                    heldShownAt = now
+                }
                 if (!SEAMLESS_PLAYLIST) return
                 if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return
                 val uri = mediaItem?.localConfiguration?.uri?.toString() ?: return
@@ -396,9 +410,10 @@ fun PlayerScreen(
 
             override fun onRenderedFirstFrame() {
                 // 新一集真正出画了：撤掉换集时顶着的定格帧
-                if (heldFrame != null) {
+                if (heldVisible) {
                     android.util.Log.i("nextup", "held frame release after ${System.currentTimeMillis() - heldAt}ms")
                 }
+                heldVisible = false
                 heldFrame = null
             }
 
@@ -811,14 +826,25 @@ fun PlayerScreen(
                 position = player.currentPosition
                 if (player.duration > 0) duration = player.duration
                 playing = player.isPlaying
-                // 快播完时抓一帧顶住换集黑屏；抓不到/全黑就什么都不做（沿用原行为）
+                // 快播完时抓一帧备着（只抓不显示，等这一集真的结束再盖）。
+                // 抓得越晚越接近真正的末帧，所以窗口内每一拍都重抓一次、取最新的
                 val total = player.duration
-                if (heldFrame == null && player.isPlaying && total > 0) {
+                if (player.isPlaying && total > 0) {
                     val remain = total - player.currentPosition
-                    if (remain in 250..1_200) captureLastFrame()
+                    if (remain in 100..900) captureLastFrame()
                 }
-                // 定格帧不能一直挂着：3 秒还没等到新画面就撤（起播失败时别糊住画面）
-                if (heldFrame != null && System.currentTimeMillis() - heldAt > 3_000) heldFrame = null
+                // 定格帧什么时候盖、什么时候撤，都以播放器状态为准（不依赖回调顺序）：
+                //   盖 = 抓到了帧 + 现在没在播（换集间隙 / 播完）+ 帧不超过 6 秒
+                //   撤 = 又开始播了（新一集出画）或盖满 3 秒（起播失败别一直糊着）
+                val nowMs = System.currentTimeMillis()
+                if (heldFrame != null && !heldVisible && !player.isPlaying && nowMs - heldAt < 6_000) {
+                    heldVisible = true
+                    heldShownAt = nowMs
+                }
+                if (heldVisible && (player.isPlaying || nowMs - heldShownAt > 3_000)) {
+                    heldVisible = false
+                    heldFrame = null
+                }
                 // 顺手记下这一集看到哪儿：播放页被销毁（比如跳详情页）后回来能接着看
                 episodes.getOrNull(index - 1)?.let { ep -> Store.markPos(ep.vid, position) }
             }
@@ -1115,13 +1141,16 @@ fun PlayerScreen(
 
         // 换集瞬间顶住黑屏：把上一集最后一帧盖在画面上，新一集出画
         // （onRenderedFirstFrame）就撤掉。压弹幕之下、控制条之上。
-        heldFrame?.let { bmp ->
-            androidx.compose.foundation.Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+        // 只在「这一集已经结束/播放器已切源」时显示 —— 抓帧时还在播，不能提前盖。
+        if (heldVisible) {
+            heldFrame?.let { bmp ->
+                androidx.compose.foundation.Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
 
         // 弹幕层压在画面之上、控制条之下；不接指针

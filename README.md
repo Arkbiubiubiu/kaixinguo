@@ -11,8 +11,8 @@
 | 端 | 文件 | 说明 |
 |---|---|---|
 | PC（Windows） | [kaixinguo-1.2.5.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.5/kaixinguo-1.2.5.msi) | 安装包，内含 FFmpeg（GPLv3）与本机取流服务 |
-| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.4/pad-pad-debug.apk) | Android 8.0+ |
-| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.4/pad-tv-debug.apk) | Android TV 8.0+ |
+| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.5/pad-pad-debug.apk) | Android 8.0+ |
+| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.5/pad-tv-debug.apk) | Android TV 8.0+ |
 
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
