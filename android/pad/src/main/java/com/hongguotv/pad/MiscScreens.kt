@@ -624,8 +624,16 @@ fun FindScreen(
                                         firstFocus = if (idx == 0) chipEntry else null,
                                         modifier = Modifier.weight(1f),
                                         onPick = { id ->
-                                            selected.removeAll { it.first == row.key }
-                                            if (id.isNotEmpty()) selected.add(row.key to id)
+                                            if (row.key == "genre") {
+                                                // 换体裁 = 整套主题/设定/背景都换了一套 id，
+                                                // 旧选择必须当场清掉，否则会先发一次非法组合，
+                                                // 界面闪一下「这个组合没有内容」。
+                                                selected.clear()
+                                                if (id.isNotEmpty()) selected.add(row.key to id)
+                                            } else {
+                                                selected.removeAll { it.first == row.key }
+                                                if (id.isNotEmpty()) selected.add(row.key to id)
+                                            }
                                         },
                                     )
                                 }

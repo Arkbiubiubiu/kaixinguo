@@ -1088,12 +1088,12 @@ object Api {
     }
 
     /**
-     * 找剧筛选面板。背后逻辑（与原版一致）：
-     * 漫剧和真人剧是两套分类体系，landpage 面板只会给真人剧的通用分类；
-     * 漫剧(comic_series)/AI剧(ai_series) 的主题/设定/背景藏在各自频道首页
-     * tab 数据（tab_type=32）的 cell_selector.inner_rows 里（就是频道页顶部
-     * 筛选器的数据源），且必须用签名请求（query 只带 tab_index/tab_type/offset）
-     * 上游才返回对应频道。真人剧走 tab_type=38。取不到再退回 landpage 面板。
+     * 找剧筛选面板。两套分类体系，id 不能混用（实测）：
+     * - 真人剧走 landpage 通用面板（selector_rows），悬疑/宫斗…的 id 内容接口认；
+     * - 漫剧(comic_series)/AI剧(ai_series) 的主题/设定/背景藏在各自频道首页
+     *   tab 数据（tab_type=32）的 cell_selector.inner_rows 里（频道页顶部筛选器的数据源），
+     *   必须用签名请求（query 只带 tab_index/tab_type/offset）取。
+     * 拿错体系的 id 不会报错，只会静默返回空列表（或者一两条），看起来就像「筛选坏了」。
      */
     fun findRows(genreId: String): List<FilterRow> {
         val body = JSONObject()
@@ -1125,13 +1125,18 @@ object Api {
             )
         }
         out.add(FilterRow("genre", "体裁", genre))
-        // 主题/设定/背景：频道 selector 优先，landpage 面板兜底
+        // 体裁分类 id 两套体系不能混用（实测）：
+        // - 真人剧：landpage 通用面板的 id 才是内容接口认的（悬疑 cate_5004 → 20 条），
+        //   频道 tab38 的 inner_rows id（cate_165）只能查出 1 条，等于把筛选筛废了；
+        // - 漫剧/AI剧：只有频道 tab32 的 id 能查出内容（剧情 cate_316 → 20 条），
+        //   landpage 给的通用 id（cate_5030）一条都查不出。
+        val comic = genreId == "comic_series" || genreId == "ai_series"
         for (pair in listOf(
             "category_dim_theme" to "主题",
             "category_dim_role" to "设定",
             "category_dim_epoch" to "背景",
         )) {
-            val items = dims[pair.first]?.takeIf { it.isNotEmpty() } ?: itemsOf(rows[pair.first])
+            val items = if (comic) dims[pair.first].orEmpty() else itemsOf(rows[pair.first])
             if (items.isNotEmpty()) out.add(FilterRow(pair.first, pair.second, items))
         }
         itemsOf(rows["sort"]).takeIf { it.isNotEmpty() }?.let {

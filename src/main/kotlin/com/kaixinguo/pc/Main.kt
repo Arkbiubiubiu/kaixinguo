@@ -972,13 +972,17 @@ private fun FindPage(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     // 每行第一个永远是「全部」（旧版筛选行口径；接口不保证下发空 id 项）
+                    // 体裁这一行的「全部」等于清空整套筛选：别的小类 id 属于上一个体裁，
+                    // 留着会被后端当成非法组合，先闪一下空/一条的结果。
                     FilterChip("全部", selected[row.key].isNullOrEmpty()) {
-                        selected = selected - row.key
+                        selected = if (row.key == "genre") emptyMap() else selected - row.key
                     }
                     row.items.filter { it.id.isNotEmpty() }.forEach { item ->
                         val active = selected[row.key] == item.id
                         FilterChip(item.label, active) {
-                            selected = selected + (row.key to item.id)
+                            // 换体裁 = 换一整套主题/设定/背景，旧选择当场作废（不等面板回来才清）
+                            selected = if (row.key == "genre") mapOf("genre" to item.id)
+                            else selected + (row.key to item.id)
                         }
                     }
                 }
