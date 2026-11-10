@@ -814,9 +814,19 @@ private fun FindPage(
     // 整页一个滚动容器（旧版同款：筛选随内容一起滚走，不是上半屏钉死）
     val pageScroll = rememberScrollState()
 
-    LaunchedEffect(Unit) {
+    // 体裁（大类）一变，主题/设定/背景整块换一套——不同体裁下小类完全不同。
+    // 以前这里写死 findRowsCached("landpage")：面板永远是 tab 38（真人剧）那一套，
+    // 选「漫剧 + 悬疑」时把真人剧的悬疑 id 发给漫剧频道，结果必然是空。
+    val genreSel = selected["genre"].orEmpty()
+    LaunchedEffect(genreSel) {
         rowsLoading = true
-        rows = withContext(Dispatchers.IO) { runCatching { Api.findRowsCached("landpage") }.getOrDefault(emptyList()) }
+        val r = withContext(Dispatchers.IO) {
+            runCatching { Api.findRowsCached(genreSel) }.getOrDefault(emptyList())
+        }
+        rows = r
+        // 新面板里已经没有的旧选择自动作废（和 Android 端同一口径）
+        val valid = r.associate { row -> row.key to row.items.map { it.id }.toSet() }
+        selected = selected.filter { (k, v) -> k == "genre" || valid[k]?.contains(v) == true }
         rowsLoading = false
     }
 
