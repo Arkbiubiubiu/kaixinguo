@@ -302,20 +302,21 @@ fun PlayerScreen(
     var liked by remember { mutableStateOf(PcStore.contains("like", seriesId)) }
 
     // ------- 切集末帧定格（旧版 frame-hold）：切集瞬间抓上一集末帧钉住，
-    // 新流首帧出来后再淡出，避免切集时闪黑/闪封面 -------
+    // 新流首帧出来的一瞬间直接换掉（硬切，不做淡入淡出——淡出看着像残影；
+    // 电视/平板就是这种硬切，肉眼察觉不到换集）-------
     var holdFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     var holdVisible by remember { mutableStateOf(false) }
-    val holdAlpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (holdVisible) 1f else 0f,
-        animationSpec = androidx.compose.animation.core.tween(300),
-        label = "holdAlpha",
-    )
     // 注意：末帧抓取放在「按 index 拉流建引擎」的 effect 内部开头（见下），
     // 那里才是旧引擎还活着的时刻
-    // 新流首帧到达（tick 开始走）后把定格帧淡出
+    // 新引擎画出第一帧就立刻撤掉定格层，中间没有混合帧
+    val firstNewFrame = engine?.frame
+    LaunchedEffect(engine, firstNewFrame) {
+        if (holdVisible && engine != null && firstNewFrame != null) holdVisible = false
+    }
+    // 兜底：新流一直没有画面（只有声音/失败）时 800ms 也得收掉，不能一直盖着
     LaunchedEffect(tick) {
         if (holdVisible) {
-            kotlinx.coroutines.delay(250)
+            kotlinx.coroutines.delay(800)
             holdVisible = false
         }
     }
@@ -623,12 +624,14 @@ fun PlayerScreen(
         engine?.frame?.let { bmp ->
             Image(bmp, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         }
-        // 切集末帧定格层（盖在画面之上、弹幕之下；300ms 淡出）
-        holdFrame?.takeIf { holdAlpha > 0.01f }?.let { bmp ->
+        // 切集末帧定格层（盖在画面之上、弹幕之下）。
+        // 画的条件直接带「新引擎还没有帧」：首帧一进 state 就同帧撤掉，
+        // 不等 LaunchedEffect 下一轮，避免那一帧的叠加被看成残影。
+        holdFrame?.takeIf { holdVisible && engine?.frame == null }?.let { bmp ->
             Image(
                 bmp,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize().alpha(holdAlpha),
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
             )
         }
