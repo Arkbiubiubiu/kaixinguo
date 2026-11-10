@@ -573,8 +573,16 @@ fun PlayerScreen(
                     Key.Spacebar -> { chromeWake(); engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }; true }
                     Key.DirectionLeft -> { chromeWake(); engine?.seekTo((engine?.positionMs ?: 0) - 5_000); true }
                     Key.DirectionRight -> { chromeWake(); engine?.seekTo((engine?.positionMs ?: 0) + 5_000); true }
-                    Key.DirectionUp -> { if (index > 1) index -= 1; true }
-                    Key.DirectionDown -> { if (index < episodes.size) index += 1; true }
+                    // 刷剧页面（onWheelStep 非空）：上/下 = 上一部 / 下一部剧，和滚轮同语义。
+                    // 只有从详情进来看完整短剧时才是切上一集/下一集。
+                    Key.DirectionUp -> {
+                        if (onWheelStep != null) onWheelStep.invoke(-1) else if (index > 1) index -= 1
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        if (onWheelStep != null) onWheelStep.invoke(1) else if (index < episodes.size) index += 1
+                        true
+                    }
                     Key.Escape -> {
                         if (popup != null || volOpen) { popup = null; volOpen = false } else onBack()
                         true
