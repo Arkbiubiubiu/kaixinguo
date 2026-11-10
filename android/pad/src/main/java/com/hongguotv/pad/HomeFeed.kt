@@ -4,6 +4,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
@@ -30,6 +32,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -96,6 +104,14 @@ fun HomeScreen(
     // 移动时 LaunchedEffect 自动取消上一个请求，天然防抖；数据未到时用
     // 卡片快照（标题/封面）撑住版面，不白屏。
     var heroCard by remember { mutableStateOf<SeriesCard?>(null) }
+    // 平板有左右箭头（和 PC 一样手动切 hero），TV 不加：
+    // TV 的「切换」就是方向键在下面网格里移动焦点（hero 焦点跟随）。
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
+    fun stepHero(dir: Int) {
+        if (cards.isEmpty()) return
+        val cur = cards.indexOfFirst { it.seriesId == heroCard?.seriesId }.coerceAtLeast(0)
+        heroCard = cards[(cur + dir + cards.size) % cards.size]
+    }
     var heroDetail by remember { mutableStateOf<SeriesDetail?>(null) }
     // 评分（剧评接口 extra，与 PC 端同源）+ 相关推荐（plan 接口 works）
     var heroScore by remember { mutableStateOf("") }
@@ -258,6 +274,9 @@ fun HomeScreen(
             related = heroRelated,
             position = heroPos,
             count = cards.size,
+            showArrows = !isTv,
+            onPrev = { stepHero(-1) },
+            onNext = { stepHero(1) },
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
         )
         }
@@ -337,10 +356,11 @@ fun HomeScreen(
  * 信息全部来自详情数据源（Api.ensureDetail，DetailCache 与详情页共享）——
  * 评分/红果热度/追剧人数/更新状态/题材标签/官方简介，全是海报给不了的。
  * 视觉同 PC：模糊封面铺底 + 卡面色遮罩渐变 + 左海报 + 右信息列 + 左下
- * 计数器（N / M）。TV 上没有鼠标箭头——「左右切换」就是方向键在网格里
- * 左右移动焦点（hero 焦点跟随），焦点模型零改动。
- * 纯展示、不聚焦：遥控器焦点模型不变（侧栏锁/返回链路原样），
- * 确认动作仍在卡片上（OK = 进详情）。
+ * 计数器（N / M）。
+ *
+ * 平板显示 PC 同款左右圆钮（手动切 hero）；TV 不显示——遥控器方向键在
+ * 网格里左右移动焦点就是切换 hero（焦点跟随），焦点模型不变。
+ * 整块纯展示、不聚焦：确认动作仍在卡片上（OK = 进详情）。
  */
 @Composable
 private fun HomeHero(
@@ -351,6 +371,10 @@ private fun HomeHero(
     related: List<SeriesCard>,
     position: Int,
     count: Int,
+    /** 平板显示左右圆钮（PC 同款）；TV 不显示，靠网格焦点切换 */
+    showArrows: Boolean = false,
+    onPrev: () -> Unit = {},
+    onNext: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val title = detail?.title?.takeIf { it.isNotEmpty() } ?: card?.title.orEmpty()
@@ -535,6 +559,17 @@ private fun HomeHero(
                 }
             }
         }
+        // 平板：PC 同款左右圆钮，手动切 hero（TV 不显示，焦点即切换）
+        if (showArrows && count > 1) {
+            Row(
+                Modifier.fillMaxWidth().align(Alignment.Center).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HeroArrowButton(-1, "上一部", onPrev)
+                Spacer(Modifier.weight(1f))
+                HeroArrowButton(1, "下一部", onNext)
+            }
+        }
         // 计数器（PC 同款左下）：N / M
         Text(
             "${position + 1} / $count",
@@ -546,5 +581,40 @@ private fun HomeHero(
                 .background(Color(0x99000000), RoundedCornerShape(50))
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         )
+    }
+}
+
+/** hero 左右切换圆钮（44×44 半透明黑底，PC 同款；chevron 用 Canvas 画，不引扩展图标包）。 */
+@Composable
+private fun HeroArrowButton(dir: Int, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(Color(0x99000000))
+            .semantics { contentDescription = label }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(22.dp)) {
+            val w = size.width
+            val h = size.height
+            val path = Path().apply {
+                if (dir < 0) {
+                    moveTo(w * 0.64f, h * 0.20f)
+                    lineTo(w * 0.34f, h * 0.50f)
+                    lineTo(w * 0.64f, h * 0.80f)
+                } else {
+                    moveTo(w * 0.36f, h * 0.20f)
+                    lineTo(w * 0.66f, h * 0.50f)
+                    lineTo(w * 0.36f, h * 0.80f)
+                }
+            }
+            drawPath(
+                path,
+                color = Color.White,
+                style = Stroke(width = w * 0.11f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+            )
+        }
     }
 }
