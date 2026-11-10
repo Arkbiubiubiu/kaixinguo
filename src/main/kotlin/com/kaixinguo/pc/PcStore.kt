@@ -50,6 +50,11 @@ object PcStore : AccountState {
         props.setProperty(key, value); save()
     }
 
+    /** 在线更新源（留空 = GitHub 最新 release）。自建服务可填自己的更新目录。 */
+    var updateBase: String
+        get() = str("update_base", "")
+        set(v) { put("update_base", v.trim()) }
+
     // ---------------- AccountState ----------------
 
     override val loggedIn: Boolean get() = accountCookies.isNotEmpty()

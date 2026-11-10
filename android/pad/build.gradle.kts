@@ -11,8 +11,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 191
-        versionName = "2.2.71"
+        versionCode = 192
+        versionName = "2.2.72"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...

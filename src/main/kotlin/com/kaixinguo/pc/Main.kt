@@ -2164,6 +2164,13 @@ private fun SettingsPage() {
                     Spacer(Modifier.height(8.dp))
                     ServiceField("历史基址", hist, "可留空，默认与取流服务同源") { hist = it }
                     Spacer(Modifier.height(8.dp))
+                    var upBase by remember { mutableStateOf(PcStore.updateBase) }
+                    ServiceField(
+                        "更新源",
+                        upBase,
+                        "留空 = GitHub 最新版；也可以填自己的更新目录（含 version-pc.json）",
+                    ) { upBase = it }
+                    Spacer(Modifier.height(8.dp))
                     var did by remember { mutableStateOf(PcStore.deviceId) }
                     var iid by remember { mutableStateOf(PcStore.deviceIid) }
                     var cdid by remember { mutableStateOf(PcStore.deviceCdid) }
@@ -2179,6 +2186,7 @@ private fun SettingsPage() {
                             PcStore.playBases = bases
                             PcStore.playToken = token
                             PcStore.historyBase = hist
+                            PcStore.updateBase = upBase
                             PcStore.deviceId = did
                             PcStore.deviceIid = iid
                             PcStore.deviceCdid = cdid
@@ -2445,7 +2453,7 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    Text("开心果 PC 版 1.2.5", color = Palette.text, fontSize = 14.sp)
+                    UpdateRow()
                     Spacer(Modifier.height(4.dp))
                     Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))

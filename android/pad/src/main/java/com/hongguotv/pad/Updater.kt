@@ -68,10 +68,18 @@ object Updater {
     /**
      * 地址表来自构建参数（`-PupdateBases=a,b`），源码里不写任何服务器地址。
      * 内网地址给 2.5 秒连接超时——不在同一网段时迅速失败，别让人干等 8 秒。
+     *
+     * 公开包不带构建参数：默认走 GitHub 的「最新 release」固定地址。
+     * 清单和安装包都挂在该 release 下，清单里的 path 是资产名，
+     * fetch() 会用同一个 base 拼出下载地址 —— 换版本不用改代码。
      */
+    private const val GITHUB_LATEST =
+        "https://github.com/Arkbiubiubiu/kaixinguo/releases/latest/download"
+
     private val BASES = BuildConfig.UPDATE_BASES
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }
         .map { it to if (it.contains("192.168.")) 2_500 else 8_000 }
+        .ifEmpty { listOf(GITHUB_LATEST to 8_000) }
 
     /** 两个包共用一套代码：按包名挑清单，免得依赖 BuildConfig 的 flavor 字段 */
     private fun manifestOf(pkg: String): String =
