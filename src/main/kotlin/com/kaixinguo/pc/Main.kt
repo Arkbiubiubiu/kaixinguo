@@ -1023,6 +1023,12 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var dataAt by remember { mutableStateOf(0L) }
     /** 榜单元数据（含各子榜的「N月N日已更新」）上次拉取时刻；超过 1 分钟再进/切榜就重拉 */
     var metaAt by remember { mutableStateOf(0L) }
+    /** 榜单翻页：上游一页 10 条，滚到底继续要下一页（以前只拉第一页，所以永远只有 10 名） */
+    var session by remember { mutableStateOf("") }
+    var nextOffset by remember { mutableStateOf(0) }
+    var hasMore by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val rankList = androidx.compose.foundation.lazy.rememberLazyListState()
 
     LaunchedEffect(Unit) {
         tabs = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
@@ -1044,16 +1050,56 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             }
         }
         loading = true
-        cards = withContext(Dispatchers.IO) {
+        val page = withContext(Dispatchers.IO) {
             // 优先走官方榜单（带筛选面板），失败再退回服务器聚合的 chart
-            val ranked = runCatching {
-                Api.rank(0, "", t.id, sub?.id ?: "", panel) 
-            }.getOrNull()?.cards.orEmpty()
-            if (ranked.isNotEmpty()) ranked
-            else runCatching { Api.chart(metric = sub?.id ?: "", genre = t.id, limit = 60) }.getOrDefault(emptyList())
+            val p = runCatching { Api.rank(0, "", t.id, sub?.id ?: "", panel) }.getOrNull()
+            if (p != null && p.cards.isNotEmpty()) {
+                p
+            } else {
+                com.hongguotv.pad.FeedPage(
+                    cards = runCatching {
+                        Api.chart(metric = sub?.id ?: "", genre = t.id, limit = 60)
+                    }.getOrDefault(emptyList()),
+                    hasMore = false,
+                )
+            }
         }
+        cards = page.cards
+        session = page.sessionId
+        nextOffset = page.nextOffset
+        hasMore = page.hasMore
         dataAt = System.currentTimeMillis()
         loading = false
+        // 换榜回到顶部：必须等 loading=false 之后（列表重新组合出来再滚，
+        // 在列表还没挂上时调 scrollToItem 会一直挂起，页面就卡在转圈）
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            runCatching { rankList.scrollToItem(0) }
+        }
+    }
+
+    // 滚到倒数第三条就开始要下一页（同 find 页的哨兵语义）
+    LaunchedEffect(rankList, cards.size, hasMore, tab?.id, sub?.id, panel) {
+        androidx.compose.runtime.snapshotFlow {
+            rankList.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.collect { last ->
+            val t = tab ?: return@collect
+            if (hasMore && !loadingMore && !loading && last >= cards.size - 3) {
+                loadingMore = true
+                val next = withContext(Dispatchers.IO) {
+                    runCatching { Api.rank(nextOffset, session, t.id, sub?.id ?: "", panel) }.getOrNull()
+                }
+                if (next != null && next.cards.isNotEmpty()) {
+                    val known = cards.map { it.seriesId }.toSet()
+                    cards = cards + next.cards.filter { it.seriesId !in known }
+                    session = next.sessionId
+                    nextOffset = next.nextOffset
+                    hasMore = next.hasMore
+                } else {
+                    hasMore = false
+                }
+                loadingMore = false
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -1145,18 +1191,36 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         } else {
             val list = cards
             androidx.compose.foundation.lazy.LazyColumn(
-                Modifier.fillMaxSize(),
+                state = rankList,
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
             ) {
                 itemsIndexed(list) { index, card ->
                     RankRow(index + 1, card, onClick = { onOpen(card.seriesId) }, onPlay = { onPlay(card.seriesId) })
                 }
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            when {
+                                loadingMore -> "加载中…"
+                                hasMore -> "下滑加载更多"
+                                list.isEmpty() -> ""
+                                else -> "已经到底了"
+                            },
+                            color = Palette.faint, fontSize = 12.sp,
+                        )
+                    }
+                }
             }
         }
     }
-    // 筛选浮层（自绘深色卡；M3 DropdownMenu 对自定义分组内容测量失控——
-    // 实测出现分组行撑成大间距 + 右侧多出白边框空白块）
+    // 筛选浮层：分组 + 胶囊（和「找剧」同一套观感）。
+    // 原来是一列 220dp 长条，选项一多就是一整块往下无限滚、没有任何分组层级，
+    // 用户反馈「看不清、不知道在选什么」——改成固定宽度、每组一行标签 + 一排胶囊。
     val subNow = sub
     if (filterOpen && subNow != null) {
         Box(
@@ -1165,54 +1229,41 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         )
         Column(
             Modifier.align(Alignment.TopEnd).padding(top = 96.dp, end = 24.dp)
-                .width(220.dp).heightIn(max = 400.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xF2101014))
-                .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(10.dp))
+                .width(620.dp).heightIn(max = 520.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xF7101014))
+                .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(12.dp))
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            if (panel.isNotEmpty()) {
-                Text(
-                    "重置筛选",
-                    color = Palette.accent, fontSize = 13.sp,
-                    modifier = Modifier.fillMaxWidth()
-                        .clickable { panel = ""; filterOpen = false }
-                        .padding(horizontal = 14.dp, vertical = 9.dp),
-                )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("筛选", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                if (panel.isNotEmpty()) {
+                    Text(
+                        "重置",
+                        color = Palette.accent, fontSize = 12.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                            .clickable { panel = "" }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
             }
             subNow.panels.forEach { p ->
                 if (p.items.isEmpty()) return@forEach
-                Text(
-                    p.name,
-                    color = Palette.faint,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 3.dp),
-                )
-                p.items.forEach { option ->
-                    val active = panel == option.id
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .clickable {
-                                panel = if (active) "" else option.id
-                                filterOpen = false
-                            }
-                            .background(if (active) Color(0x1AFF4D4F) else Color.Transparent)
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            option.name,
-                            fontSize = 13.sp,
-                            color = if (active) Palette.accent else Palette.dim,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (active) Icon(
-                            Icons.Filled.Check,
-                            contentDescription = null,
-                            tint = Palette.accent,
-                            modifier = Modifier.size(14.dp),
-                        )
+                Spacer(Modifier.height(12.dp))
+                Text(p.name, color = Palette.faint, fontSize = 11.sp)
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    p.items.forEach { option ->
+                        val active = panel == option.id
+                        FilterChip(option.name, active) {
+                            panel = if (active) "" else option.id
+                        }
                     }
                 }
             }
