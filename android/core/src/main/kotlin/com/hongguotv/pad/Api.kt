@@ -52,11 +52,11 @@ object Api {
     const val DOWN_STATUS = "已下架"
 
     private val PLAY_TOKEN: String get() = App.playToken
-    private const val MULTI_URL =
+    private val MULTI_URL: String get() =
         "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/" +
-            "?iid=1747595635226107&device_id=1747595635222011&aid=1967&version_code=71332" +
+            "?iid=${App.deviceIid.ifBlank { 1000000000000000 }}&device_id=${App.deviceId.ifBlank { 1000000000000000 }}&aid=1967&version_code=71332" +
             "&version_name=7.1.3.32&device_level=1&update_version_code=71332&device_brand=Redmi" +
-            "&os_version=16&device_platform=android&cdid=e8e28fd2-02ca-4698-b89a-0e519b3428eb"
+            "&os_version=16&device_platform=android&cdid=${App.deviceCdid.ifBlank { 00000000-0000-0000-0000-000000000000 }}"
     private val HISTORY_BASES: List<String> get() = App.historyBase.takeIf { it.isNotBlank() }?.let { listOf(it) } ?: emptyList()
 
     /** 自己的服务器：局域网优先（40ms），出门自动走公网隧道。 */
@@ -68,7 +68,7 @@ object Api {
     private var preferredBase: String? = null
 
     /** 固定设备身份（与旧版一致，别改）。 */
-    val device: LinkedHashMap<String, String> = linkedMapOf(
+    val device: LinkedHashMap<String, String> get() = linkedMapOf(
         "aid" to "8662",
         "app_name" to "novelread",
         "ac" to "wifi",
@@ -76,9 +76,9 @@ object Api {
         "device_platform" to "android",
         "device_brand" to "xiaomi",
         "device_type" to "23127PN0CC",
-        "device_id" to "1747595635222011",
-        "iid" to "1747595635226107",
-        "cdid" to "e8e28fd2-02ca-4698-b89a-0e519b3428eb",
+        "device_id" to App.deviceId.ifBlank { "1000000000000000" },
+        "iid" to App.deviceIid.ifBlank { "1000000000000000" },
+        "cdid" to App.deviceCdid.ifBlank { "00000000-0000-0000-0000-000000000000" },
         "os" to "android",
         "os_version" to "14",
         "os_api" to "34",

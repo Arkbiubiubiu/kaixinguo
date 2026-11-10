@@ -38,5 +38,15 @@ object App {
     var playBases: List<String> = emptyList()
     var historyBase: String = ""
 
+    /**
+     * 设备身份覆盖（空 = 用占位默认值）。
+     *
+     * 开源版把 iid / device_id / cdid 从源码里抽出来，避免公开分发时
+     * 所有人共用同一设备指纹；在设置页「服务配置」里填自己的。
+     */
+    var deviceIid: String = ""
+    var deviceId: String = ""
+    var deviceCdid: String = ""
+
     const val KEY_RESERVE = "reserve"
 }
