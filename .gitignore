@@ -21,6 +21,7 @@ device.json
 runtime/
 pack/
 tools/
+release/
 
 # 本地开发账本（含内网地址与本机路径，不随仓库公开）
 UI-STATUS.md
@@ -35,6 +36,3 @@ Thumbs.db
 *.class
 *.jar.original
 run_out.txt
-# 签名实现（私有，不随仓库公开）
-src/main/kotlin/com/hongguotv/pad/sign/
-android/core/src/main/kotlin/com/hongguotv/pad/sign/

@@ -313,15 +313,15 @@ private fun AppShell(onExit: () -> Unit) {
                         .border(1.dp, Palette.line, RoundedCornerShape(14.dp))
                         .padding(24.dp),
                 ) {
-                    Text("首次使用：先配置服务", color = Palette.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Text("播放需要取流服务（可选）", color = Palette.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "本项目是开源客户端，不提供任何公共服务。请先在「设置 → 服务配置」里填写你自己的签名服务地址，否则无法加载内容。",
+                        "内容浏览开箱即用，已内置签名，无需任何配置。只有播放视频需要你自己的取流服务地址：在「设置 → 服务配置 → 取流服务」里填写；不填也能正常浏览、搜索、看详情和评论。",
                         color = Palette.dim, fontSize = 13.sp, lineHeight = 20.sp,
                     )
                     Spacer(Modifier.height(18.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        SecondaryButton("稍后") { setupDismissed = true }
+                        SecondaryButton("知道了") { setupDismissed = true }
                         Spacer(Modifier.width(8.dp))
                         PrimaryButton("打开设置", Icons.Filled.Settings) {
                             RouteHolder.select("设置")
@@ -2102,7 +2102,7 @@ private fun SettingsPage() {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
-                // 服务配置（开源版必备：仓库不内置任何服务器地址）
+                // 服务配置（内容接口内置签名；播放才需要自备取流服务）
                 SettingBlock("服务配置", icon = Icons.Filled.Settings) {
                     var sign by remember { mutableStateOf(PcStore.signUrl) }
                     var bases by remember { mutableStateOf(PcStore.playBases) }
@@ -2110,27 +2110,31 @@ private fun SettingsPage() {
                     var hist by remember { mutableStateOf(PcStore.historyBase) }
                     if (!PcStore.configured) {
                         Text(
-                            "首次使用需要填写你自己的签名服务地址（本项目不提供任何公共服务）。",
+                            "内容浏览开箱即用（已内置签名）。播放需要你自己的取流服务地址；不填就只能浏览。",
                             color = Palette.accent, fontSize = 12.sp,
                         )
                         Spacer(Modifier.height(10.dp))
                     }
-                    ServiceField("签名服务", sign, "http://你的服务地址:端口") { sign = it }
+                    ServiceField("取流服务", bases, "http://你的取流服务:端口（不填=不能播放）") { bases = it }
                     Spacer(Modifier.height(8.dp))
-                    ServiceField("播放源", bases, "逗号分隔，可留空") { bases = it }
+                    ServiceField(
+                        "签名服务",
+                        sign,
+                        "留空 = 内置签名（推荐）；填地址 = 走你自己的代签服务",
+                    ) { sign = it }
                     Spacer(Modifier.height(8.dp))
-                    ServiceField("播放令牌", token, "可留空") { token = it }
+                    ServiceField("取流令牌", token, "取流服务的 X-Token，可留空") { token = it }
                     Spacer(Modifier.height(8.dp))
-                    ServiceField("历史基址", hist, "可留空，默认与签名服务同源") { hist = it }
+                    ServiceField("历史基址", hist, "可留空，默认与取流服务同源") { hist = it }
                     Spacer(Modifier.height(8.dp))
                     var did by remember { mutableStateOf(PcStore.deviceId) }
                     var iid by remember { mutableStateOf(PcStore.deviceIid) }
                     var cdid by remember { mutableStateOf(PcStore.deviceCdid) }
-                    ServiceField("设备 device_id", did, "可留空（留空用占位值）") { did = it }
+                    ServiceField("设备 device_id", did, "可留空（留空用内置设备）") { did = it }
                     Spacer(Modifier.height(8.dp))
-                    ServiceField("设备 iid", iid, "可留空（留空用占位值）") { iid = it }
+                    ServiceField("设备 iid", iid, "可留空（留空用内置设备）") { iid = it }
                     Spacer(Modifier.height(8.dp))
-                    ServiceField("设备 cdid", cdid, "可留空（留空用占位值）") { cdid = it }
+                    ServiceField("设备 cdid", cdid, "可留空（留空用内置设备）") { cdid = it }
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlineButton("保存") {
@@ -2404,12 +2408,12 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    Text("开心果 PC 版 1.0.0", color = Palette.text, fontSize = 14.sp)
+                    Text("开心果 PC 版 1.1.0", color = Palette.text, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "签名服务：" + (PcStore.signUrl.ifBlank { "未配置（见上方「服务配置」）" }),
+                        "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
                         color = Palette.faint, fontSize = 12.sp,
                     )
                 }

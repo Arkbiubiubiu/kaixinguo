@@ -408,7 +408,7 @@ fun PlayerScreen(
         if (built == null) {
             warm?.release()
             loading = false
-            failed = "取流失败（检查网络/签名服务）"
+            failed = "本版不内置取流服务：请在「设置 → 服务配置 → 取流服务」填写地址"
             return@LaunchedEffect
         }
         remote = built.first

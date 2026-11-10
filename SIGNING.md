@@ -1,37 +1,50 @@
-# 签名与解密模块（未包含在仓库中）
+# 签名实现（已内置）
 
-本仓库**不包含**签名实现：`src/main/kotlin/com/hongguotv/pad/sign/` 已被
-`.gitignore` 排除。这是有意为之——签名层属于逆向实现，公开会带来合规风险，
-也会让作者自建的签名服务失去意义。
+从 v1.1.0 起，签名层随源码一起发布，不再排除：
 
-## 缺少后会怎样
+```
+src/main/kotlin/com/hongguotv/pad/sign/      # 签名算法（Argus / Gorgon / Helios / Medusa / AesV3 / Proto ...）
+src/main/kotlin/com/hongguotv/pad/LocalSign.kt  # 设备档案 + 对外入口
+android/core/src/main/kotlin/com/hongguotv/pad/sign/
+android/core/src/main/kotlin/com/hongguotv/pad/LocalSign.kt
+```
 
-- 仓库可以正常阅读、审计全部 UI / 播放器 / 业务代码
-- 但**直接 clone 编译会报错**（`Api` 等调用方需要这些符号）
-- 需要你自备实现，或改为全部走签名服务
+## 目的：下载即用
 
-## 需要自备的接口面
+`LocalSign` 内置了**一套公开分发的设备档案**，直接给阅读/内容接口签名
+（`x-argus` / `x-gorgon` / `x-khronos` / `x-medusa` / `x-helios` / `x-ladus` / `x-ss-stub`）。
+装好就能浏览推荐、搜索、详情、评论、排行榜、历史，**不需要任何服务端**。
 
-在该包里提供以下对象/方法即可（名称与签名以调用点为准）：
+设备档案里没有账号 Cookie、没有作者的个人身份；它与作者自用的设备身份是
+两套完全隔离的标识（私用那套只存在于作者本机的 `device.json`，不进仓库）。
 
-| 符号 | 用途 |
+## 播放为什么要另配取流服务
+
+上游的取流网关（`multi_video_model`）现在的风控是：
+
+> **一台匿名设备只放行第一次请求，之后一律 HTTP 200 + 空包。**
+
+客户端只有一个固定身份，第二次取流就永远拿不到地址；靠客户端自己注册新设备
+可以绕过，但等于让每个用户高频注册匿名设备，风险与合规成本都不可接受，
+所以本项目**不在客户端内置取流**。想看视频请在
+「设置 → 服务配置 → 取流服务」填写你自己的服务地址（需提供 `POST /api/playinfo`，
+返回 `{code:0,data:{url, backup, spade_a, definition, height, size}}`）。
+
+## 源码里怎么切
+
+| 入口 | 行为 |
 |---|---|
-| `Signer` | 生成请求签名头 |
-| `Device` | 设备参数与 `device_id` 派生 |
-| `Argus` / `Gorgon` / `Helios` / `Medusa` | 签名算法族 |
-| `AesV3` / `Md5Variant` | 加密与摘要变体 |
-| `Proto` / `Consts` / `Profile` / `Biz` / `Json` / `Bits` / `Bytes` / `Digest` | 协议组装与工具 |
+| `LocalSign.sign(origin, path, query, body)` | 内容接口本地签名（公用档案） |
+| `LocalSign.signPlay(origin, path, body)` | 取流接口本地签名（aid=1967 档案，best-effort） |
+| `PcStore.signUrl` / 设置页「签名服务」 | 留空 = 本地签名；填地址 = 远程代签 |
 
-> 注意：`MediaCrypto.kt` **保留在仓库中**——播放器解码依赖它
-> （`deriveKey` / `headerEnd` / `prepare` / `decrypt`），没有它连播放都跑不起来。
-
-## 两种接入方式
-
-1. **放回实现**：把你的 `sign/` 目录放回原路径，Gradle 直接编译通过
-2. **走服务端签名**：只实现 `Signer` 的远程调用形态，转发到你的签名服务
-   （应用已在「设置 → 服务配置」里支持填写签名服务地址）
+想换一套设备档案：把 `PROFILE_JSON` 换成你自己注册的档案即可
+（字段顺序由 `Profile` 保证，不要改动 `Signer` 的拼接顺序——
+签名是 query + body + 时间戳的联合函数，改一个字节都会失配）。
 
 ## 声明
 
-请不要把任何真实的设备指纹、账号 Cookie、签名密钥提交到仓库。
-本项目的 `device.json` 与 `prefs.properties` 已在 `.gitignore` 中排除。
+- 签名算法仅用于与上游接口通信，不含任何账号凭据
+- 不要把真实账号 Cookie、私用设备档案、服务地址提交到仓库
+  （`device.json` 与 `prefs.properties` 已在 `.gitignore` 中排除）
+- 因使用本客户端产生的任何后果由使用者自行承担

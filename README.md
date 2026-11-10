@@ -10,9 +10,9 @@
 
 | 端 | 文件 | 说明 |
 |---|---|---|
-| PC（Windows） | [kaixinguo-1.0.0.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.0.0/kaixinguo-1.0.0.msi) | 安装包，内含 FFmpeg（GPLv3） |
-| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.0.0/pad-pad-debug.apk) | Android 8.0+ |
-| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.0.0/pad-tv-debug.apk) | Android TV 8.0+ |
+| PC（Windows） | [kaixinguo-1.1.0.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/kaixinguo-1.1.0.msi) | 安装包，内含 FFmpeg（GPLv3） |
+| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-pad-debug.apk) | Android 8.0+ |
+| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.1.0/pad-tv-debug.apk) | Android TV 8.0+ |
 
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
@@ -23,8 +23,10 @@
 三个端共用 `core` 数据层（接口、签名对接、播放地址解析），界面各自独立：
 PC 用 Compose Desktop，电视/平板是 Android 原生。同一版本发布时三端一起出。
 
-> ⚠️ 本项目是**开源客户端**，不内置任何服务器地址、账号或密钥，**不提供任何在线服务**。
-> 首次启动需在「设置 → 服务配置」里填写你自己的签名服务地址，否则无法加载内容。
+> ✅ **下载即用**：内容接口的签名算法已内置，安装后直接就能浏览推荐、搜索、详情、评论、排行榜、历史，不需要任何配置。
+> 🎬 **播放需要自备「取流服务」**：上游取流网关只放行首次请求的匿名设备，客户端单靠固定身份拿不到播放地址。
+> 想看视频，请在「设置 → 服务配置 → 取流服务」填入你自己的取流服务地址（需提供 `POST /api/playinfo`）；
+> 不填也能正常浏览全部内容，播放页会给出提示。
 > 与任何内容平台的官方均无关联，仅供学习与技术研究。
 
 ## 功能
@@ -46,7 +48,7 @@ PC 用 Compose Desktop，电视/平板是 Android 原生。同一版本发布时
 |---|---|
 | UI | Kotlin 2.0 + Compose Multiplatform 1.7（Desktop） |
 | 播放 | FFmpeg（内置 exe，remux/解码） |
-| 数据 | Kotlin 协程 + org.json，签名服务中转 |
+| 数据 | Kotlin 协程 + org.json，内置本地签名（x-argus / x-gorgon / x-khronos / x-medusa） |
 | 打包 | Gradle + jpackage（exe / MSI） |
 
 ## 目录结构
@@ -81,15 +83,14 @@ gradle packageMsi
 
 ## 服务配置
 
-开源版不包含任何服务器地址。首次启动会弹出引导，也可在
-**设置 → 服务配置** 中填写：
+内容接口**开箱即用**（内置签名，无需配置）。只有播放需要额外填写：
 
 | 项 | 说明 |
 |---|---|
-| 签名服务 | 你的签名/中转服务地址（必填） |
-| 播放源 | 逗号分隔的回退地址（可留空） |
-| 播放令牌 | 随播放源下发的校验参数（可留空） |
-| 历史基址 | 云端历史接口基址（可留空，默认与签名服务同源） |
+| 取流服务 | 你的取流/中转服务地址（必须提供 `POST /api/playinfo`）；不填 = 只能浏览 |
+| 签名服务 | 留空 = 用内置本地签名（推荐）；填地址 = 走你自己的代签服务 |
+| 取流令牌 | 取流服务的 `X-Token`（可留空） |
+| 历史基址 | 云端历史接口基址（可留空，默认与取流服务同源） |
 
 保存后立即生效，无需重启。
 
@@ -108,4 +109,4 @@ gradle packageMsi
 ## 作者
 
 - 作者：**Arkbiubiubiu**（GitHub）
-- 仓库：https://github.com/Arkbiubiubiu/kaixinguo-pc
+- 仓库：https://github.com/Arkbiubiubiu/kaixinguo

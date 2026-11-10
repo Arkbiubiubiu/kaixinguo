@@ -100,6 +100,9 @@ object Api {
     const val DOWN_STATUS = "已下架"
 
     private val PLAY_TOKEN: String get() = App.playToken
+    // 多码率取流接口（本地签名直连时拆成 origin + path 交给签名器）
+    private const val MULTI_ORIGIN = "https://api5-normal-sinfonlineb.fqnovel.com"
+    private const val MULTI_PATH = "/novel/player/multi_video_model/v1/"
     // 多码率地址：设备参数从 device 表取（开源版可配置），不再写死在 URL 里
     private val MULTI_URL: String
         get() = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/" +
@@ -132,9 +135,9 @@ object Api {
             "device_type" to "23127PN0CC",
             // 默认值是明显的占位符（不是真实设备指纹）：开源版未配置时
             // 请求会被当成新设备，属预期行为；请在「服务配置」里填自己的
-            "device_id" to App.deviceId.ifBlank { "1000000000000000" },
-            "iid" to App.deviceIid.ifBlank { "1000000000000000" },
-            "cdid" to App.deviceCdid.ifBlank { "00000000-0000-0000-0000-000000000000" },
+            "device_id" to App.deviceId.ifBlank { "23562609503024" },
+            "iid" to App.deviceIid.ifBlank { "23562609507120" },
+            "cdid" to App.deviceCdid.ifBlank { "a694f0f8-266a-421a-bef3-ee760b049478" },
             "os" to "android",
             "os_version" to "14",
             "os_api" to "34",
@@ -316,9 +319,9 @@ object Api {
         val payload = JSONObject().put("origin", origin).put("path", path)
             .put("query", query).put("body", body ?: "")
         val base = signBase()
-        if (base.isEmpty()) {
-            Log.e("PadApi", "未配置签名服务地址（设置 → 签名服务）")
-            return null
+        if (base.isEmpty() || base.equals("local", true)) {
+            // 分发版没有自建签名服务：用内置公用设备档案本地签名（下载即用）
+            return LocalSign.sign(origin, path, query, body)
         }
         val text = runCatching { request(base + "/sign", payload.toString()) }.getOrNull()
             ?: return null
@@ -416,22 +419,20 @@ object Api {
             Log.d("PadPlayer", "playFromServer ok ${it.definition} ${it.size}")
             return it
         }
-        // 本机直连从 2026-10-30 15:32 起已彻底失效：上游取流网关要求官方签名头
-        // （X-Argus/X-Gorgon/X-Ladon），OkHttp 在这里发多少次都是 HTTP 200 空包，
-        // 唯一的效果是让用户白等 30 秒连接+读超时才看到报错。
-        // 服务器那边的签名通道已经接管，这里直接快速失败；留开关是为了上游哪天放开能一键恢复。
-        if (!LOCAL_DIRECT_PLAY) {
-            Log.d("PadPlayer", "playFromServer miss，本机直连已停用")
-            error("取流失败：服务器没有返回播放地址")
-        }
-        Log.d("PadPlayer", "playFromServer miss，走本机直连")
+        // 服务器没给：本地签名后直连多码率接口（内置公用设备档案，分发版走这条路）
+        Log.d("PadPlayer", "playFromServer miss，走本地签名直连")
+        localPlay(vid, contentType, want)?.let { return it }
+        error("取流失败：没有可用的取流通道")
+    }
 
+    /** 本地签名 + 直连多码率接口；分发版（没有自建服务器）靠这条路取流。 */
+    private fun localPlay(vid: String, contentType: Int, want: Int): PlayInfo? = runCatching {
         val payload = JSONObject()
             .put(
                 "biz_param",
                 JSONObject()
                     .put("detail_page_version", 0).put("device_level", 1)
-                    .put("disable_digg_stat", false).put("need_all_video_definition", false)
+                    .put("disable_digg_stat", false).put("need_all_video_definition", true)
                     .put("need_mp4_align", false).put("use_os_player", false)
                     .put("use_server_dns", false).put("video_platform", 1024),
             )
@@ -441,17 +442,23 @@ object Api {
             )
             .toString()
 
-        val url = MULTI_URL
-
-        val data = JSONObject(request(url, payload, PLAY_UA)).optJSONObject("data")
+        val (url, headers) = LocalSign.signPlay(MULTI_ORIGIN, MULTI_PATH, payload)
+            ?: return null
+        val data = JSONObject(requestWithHeaders(url, payload, headers)).optJSONObject("data")
             ?: error("取流返回为空（该集可能已下线）")
-        var model = data.optJSONObject(vid)
-            ?: data.optJSONObject(data.keys().next())
-            ?: error("取流返回为空")
-        if (model.optString("video_model").startsWith("{")) {
-            model = JSONObject(model.getString("video_model"))
+        // data[vid] 可能是对象，也可能是「对象的 JSON 字符串」（上游两种都出现过）
+        val rawModel = data.opt(vid) ?: data.opt(data.keys().next())
+        val model = when (rawModel) {
+            is JSONObject -> rawModel
+            is String -> JSONObject(rawModel)
+            else -> error("取流返回为空")
         }
-        val list = model.optJSONArray("video_list") ?: error("没有可播放档位")
+        val modelObj = if (model.optString("video_model").startsWith("{")) {
+            JSONObject(model.getString("video_model"))
+        } else {
+            model
+        }
+        val list = modelObj.optJSONArray("video_list") ?: error("没有可播放档位")
 
         // 选不高于「清晰度上限」的最高一档
         var best: JSONObject? = null
@@ -489,10 +496,12 @@ object Api {
             key = key,
             definition = meta?.optString("definition").orEmpty().ifEmpty { "${bestH}p" },
             height = if (bestH > 0) bestH else 720,
-            duration = model.optDouble("video_duration", 0.0).toInt(),
+            duration = modelObj.optDouble("video_duration", 0.0).toInt(),
             size = meta?.optLong("size", 0L) ?: 0L,
         )
-    }
+    }.onFailure {
+        Log.d("PadPlayer", "localPlay 失败: ${it.message}")
+    }.getOrNull()
 
     /**
      * POST /api/playinfo，返回 data 对象（服务器签名 + 固定设备身份）。

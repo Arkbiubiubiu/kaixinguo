@@ -54,9 +54,9 @@ object Api {
     private val PLAY_TOKEN: String get() = App.playToken
     private val MULTI_URL: String
         get() {
-            val iid = App.deviceIid.ifBlank { "1000000000000000" }
-            val did = App.deviceId.ifBlank { "1000000000000000" }
-            val cdid = App.deviceCdid.ifBlank { "00000000-0000-0000-0000-000000000000" }
+            val iid = App.deviceIid.ifBlank { "23562609507120" }
+            val did = App.deviceId.ifBlank { "23562609503024" }
+            val cdid = App.deviceCdid.ifBlank { "a694f0f8-266a-421a-bef3-ee760b049478" }
             return "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/" +
                 "?iid=$iid&device_id=$did&aid=1967&version_code=71332" +
                 "&version_name=7.1.3.32&device_level=1&update_version_code=71332&device_brand=Redmi" +
@@ -81,9 +81,9 @@ object Api {
         "device_platform" to "android",
         "device_brand" to "xiaomi",
         "device_type" to "23127PN0CC",
-        "device_id" to App.deviceId.ifBlank { "1000000000000000" },
-        "iid" to App.deviceIid.ifBlank { "1000000000000000" },
-        "cdid" to App.deviceCdid.ifBlank { "00000000-0000-0000-0000-000000000000" },
+        "device_id" to App.deviceId.ifBlank { "23562609503024" },
+        "iid" to App.deviceIid.ifBlank { "23562609507120" },
+        "cdid" to App.deviceCdid.ifBlank { "a694f0f8-266a-421a-bef3-ee760b049478" },
         "os" to "android",
         "os_version" to "14",
         "os_api" to "34",
@@ -265,9 +265,9 @@ object Api {
         val payload = JSONObject().put("origin", origin).put("path", path)
             .put("query", query).put("body", body ?: "")
         val base = signBase()
-        if (base.isEmpty()) {
-            Log.e("PadApi", "未配置签名服务地址（设置 → 签名服务）")
-            return null
+        if (base.isEmpty() || base.equals("local", true)) {
+            // 分发版没有自建签名服务：用内置公用设备档案本地签名（下载即用）
+            return LocalSign.sign(origin, path, query, body)
         }
         val text = runCatching { request(base + "/sign", payload.toString()) }.getOrNull()
             ?: return null
