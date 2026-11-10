@@ -52,11 +52,16 @@ object Api {
     const val DOWN_STATUS = "已下架"
 
     private val PLAY_TOKEN: String get() = App.playToken
-    private val MULTI_URL: String get() =
-        "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/" +
-            "?iid=${App.deviceIid.ifBlank { 1000000000000000 }}&device_id=${App.deviceId.ifBlank { 1000000000000000 }}&aid=1967&version_code=71332" +
-            "&version_name=7.1.3.32&device_level=1&update_version_code=71332&device_brand=Redmi" +
-            "&os_version=16&device_platform=android&cdid=${App.deviceCdid.ifBlank { 00000000-0000-0000-0000-000000000000 }}"
+    private val MULTI_URL: String
+        get() {
+            val iid = App.deviceIid.ifBlank { "1000000000000000" }
+            val did = App.deviceId.ifBlank { "1000000000000000" }
+            val cdid = App.deviceCdid.ifBlank { "00000000-0000-0000-0000-000000000000" }
+            return "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/" +
+                "?iid=$iid&device_id=$did&aid=1967&version_code=71332" +
+                "&version_name=7.1.3.32&device_level=1&update_version_code=71332&device_brand=Redmi" +
+                "&os_version=16&device_platform=android&cdid=$cdid"
+        }
     private val HISTORY_BASES: List<String> get() = App.historyBase.takeIf { it.isNotBlank() }?.let { listOf(it) } ?: emptyList()
 
     /** 自己的服务器：局域网优先（40ms），出门自动走公网隧道。 */

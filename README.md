@@ -5,8 +5,8 @@
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
 | **PC** | Kotlin + Compose Desktop | `src/`（本仓库根） | ✅ 已完成 |
-| **电视** | Kotlin（Android TV 源集） | `android/pad/src/tv/` | 🚧 即将并入 |
-| **平板** | Kotlin（Android 源集） | `android/pad/src/main/` | 🚧 即将并入 |
+| **电视** | Kotlin（Android TV 源集） | `android/pad/src/tv/` | ✅ 已编译通过 |
+| **平板** | Kotlin（Android 源集） | `android/pad/src/main/` | ✅ 已编译通过 |
 
 三个端共用 `core` 数据层（接口、签名对接、播放地址解析），界面各自独立：
 PC 用 Compose Desktop，电视/平板是 Android 原生。同一版本发布时三端一起出。
