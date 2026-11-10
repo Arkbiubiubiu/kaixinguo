@@ -210,11 +210,21 @@ fun PlayerScreen(
     var chromeHovered by remember { mutableStateOf(false) }
     var cursorVisible by remember { mutableStateOf(true) }
     var lastInputAt by remember { mutableStateOf(0L) }
+    // 用户主动暂停（空格/点画面/控制栏按钮）。这里必须和「引擎还没出首帧」分开：
+    // 新引擎从创建到首帧这段时间 playing 也是 false（v1.2.1 的首帧门控），
+    // 以前把它当暂停 → 自动切下一集时控制栏会闪一下。
+    var userPaused by remember { mutableStateOf(false) }
+    // 引擎创建时刻：起播/换集后 6 秒内不算「暂停」，避免控制栏闪
+    var engineReadyAt by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(500)
-            val idle = System.currentTimeMillis() - lastInputAt > 3_000
-            chromeVisible = !idle || chromeHovered || engine?.playing == false
+            val now = System.currentTimeMillis()
+            val idle = now - lastInputAt > 3_000
+            val e = engine
+            val starting = e != null && !e.playing && now - engineReadyAt < 6_000
+            chromeVisible = !idle || chromeHovered || userPaused ||
+                (e != null && !e.playing && !starting)
         }
     }
     fun chromeWake() {
@@ -417,6 +427,9 @@ fun PlayerScreen(
 
         val eng = VideoEngine(built.second.url)
         engine = eng
+        // 换集/起播：新引擎从 0 开始播，暂停状态和「启动宽限」一起重置
+        userPaused = false
+        engineReadyAt = System.currentTimeMillis()
         withContext(Dispatchers.IO) {
             runCatching { eng.probe() }
             eng.setVolume(if (muted) 0f else volume)
@@ -428,6 +441,9 @@ fun PlayerScreen(
             PcStore.record(seriesId, title, "", index, episodes.size, positionMs = resume)
         }
         eng.onEnded = {
+            // 自然播完到下一集之间也有一个极短的「旧引擎已停、新引擎未建」窗口，
+            // 把启动宽限从这里就开始算，避免 500ms 轮询刚好落进去把控制栏点亮
+            engineReadyAt = System.currentTimeMillis()
             if (index < episodes.size) {
                 if (PcStore.autoNextEpisode) index += 1
             } else if (PcStore.deleteAfterFinish) {
@@ -554,7 +570,7 @@ fun PlayerScreen(
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key) {
-                    Key.Spacebar -> { chromeWake(); engine?.let { if (it.playing) it.pause() else it.resume() }; true }
+                    Key.Spacebar -> { chromeWake(); engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }; true }
                     Key.DirectionLeft -> { chromeWake(); engine?.seekTo((engine?.positionMs ?: 0) - 5_000); true }
                     Key.DirectionRight -> { chromeWake(); engine?.seekTo((engine?.positionMs ?: 0) + 5_000); true }
                     Key.DirectionUp -> { if (index > 1) index -= 1; true }
@@ -607,7 +623,7 @@ fun PlayerScreen(
                     if (now - clickAt < 350) return@clickable   // 连击/误触冷却（旧版 picker cooldown 同思路）
                     clickAt = now
                     chromeWake()
-                    engine?.let { if (it.playing) it.pause() else it.resume() }
+                    engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }
                 }
                 .pointerInput(Unit) {
                     // 纯 hover 的 Move 事件泵：onPointerEvent(Move) 在 Desktop 对
@@ -831,7 +847,7 @@ fun PlayerScreen(
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 CtrlIcon(if (engine?.playing == true) Icons.Filled.Pause else Icons.Filled.PlayArrow) {
-                    engine?.let { if (it.playing) it.pause() else it.resume() }
+                    engine?.let { if (it.playing) { it.pause(); userPaused = true } else { it.resume(); userPaused = false } }
                 }
                 CtrlIcon(Icons.Filled.SkipPrevious, enabled = index > 1) { if (index > 1) index -= 1 }
                 CtrlIcon(Icons.Filled.SkipNext, enabled = index < episodes.size) { if (index < episodes.size) index += 1 }
