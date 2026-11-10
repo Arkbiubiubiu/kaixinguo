@@ -612,7 +612,7 @@ fun PlayerScreen(
             // 旧版舞台交互：移动/按下=唤醒 3 秒倒计时；滚轮=切剧(刷剧)/切集(播放页)；
             // 单击画面=播放/暂停；悬浮层收起后光标跟着藏（cursor-none）
             .onPointerEvent(PointerEventType.Move) { chromeWake(); cursorVisible = true }
-            .onPointerEvent(PointerEventType.Press) { chromeWake(); cursorVisible = true }
+            .onPointerEvent(PointerEventType.Press) { chromeWake(); cursorVisible = true; keyboardPaused = false }
             .onPointerEvent(PointerEventType.Scroll) { ev ->
                 // 旧版 use-player-interactions 同口径：400ms 冷却 + 累积阈值；
                 // 浮层（Popup 独立窗口）不会把滚动冒泡到这里，无需 data-wheel-block
