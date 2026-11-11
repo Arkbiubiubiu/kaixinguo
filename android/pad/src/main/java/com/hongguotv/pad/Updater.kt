@@ -51,6 +51,8 @@ data class UpdateInfo(
     val size: Long,
     val sha256: String,
     val notes: String,
+    /** 同一文件的全部镜像地址（含 url 本身）。下载时逐段竞速，谁快用谁。 */
+    val urls: List<String> = listOf(url),
 )
 
 /**
@@ -135,6 +137,12 @@ object Updater {
             val full = o.optString("url").takeIf { it.startsWith("http") }
                 ?: if (path.isNotEmpty()) "$base/$path" else ""
             if (full.isEmpty()) error("清单缺少下载地址")
+            // 镜像列表：本次命中的 base 放最前，其余 base 附加在后（下载时逐段竞速）。
+            // 顺序影响竞速优先级：清单从哪个 base 拉到，就默认信任它最快。
+            val mirrors = BASES.map { it.first }.map { b ->
+                if (full.startsWith(b)) full
+                else if (path.isNotEmpty()) "$b/$path" else full
+            }.distinct()
             return UpdateInfo(
                 versionCode = o.optInt("versionCode", 0),
                 versionName = o.optString("versionName"),
@@ -142,6 +150,7 @@ object Updater {
                 size = o.optLong("size", 0L),
                 sha256 = o.optString("sha256"),
                 notes = o.optString("notes"),
+                urls = mirrors,
             )
         } finally {
             conn.disconnect()
@@ -190,18 +199,62 @@ object Updater {
                         while (pos <= b && attempt < 12 && !failed.get()) {
                             attempt++
                             try {
-                                val conn = (URL(info.url).openConnection() as HttpURLConnection).apply {
-                                    connectTimeout = 15_000
-                                    readTimeout = 30_000
-                                    instanceFollowRedirects = true
-                                    setRequestProperty("Range", "bytes=$pos-$b")
-                                    setRequestProperty("User-Agent", "Dalvik/2.1.0")
+                                // ★ 多源竞速：所有镜像并发发起 Range 请求，谁先吐出第一个字节块
+                                // 就用谁，其余立即关闭。局域网源毫秒级首包，外部用户 3 秒超时
+                                // 后自然只剩公网源（行为与单源一致）。
+                                val mirrors = info.urls.ifEmpty { listOf(info.url) }
+                                val winner = java.util.concurrent.atomic.AtomicReference<HttpURLConnection?>(null)
+                                val firstByteRef = java.util.concurrent.atomic.AtomicInteger(-1)
+                                // 每个镜像一个线程直接赛跑；首个「握手完成并吐出首字节」的赢，其余断开
+                                val threads = mirrors.map { m ->
+                                    Thread {
+                                        var c: HttpURLConnection? = null
+                                        try {
+                                            c = (URL(m).openConnection() as HttpURLConnection).apply {
+                                                // 局域网地址 2.5 秒连不上就是不在内网，别拖累公网竞速
+                                                connectTimeout = if (m.contains("192.168.")) 2_500 else 8_000
+                                                readTimeout = 30_000
+                                                instanceFollowRedirects = true
+                                                setRequestProperty("Range", "bytes=$pos-$b")
+                                                setRequestProperty("User-Agent", "Dalvik/2.1.0")
+                                            }
+                                            if (c.responseCode !in 200..299) error("HTTP ${c.responseCode}")
+                                            // 预读 1 字节逼真实握手/首包完成，防「已连接但很慢」的假胜出。
+                                            // 读出的字节塞进线程本地，写文件时必须先写它（否则 sha256 必挂）
+                                            val firstByte = c.inputStream.read()
+                                            if (firstByte < 0) error("空响应")
+                                            if (!winner.compareAndSet(null, c)) {
+                                                // 已有更快的赢家：自己输，立刻断开
+                                                c.disconnect()
+                                                return@Thread
+                                            }
+                                            // 只有赢家才需要保存首字节；放在 winner 连接的关联位置
+                                            firstByteRef.set(firstByte)
+                                        } catch (e: Exception) {
+                                            runCatching { c?.disconnect() }
+                                        }
+                                    }.apply { isDaemon = true }
                                 }
+                                threads.forEach { it.start() }
+                                // 等第一个赢家出现（全部镜像都失败则等到线程结束再报错）
+                                val deadline = System.currentTimeMillis() + 15_000L
+                                while (winner.get() == null && System.currentTimeMillis() < deadline &&
+                                       threads.any { it.isAlive }) {
+                                    Thread.sleep(50)
+                                }
+                                val conn = winner.get() ?: error("全部镜像无响应")
                                 try {
-                                    if (conn.responseCode !in 200..299) error("分段 HTTP ${conn.responseCode}")
                                     conn.inputStream.use { input ->
                                         java.io.RandomAccessFile(out, "rw").use { raf ->
                                             raf.seek(pos)
+                                            // 竞速预读的那 1 字节先落盘（读流从第 2 字节开始）
+                                            val pb = firstByteRef.get()
+                                            if (pb >= 0) {
+                                                raf.write(pb)
+                                                pos += 1
+                                                done.addAndGet(1)
+                                                firstByteRef.set(-1)
+                                            }
                                             val buf = ByteArray(128 * 1024)
                                             var lastReadAt = System.currentTimeMillis()
                                             while (pos <= b) {
