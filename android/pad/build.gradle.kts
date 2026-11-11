@@ -11,8 +11,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 198
-        versionName = "2.2.78"
+        versionCode = 199
+        versionName = "2.2.79"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
@@ -41,6 +41,18 @@ android {
             dimension = "device"
             applicationId = "com.hongguotv.pad"
             resValue("string", "app_name", "开心果")
+        }
+    }
+
+    // debug 签名固定用仓库里的 keystore（与服务器构建同源）：
+    // 老设备的已装包都是这个签名，本机构建若用默认 debug keystore 会签名不一致，
+    // 覆盖安装直接被拒（2.2.79 电视实测）。换机器/重装系统也不影响出可升级的包。
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 

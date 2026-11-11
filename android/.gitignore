@@ -13,6 +13,7 @@ local.properties
 *.aab
 *.jks
 *.keystore
+!debug.keystore
 *.p12
 *.pepk
 
