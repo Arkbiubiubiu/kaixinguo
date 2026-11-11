@@ -420,7 +420,8 @@ fun PlayerScreen(
                     decodeSeekTo = 0L
                     decodeGen += 1
                 }
-                scope.launch {
+                // 刷剧（预览连播）不计入历史：只有「观看完整短剧」后的正常播放页才记
+                if (!feed) scope.launch {
                     Store.record(
                         seriesId = curSeries,
                         title = title,
@@ -639,18 +640,20 @@ fun PlayerScreen(
                 }
                 preparedIndex = index
                 preparedVid = ep.vid
-                Store.record(
-                    seriesId = seriesId,
-                    title = title,
-                    cover = DetailCache.get(seriesId)?.cover.orEmpty(),
-                    episode = index,
-                    total = episodes.size,
-                )
-                Api.historySyncAsync()
-                scope.launch(Dispatchers.IO) {
-                    // 报「这次实际从哪儿开始播」，别再写死 0 —— 写 0 会把云端进度压没，
-                    // 手机端/Windows 端看到的就是「刚从头开始」
-                    runCatching { Api.reportProgress(seriesId, ep.vid, index, resume) }
+                if (!feed) {
+                    Store.record(
+                        seriesId = seriesId,
+                        title = title,
+                        cover = DetailCache.get(seriesId)?.cover.orEmpty(),
+                        episode = index,
+                        total = episodes.size,
+                    )
+                    Api.historySyncAsync()
+                    scope.launch(Dispatchers.IO) {
+                        // 报「这次实际从哪儿开始播」，别再写死 0 —— 写 0 会把云端进度压没，
+                        // 手机端/Windows 端看到的就是「刚从头开始」
+                        runCatching { Api.reportProgress(seriesId, ep.vid, index, resume) }
+                    }
                 }
                 preparing = false
             }.isSuccess
@@ -733,18 +736,20 @@ fun PlayerScreen(
 
             preparedIndex = index
             preparedVid = ep.vid
-            Store.record(
-                seriesId = seriesId,
-                title = title,
-                // 之前写死空串，导致本地和云端的历史卡片全是空封面
-                cover = DetailCache.get(seriesId)?.cover.orEmpty(),
-                episode = index,
-                total = episodes.size,
-            )
-            Api.historySyncAsync()
-            // 互通：把进度也报给官方，手机官方 App / Windows 版侧栏历史能看到
-            scope.launch(Dispatchers.IO) {
-                runCatching { Api.reportProgress(seriesId, ep.vid, index, keepAt) }
+            if (!feed) {
+                Store.record(
+                    seriesId = seriesId,
+                    title = title,
+                    // 之前写死空串，导致本地和云端的历史卡片全是空封面
+                    cover = DetailCache.get(seriesId)?.cover.orEmpty(),
+                    episode = index,
+                    total = episodes.size,
+                )
+                Api.historySyncAsync()
+                // 互通：把进度也报给官方，手机官方 App / Windows 版侧栏历史能看到
+                scope.launch(Dispatchers.IO) {
+                    runCatching { Api.reportProgress(seriesId, ep.vid, index, keepAt) }
+                }
             }
             preparing = false
         } catch (e: CancellationException) {

@@ -455,7 +455,8 @@ fun PlayerScreen(
             val resume = if (index == startIndex && startMs > 0) startMs
             else PcStore.posOf(ep.vid).takeIf { it > 3_000 } ?: 0L
             eng.start(resume)
-            PcStore.record(seriesId, title, "", index, episodes.size, positionMs = resume)
+            // 刷剧（预览连播）不计入历史：只有进「观看完整短剧」后的正常播放页才记
+            if (!embedded) PcStore.record(seriesId, title, "", index, episodes.size, positionMs = resume)
         }
         eng.onEnded = {
             // 自然播完到下一集之间也有一个极短的「旧引擎已停、新引擎未建」窗口，
@@ -544,7 +545,7 @@ fun PlayerScreen(
                 lastSaved = pos
                 PcStore.markPos(ep.vid, pos)
             }
-            if (playing && pos > 5_000 && pos - lastReport >= 60_000) {
+            if (playing && !embedded && pos > 5_000 && pos - lastReport >= 60_000) {
                 lastReport = pos
                 withContext(Dispatchers.IO) { runCatching { Api.reportProgress(seriesId, ep.vid, index, pos) } }
             }
