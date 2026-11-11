@@ -82,6 +82,35 @@ object Updater {
     /** 动态发现的镜像（cpolar 国内直连等）。check() 时刷新；下载竞速时并入。 */
     private var discoveredMirrors: List<String> = emptyList()
 
+    /**
+     * 樱花穿透隧道（frp-bar.com:44468）用自签证书：HttpURLConnection 默认会拒绝。
+     * 只对 frp-bar.com 放行自签证书，其它域名仍走系统信任链；下载完还有 sha256 校验兜底。
+     * 注意：樱花节点只拦明文 HTTP（回 501 合规页），所以更新链路必须走 HTTPS。
+     */
+    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
+        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+            override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+        }), java.security.SecureRandom())
+        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
+    }
+
+    /** 统一开连接：对樱花域名套自签证书信任，其余域名保持默认。 */
+    private fun openConn(url: String, connectTimeoutMs: Int, readTimeoutMs: Int): HttpURLConnection {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = connectTimeoutMs
+        conn.readTimeout = readTimeoutMs
+        conn.instanceFollowRedirects = true
+        conn.setRequestProperty("User-Agent", "Dalvik/2.1.0")
+        if (conn is javax.net.ssl.HttpsURLConnection && url.contains("frp-bar.com")) {
+            conn.sslSocketFactory = sakuraTls.first
+            conn.hostnameVerifier = sakuraTls.second
+        }
+        return conn
+    }
+
     /** 两个包共用一套代码：按包名挑清单，免得依赖 BuildConfig 的 flavor 字段 */
     private fun manifestOf(pkg: String): String =
         if (pkg.endsWith("nativeapp")) "version-tv.json" else "version-hgpad.json"
@@ -112,9 +141,7 @@ object Updater {
         // （含 cpolar 国内直连——它的免费域名会变，所以由服务器端 watchdog 维护，
         //  客户端每次检查更新时动态拉取。失败不影响主流程，BASES 照旧可用。）
         discoveredMirrors = runCatching {
-            val c = (URL(UPDATE_BASE + "/update-mirrors.json").openConnection() as HttpURLConnection).apply {
-                connectTimeout = 6_000
-                readTimeout = 8_000
+            val c = openConn(UPDATE_BASE + "/update-mirrors.json", 6_000, 8_000).apply {
                 setRequestProperty("Accept", "application/json")
             }
             try {
@@ -146,10 +173,7 @@ object Updater {
     }
 
     private fun fetch(url: String, base: String, timeoutMs: Int): UpdateInfo {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = timeoutMs
-            readTimeout = 12_000
-            instanceFollowRedirects = true
+        val conn = openConn(url, timeoutMs, 12_000).apply {
             setRequestProperty("Accept", "application/json")
         }
         try {
@@ -196,7 +220,14 @@ object Updater {
         onProgress: (Int) -> Unit,
     ): File? = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "update").apply { mkdirs() }
-        val out = File(dir, "update.apk")
+        // 文件名带 versionCode：不同版本的半截包绝不混用。
+        // （曾经用固定 update.apk：2.2.90~93 四个包大小恰好相同，旧的全尺寸残留
+        //   不被「长度不等就删」的逻辑清掉，导致每段判定已完成 → 0 字节失败）
+        val out = File(dir, "update-${info.versionCode}.apk")
+        // 顺手清掉其它版本的残留，避免占空间
+        dir.listFiles()?.forEach { f ->
+            if (f != out && f.name.startsWith("update")) f.delete()
+        }
         downloadError = null
         runCatching {
             if (out.exists() && out.length() != info.size) out.delete()
@@ -204,6 +235,16 @@ object Updater {
             // 用 RandomAccessFile 按段写；进度按字节聚合
             val total = if (info.size > 0) info.size else contentLength(info.url)
             if (total <= 0) error("无法获知安装包大小")
+            // 残留文件恰好完整（上次已下完但装失败）：校验通过就直接复用，
+            // 不校验的话所有分段都会因 pos > b 提前返回，报 0 字节「下载不完整」
+            if (out.length() == total) {
+                if (info.sha256.isEmpty() || info.sha256.equals(sha256Of(out), ignoreCase = true)) {
+                    onProgress(100)
+                    return@withContext out
+                }
+                out.delete()
+                out.createNewFile()
+            }
             // 半截包续传：进度从已下字节起算
             val resumed = if (out.length() in 1 until total) out.length() else 0L
             if (resumed > 0) onProgress((resumed * 100 / total).toInt().coerceIn(0, 100))
@@ -234,13 +275,8 @@ object Updater {
                                     Thread {
                                         var c: HttpURLConnection? = null
                                         try {
-                                            c = (URL(m).openConnection() as HttpURLConnection).apply {
-                                                // 局域网地址 2.5 秒连不上就是不在内网，别拖累公网竞速
-                                                connectTimeout = if (m.contains("192.168.")) 2_500 else 8_000
-                                                readTimeout = 30_000
-                                                instanceFollowRedirects = true
+                                            c = openConn(m, if (m.contains("192.168.")) 2_500 else 8_000, 30_000).apply {
                                                 setRequestProperty("Range", "bytes=$pos-$b")
-                                                setRequestProperty("User-Agent", "Dalvik/2.1.0")
                                             }
                                             if (c.responseCode !in 200..299) error("HTTP ${c.responseCode}")
                                             if (c.inputStream.read() < 0) error("空响应")
@@ -259,12 +295,8 @@ object Updater {
                                 }
                                 threads.forEach { it.interrupt() }
                                 val winUrl = winnerUrl.get() ?: error("全部镜像无响应")
-                                val conn = (URL(winUrl).openConnection() as HttpURLConnection).apply {
-                                    connectTimeout = 15_000
-                                    readTimeout = 30_000
-                                    instanceFollowRedirects = true
+                                val conn = openConn(winUrl, 15_000, 30_000).apply {
                                     setRequestProperty("Range", "bytes=$pos-$b")
-                                    setRequestProperty("User-Agent", "Dalvik/2.1.0")
                                 }
                                 try {
                                     conn.inputStream.use { input ->
@@ -328,12 +360,8 @@ object Updater {
 
     /** 探一下整包大小（HEAD 不被所有源支持，用 Range 0-0 的 Content-Range 兜底）。 */
     private fun contentLength(url: String): Long {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 12_000
-            instanceFollowRedirects = true
+        val conn = openConn(url, 15_000, 12_000).apply {
             setRequestProperty("Range", "bytes=0-0")
-            setRequestProperty("User-Agent", "Dalvik/2.1.0")
         }
         try {
             if (conn.responseCode == 206) {
