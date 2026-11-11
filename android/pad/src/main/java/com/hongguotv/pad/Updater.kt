@@ -72,7 +72,7 @@ object Updater {
     /**
      * 唯一更新源。构建参数 `updateBases` 可覆盖（自建集群多入口时用），公开包不带参数。
      */
-    private const val UPDATE_BASE = "https://hgtv.fabao.xin"
+    private const val UPDATE_BASE = "https://frp-bar.com:44468"
 
     private val BASES = BuildConfig.UPDATE_BASES
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -141,7 +141,7 @@ object Updater {
         // （含 cpolar 国内直连——它的免费域名会变，所以由服务器端 watchdog 维护，
         //  客户端每次检查更新时动态拉取。失败不影响主流程，BASES 照旧可用。）
         discoveredMirrors = runCatching {
-            val c = openConn(UPDATE_BASE + "/update-mirrors.json", 6_000, 8_000).apply {
+            val c = openConn(BASES.first().first + "/update-mirrors.json", 6_000, 8_000).apply {
                 setRequestProperty("Accept", "application/json")
             }
             try {
@@ -184,10 +184,10 @@ object Updater {
             val full = o.optString("url").takeIf { it.startsWith("http") }
                 ?: if (path.isNotEmpty()) "$base/$path" else ""
             if (full.isEmpty()) error("清单缺少下载地址")
-            // 镜像列表：本次命中的 base 放最前（默认信任它最快），其后是动态发现的
-            // 镜像（cpolar 国内直连等），最后是其余 base。下载时逐段竞速。
-            val mirrors = (listOf(base) + discoveredMirrors + BASES.map { it.first })
-                .distinct()
+            // 下载镜像：优先用服务器下发的发现列表（樱花四线 + cpolar，不含 CF/局域网），
+            // 拿不到才退回清单源本身。这样下载永远走最快的公网通道，与外部用户体验一致。
+            val mirrorBases = discoveredMirrors.ifEmpty { BASES.map { it.first } }
+            val mirrors = mirrorBases
                 .map { b ->
                     if (full.startsWith(b)) full
                     else if (path.isNotEmpty()) "$b/$path" else full
