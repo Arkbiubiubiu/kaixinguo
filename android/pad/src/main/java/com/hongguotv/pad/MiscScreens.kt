@@ -1138,19 +1138,19 @@ private fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: (
             .padding(14.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.width(40.dp), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.width(32.dp), contentAlignment = Alignment.TopCenter) {
             Text(
                 index.toString(),
-                // PC 同款：前三名橙色（text-star），其余半透明灰
+                // PC 同款：前三名金色（star），其余半透明灰
                 color = if (index <= 3) Star else TextDim.copy(alpha = 0.5f),
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.SemiBold,
             )
         }
         Box(
             Modifier
-                .width(110.dp)
-                .aspectRatio(0.72f)
+                .width(88.dp)
+                .aspectRatio(3f / 4f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CoverPlaceholder),
         ) {
@@ -1161,60 +1161,52 @@ private fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: (
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                card.title,
-                color = TextMain,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val meta = listOf(card.score.takeIf { it.isNotBlank() }, *card.tags.take(3).toTypedArray())
-                .filterNotNull()
-                .joinToString(" · ")
-            if (meta.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(meta, color = TextDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(card.title, color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // 评分：星形 + 金字（与 PC 行卡同语言）
+                card.score.takeIf { it.isNotBlank() }?.let {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("★", color = Star, fontSize = 12.sp)
+                        Text(it, color = Star, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
             }
-            card.desc?.let {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    it,
-                    color = TextDim,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val meta = card.tags.take(3).joinToString(" · ").takeIf { it.isNotBlank() }
+            meta?.let {
+                Text(it, color = TextDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            // 热度改造后 recText 和 playText 常常是同一句"xx热度"，重复时只显示一份
+            card.desc?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = TextDim.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            // 热度行：火焰图形 + 暖橙数字（PC HeatBadge 同语言，不再用 emoji）
             val heatLabel = card.recText?.takeIf { it.isNotBlank() }
                 ?: card.playText.takeIf { it.isNotBlank() }
-            val heat = listOfNotNull(
-                heatLabel?.let { "🔥$it" },
-                card.playText.takeIf { it.isNotBlank() && it != heatLabel },
-            ).joinToString("　")
-            if (heat.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(heat, color = Star, fontSize = 12.sp, maxLines = 1)
+            heatLabel?.let { heat ->
+                if (heat.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlameIcon()
+                        Spacer(Modifier.width(4.dp))
+                        Text(heat, color = Warm, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                    }
+                }
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(
                     Modifier
-                        .clip(RoundedCornerShape(50))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Red)
                         .clickable { onPlay() }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
                 ) { Text("播放", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
                 Box(
                     Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Color(0x2EFFFFFF))
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(8.dp))
                         .clickable { onOpen() }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
                 ) { Text("详情", color = Color.White, fontSize = 13.sp) }
             }
         }
@@ -1671,7 +1663,7 @@ private fun CalendarRow(
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(width = 80.dp, height = 107.dp)
+                .size(width = 88.dp, height = 117.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CoverPlaceholder),
         )
@@ -1701,36 +1693,32 @@ private fun CalendarRow(
                 )
             }
             // 热度 / 分类 / 评分 / 集数
-            val meta = listOfNotNull(
-                item.heat.takeIf { it.isNotBlank() },
-                item.category.takeIf { it.isNotBlank() },
-                item.score.takeIf { it.isNotBlank() && (it.toFloatOrNull() ?: 0f) > 0f },
-                item.episodeCount.takeIf { it > 0 }?.let { "${it}集" },
-            )
-            if (meta.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    meta.forEachIndexed { i, text ->
-                        Text(
-                            text,
-                            color = if (i == 0) Warm else TextDim,
-                            fontSize = 11.sp,
-                            fontWeight = if (i == 0) FontWeight.SemiBold else FontWeight.Normal,
-                            maxLines = 1,
-                        )
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                item.score.takeIf { it.isNotBlank() && (it.toFloatOrNull() ?: 0f) > 0f }?.let {
+                    Text("★", color = Star, fontSize = 12.sp)
+                    Text(it, color = Star, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
+                item.heat.takeIf { it.isNotBlank() }?.let {
+                    FlameIcon()
+                    Spacer(Modifier.width(3.dp))
+                    Text(it, color = Warm, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                }
+            }
+            val meta = listOfNotNull(
+                item.category.takeIf { it.isNotBlank() },
+                item.episodeCount.takeIf { it > 0 }?.let { "全 ${it} 集" },
+            ).joinToString(" · ").takeIf { it.isNotBlank() }
+            meta?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, color = TextDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (item.desc.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     item.desc,
                     color = TextDim.copy(alpha = 0.8f),
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -2039,8 +2027,8 @@ private fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
     ) {
         Box(
             Modifier
-                .width(76.dp)
-                .aspectRatio(0.72f)
+                .width(88.dp)
+                .aspectRatio(3f / 4f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CoverPlaceholder),
         ) {
@@ -2493,7 +2481,7 @@ private fun LibraryRow(
     ) {
         Box(
             Modifier
-                .width(64.dp)
+                .width(88.dp)
                 .aspectRatio(0.72f)
                 .clip(RoundedCornerShape(6.dp))
                 .background(CoverPlaceholder),

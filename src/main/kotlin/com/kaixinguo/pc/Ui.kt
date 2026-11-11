@@ -811,16 +811,17 @@ fun PosterCard(
                     }
                 }
             }
-            // 左上角标（季/运营标）
-            val badge = card.badge ?: card.season
+            // 左上角标：状态标（漫剧/爆更/红果首发，与安卓同字段）优先，其次季/运营标
+            val status = card.statusText?.takeIf { it.isNotBlank() && it.toIntOrNull() == null }
+            val badge = status ?: card.badge ?: card.season
             if (!badge.isNullOrBlank()) {
                 Text(
                     badge,
                     color = Color.White,
                     fontSize = 10.sp,
                     modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
-                        .clip(RoundedCornerShape(50)).background(Palette.accentFill)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .clip(RoundedCornerShape(4.dp)).background(Palette.accentFill)
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
             }
             // 右上评分
@@ -828,11 +829,11 @@ fun PosterCard(
                 Text(
                     card.score,
                     color = Palette.star,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
                         .clip(RoundedCornerShape(4.dp)).background(Color(0xB3000000))
-                        .padding(horizontal = 5.dp, vertical = 2.dp),
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -840,15 +841,20 @@ fun PosterCard(
                 DropdownMenuItem(text = { Text("详情", fontSize = 12.sp) }, onClick = { menu = false; onOpen() })
                 DropdownMenuItem(text = { Text("收藏", fontSize = 12.sp) }, onClick = { menu = false; onCollect() })
             }
-            // 左下「N 集」角标（旧版 find/collection 卡：黑半透明胶囊）
+            // 左下「N 集」角标：底部暗渐变 + 白字（与安卓同一套，不再用胶囊）
             if (!coverBadge.isNullOrBlank()) {
+                Box(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(32.dp)
+                        .background(Brush.verticalGradient(listOf(Color(0x00000000), Color(0x8C000000)))),
+                )
                 Text(
                     coverBadge,
-                    color = Color.White.copy(alpha = 0.92f),
+                    color = Color.White,
                     fontSize = 11.sp,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
-                        .clip(RoundedCornerShape(50)).background(Color(0xA6000000))
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 5.dp)
+                        .background(Color(0x59000000), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
             }
         }
@@ -890,13 +896,18 @@ fun PosterCard(
                 )
             }
             if (!tagsLine.isNullOrBlank()) {
-                Text(
-                    tagsLine,
-                    color = Palette.faint,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    tagsLine.split(' ').filter { it.isNotBlank() }.take(3).forEach { tag ->
+                        Text(
+                            tag,
+                            color = Palette.dim,
+                            fontSize = 10.sp,
+                            modifier = Modifier.background(Palette.whiteBorder.copy(alpha = 0x0F / 255f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
             if (!scoreLine.isNullOrBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

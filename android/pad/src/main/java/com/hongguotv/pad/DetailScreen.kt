@@ -1025,10 +1025,9 @@ private fun RelatedBlock(
                             val meta = listOfNotNull(
                                 // 这套季是从另一套合集补来的，明说一句，免得用户以为是重名
                                 "另一版本".takeIf { card.fromOther },
-                                // 待上线的卡片只留「另一版本」标记，其余让给下面的预约按钮
-                                if (card.upcoming) null else card.episodeCount.takeIf { it > 0 }?.let { "共${it}集" },
-                                // playText 已自带单位（热度/播放），不再拼后缀
-                                if (card.upcoming) null else card.playText.takeIf { it.isNotBlank() },
+                                // 与 PC 相关卡同款副行：共N集 · 热度
+                                card.episodeCount.takeIf { it > 0 }?.let { "共 ${it} 集" },
+                                card.playText.takeIf { it.isNotBlank() },
                             ).joinToString(" · ").ifBlank { null }
                             SeriesCardView(
                                 card = card,

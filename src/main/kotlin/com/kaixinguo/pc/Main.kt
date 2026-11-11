@@ -718,6 +718,8 @@ private fun HomePage(
                             onPlay = { onPlay(it.seriesId) },
                             onCollect = { PcStore.toggle("favorite", it.seriesId) },
                             scrollable = false,
+                            coverBadge = { c -> if (c.episodeCount > 0) "${c.episodeCount} 集" else null },
+                            tagsLine = { c -> c.tags.take(3).joinToString(" ").takeIf { it.isNotBlank() } },
                         )
                         // 底部只是一行状态：滚动到底自动续拉，不再有「加载更多」按钮
                         val c = cursor
@@ -2371,6 +2373,8 @@ private fun FollowsPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onPl
                     onPlay = { onPlay(it.seriesId) },
                     onCollect = { PcStore.toggle("favorite", it.seriesId) },
                     modifier = Modifier.fillMaxSize(),
+                    coverBadge = { c -> if (c.episodeCount > 0) "${c.episodeCount} 集" else null },
+                    tagsLine = { c -> c.tags.take(3).joinToString(" ").takeIf { it.isNotBlank() } },
                 )
             }
         }

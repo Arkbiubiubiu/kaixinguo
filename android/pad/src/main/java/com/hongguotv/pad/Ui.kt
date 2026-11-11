@@ -134,10 +134,10 @@ fun SeriesCardView(
                     Modifier
                 },
             )
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(Panel)
             .clickable { onClick() }
-            .padding(4.dp),
+            .padding(8.dp),
     ) {
         Box(
             Modifier
@@ -146,7 +146,7 @@ fun SeriesCardView(
                     if (cardHeight != null) {
                         Modifier.weight(1f)
                     } else {
-                        Modifier.aspectRatio(0.755f)
+                        Modifier.aspectRatio(3f / 4f)
                     },
                 )
                 .clip(RoundedCornerShape(8.dp))
@@ -164,8 +164,8 @@ fun SeriesCardView(
                 Text(
                     card.score,
                     color = Star,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(6.dp)
@@ -188,8 +188,8 @@ fun SeriesCardView(
                 Text(
                     "${card.episodeCount} 集",
                     color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     // 半透明小底：很多封面本身就印着「共 96 集」，纯白字压上去会糊成一片
                     modifier = Modifier
@@ -249,7 +249,7 @@ fun SeriesCardView(
             card.title,
             color = TextMain,
             fontSize = 14.sp,
-            lineHeight = 18.sp,
+            lineHeight = 20.sp,
             minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -303,7 +303,7 @@ fun SeriesCardView(
                         lineHeight = 12.sp,
                         modifier = Modifier
                             .align(Alignment.CenterVertically)
-                            .background(AvatarPlaceholder, RoundedCornerShape(3.dp))
+                            .background(Color(0x0FFFFFFF), RoundedCornerShape(4.dp))
                             .padding(horizontal = 5.dp, vertical = 1.dp),
                         maxLines = 1,
                     )

@@ -44,9 +44,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 
 val Red = Color(0xFFFF4D4F)
-val Bg = Color(0xFF0E0E10)
-val Panel = Color(0xFF1A1A1E)
-val PanelHi = Color(0xFF26262C)
+val Bg = Color(0xFF0F0D0F)
+val Panel = Color(0xFF1B161A)
+val PanelHi = Color(0xFF261F24)
 val TextMain = Color(0xFFF2F2F5)
 val TextDim = Color(0xFF9A9AA2)
 
@@ -58,12 +58,12 @@ val TextDim = Color(0xFF9A9AA2)
  * 灰（#8A8A92/#8A8A93）——「看着不像同一个软件」的直接来源。
  * 所有散落硬编码一律收编到这里，新代码只准用常量。
  */
-val Star = Color(0xFFFF9500)      // 评分金（PC --star）
-val Warm = Color(0xFFFF7A2F)      // 热度橙（PC --warm）
+val Star = Color(0xFFFFC53D)      // 评分金（PC --star）
+val Warm = Color(0xFFFFB26B)      // 热度橙（PC --warm）
 val Hot = Color(0xFFFF4D4F)       // 点赞/预警红（PC --hot）
 val Success = Color(0xFF4CC38A)   // 成功/在线绿（PC --success）
-val CoverPlaceholder = Color(0xFF191920)  // 封面占位底
-val AvatarPlaceholder = Color(0xFF232329) // 头像/图标底
+val CoverPlaceholder = Color(0xFF221C21)  // 封面占位底
+val AvatarPlaceholder = Color(0xFF2A2328) // 头像/图标底
 val RecordDim = Color(0xFF5A5A62)         // 备案号等极弱信息
 
 private val scheme = darkColorScheme(
