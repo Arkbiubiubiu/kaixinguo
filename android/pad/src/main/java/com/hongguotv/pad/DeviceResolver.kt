@@ -33,13 +33,33 @@ object DeviceResolver {
         Log.d("PadResolver", "init ready=$ready dir=${d.absolutePath}")
     }
 
+    /**
+     * 取流。上游对匿名设备有个坏毛病：偶尔第一次请求就回空包
+     * （ANONYMOUS_LIMITED，"anonymous response was empty"），换一台新设备再来一次
+     * 通常就能过。所以走到这一步失败时重试一次；超时/异常不重试，别让用户干等。
+     */
     fun play(vid: String, want: Int): PlayInfo? {
         if (!ready) return null
-        val base = dir ?: return null
+        repeat(2) { i ->
+            val (info, answered) = playOnce(vid, want)
+            if (info != null) {
+                Log.d("PadResolver", "取流成功（第 ${i + 1} 台设备）vid=$vid")
+                return info
+            }
+            if (!answered) return null
+            Log.d("PadResolver", "第 ${i + 1} 台设备被上游回空包，换设备重试")
+        }
+        return null
+    }
+
+    /** 返回 (播放信息, 上游是否回了包)；只有「回了包但拿不到流」才值得换设备重试。 */
+    private fun playOnce(vid: String, want: Int): Pair<PlayInfo?, Boolean> {
+        val base = dir ?: return null to false
         val profile = File(base, "profile-${System.nanoTime()}.json")
         val client: Client = runCatching {
             Core.newClient(profile.absolutePath, "", null)
-        }.onFailure { Log.e("PadResolver", "newClient 失败: ${it.message}") }.getOrNull() ?: return null
+        }.onFailure { Log.e("PadResolver", "newClient 失败: ${it.message}") }.getOrNull()
+            ?: return null to false
 
         val args = org.json.JSONArray().put(vid).toString()
         val latch = CountDownLatch(1)
@@ -55,13 +75,13 @@ object DeviceResolver {
             )
             if (!latch.await(25, TimeUnit.SECONDS)) {
                 Log.e("PadResolver", "取流超时 vid=$vid")
-                null
+                null to false
             } else {
-                parse(holder[0], want)
+                parse(holder[0], want) to (holder[0] != null)
             }
         } catch (t: Throwable) {
             Log.e("PadResolver", "取流失败: ${t.message}")
-            null
+            null to false
         } finally {
             runCatching { profile.delete() }
             runCatching { client.toString() }

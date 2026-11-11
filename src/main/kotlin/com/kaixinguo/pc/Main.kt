@@ -108,6 +108,10 @@ private val brandBitmap: ImageBitmap? by lazy {
 }
 
 fun main() = application {
+    // 本机到更新源的 IPv4 连接会被本地代理链路直接重置（curl -4 返回 000，IPv6 正常），
+    // 而 Java 默认先走 IPv4 → 「检查更新」永远失败（旧版还把它显示成「已是最新」）。
+    // 优先 IPv6；纯 IPv4 网络仍会回退，不影响其他机器。
+    System.setProperty("java.net.preferIPv6Addresses", "true")
     boot()
     val state = rememberWindowState(width = 1440.dp, height = 900.dp)
     // 无边框（旧版 decorations:false 同语义）：系统白条不画，自绘窗口钮+拖拽区

@@ -31,8 +31,8 @@ import java.security.MessageDigest
 
 /** 版本号唯一来源：发版时只改这里（与 build.gradle.kts 的 packageVersion 对齐）。 */
 object BuildInfo {
-    const val VERSION = "1.2.12"
-    const val CODE = 10212
+    const val VERSION = "1.2.14"
+    const val CODE = 10214
 }
 
 data class PcUpdate(
@@ -90,9 +90,13 @@ object PcUpdater {
         }
     }
 
-    /** 有新版返回信息，否则 null（网络失败也当没有，别在设置页弹错误吓人）。 */
+    /** 更新源连不上。必须和「已是最新」分开报，不能谎报（安卓 2.2.73 踩过同一个坑）。 */
+    class CheckException(message: String) : Exception(message)
+
+    /** 有新版返回信息；已是最新返回 null；连不上抛 [CheckException]。 */
     suspend fun check(): PcUpdate? = withContext(Dispatchers.IO) {
-        val info = runCatching { fetchManifest() }.getOrNull() ?: return@withContext null
+        val info = runCatching { fetchManifest() }.getOrNull()
+            ?: throw CheckException("更新源连不上")
         if (info.versionCode > BuildInfo.CODE) info else null
     }
 
@@ -243,14 +247,17 @@ fun UpdateRow() {
                 busy = true
                 state = "正在检查…"
                 scope.launch {
-                    val r = PcUpdater.check()
+                    val r = runCatching { PcUpdater.check() }
                     busy = false
-                    if (r == null) {
+                    val found = r.getOrNull()
+                    if (found == null && r.isFailure) {
+                        state = "检查失败：连不上更新源，请重试"
+                    } else if (found == null) {
                         state = "已是最新版本"
                     } else {
-                        info = r
-                        state = "发现新版本 ${r.versionName} · " +
-                            "%.1f MB".format(r.size / 1024.0 / 1024.0)
+                        info = found
+                        state = "发现新版本 ${found.versionName} · " +
+                            "%.1f MB".format(found.size / 1024.0 / 1024.0)
                     }
                 }
             }
