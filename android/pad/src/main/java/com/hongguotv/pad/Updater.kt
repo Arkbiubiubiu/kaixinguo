@@ -187,7 +187,7 @@ object Updater {
                         var pos = if (out.length() > a) minOf(out.length(), b + 1) else a
                         if (pos > b) return@Callable
                         var attempt = 0
-                        while (pos <= b && attempt < 8 && !failed.get()) {
+                        while (pos <= b && attempt < 12 && !failed.get()) {
                             attempt++
                             try {
                                 val conn = (URL(info.url).openConnection() as HttpURLConnection).apply {
@@ -214,8 +214,9 @@ object Updater {
                                                 val p = (d * 100 / total).toInt().coerceIn(0, 100)
                                                 val prev = lastPct.getAndSet(p)
                                                 if (p != prev) onProgress(p)
-                                                if (System.currentTimeMillis() - lastReadAt > 45_000) {
-                                                    error("分段下载超时")
+                                                if (System.currentTimeMillis() - lastReadAt > 60_000) {
+                                                    // 完全无进展才算超时；慢连接（每秒几 KB）不算
+                                                    error("分段 60 秒无进展")
                                                 }
                                                 lastReadAt = System.currentTimeMillis()
                                             }
@@ -225,8 +226,8 @@ object Updater {
                                     conn.disconnect()
                                 }
                             } catch (e: Exception) {
-                                android.util.Log.w("PadUpdater", "seg$i attempt$attempt failed at $pos: ${e.message}")
-                                if (attempt >= 8) failed.set(true)
+                                android.util.Log.w("PadUpdater", "seg$i attempt$attempt failed at $pos/${b - a + 1}: ${e.message}")
+                                if (attempt >= 12) failed.set(true)
                                 // 线程池里不是协程：用 Thread.sleep 退避
                                 Thread.sleep(800L * attempt)
                             }
