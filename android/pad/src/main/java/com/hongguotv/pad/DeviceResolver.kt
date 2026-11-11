@@ -19,7 +19,9 @@ import java.util.concurrent.TimeUnit
 object DeviceResolver {
 
     private var dir: File? = null
-    private var ready = false
+    @Volatile private var ready = false
+    /** 初始化完成信号：启动时 init 在后台线程跑，第一次取流撞上就等它 */
+    private val readyLatch = CountDownLatch(1)
 
     fun init(context: Context) {
         val d = File(context.filesDir, "ohg").apply { mkdirs() }
@@ -30,6 +32,7 @@ object DeviceResolver {
             Core.touch()
             true
         }.getOrDefault(false)
+        readyLatch.countDown()
         Log.d("PadResolver", "init ready=$ready dir=${d.absolutePath}")
     }
 
@@ -39,6 +42,7 @@ object DeviceResolver {
      * 通常就能过。所以走到这一步失败时重试一次；超时/异常不重试，别让用户干等。
      */
     fun play(vid: String, want: Int): PlayInfo? {
+        if (!ready) runCatching { readyLatch.await(6, TimeUnit.SECONDS) }
         if (!ready) return null
         repeat(2) { i ->
             val (info, answered) = playOnce(vid, want)

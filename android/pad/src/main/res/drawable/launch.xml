@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动窗口背景：品牌图标居中。
+     冷启动时系统先把这层画出来，Compose 第一帧要几秒才到——不设这个的话
+     用户看到的就是十几秒纯黑（TV 上实测 Displayed +10~11s）。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_bg" />
+    <item android:gravity="center">
+        <bitmap android:src="@mipmap/ic_tv" android:gravity="center" />
+    </item>
+</layer-list>

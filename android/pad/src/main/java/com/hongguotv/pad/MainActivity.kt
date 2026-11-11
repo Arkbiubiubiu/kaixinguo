@@ -3,7 +3,20 @@ package com.hongguotv.pad
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 
 /**
  * 「App 是不是在前台」。
@@ -31,11 +44,26 @@ class MainActivity : ComponentActivity() {
         App.deviceId = BuildConfig.DEVICE_ID
         App.deviceCdid = BuildConfig.DEVICE_CDID
         FeedCache.init(this)
-        // 本机取流：Go 绑定（随 APK 打包），没有配置服务器时用它
-        DeviceResolver.init(this)
+        // 本机取流：Go 绑定（随 APK 打包），没有配置服务器时用它。
+        // 初始化要加载 .so + Core.touch()，TV 上实测明显拖慢冷启动 —— 放后台线程，
+        // 播放器真正取流前（至少几秒后）早就绪；DeviceResolver.play 里另有等待兜底。
+        Thread({ DeviceResolver.init(this) }, "resolver-init").start()
         LocalResolverProvider.play = { vid, want -> DeviceResolver.play(vid, want) }
         setContent {
-            TvRoot { App() }
+            // 先把「启动画面」这一帧画上去，再做完整界面的首次组合：
+            // 电视上冷启动 Compose 首帧要好几秒（实测 Displayed +10~11s），
+            // 直接组合 App() 的话这段时间用户看到的是黑屏。启动图和
+            // themes.xml 的 windowBackground 用同一张图，衔接无跳变。
+            var showApp by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                withFrameNanos { }
+                showApp = true
+            }
+            if (showApp) {
+                TvRoot { App() }
+            } else {
+                LaunchScreen()
+            }
         }
     }
 
@@ -53,5 +81,16 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 云端历史合并留在后台做，不挡界面
         Api.historySyncAsync()
+    }
+}
+
+/** 冷启动第一帧：品牌底色 + 图标，和 themes.xml 的启动窗口背景一致。 */
+@androidx.compose.runtime.Composable
+private fun LaunchScreen() {
+    Box(
+        Modifier.fillMaxSize().background(Color(0xFF0F0D0F)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(painter = painterResource(R.mipmap.ic_tv), contentDescription = null)
     }
 }
