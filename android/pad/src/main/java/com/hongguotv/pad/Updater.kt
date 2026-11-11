@@ -162,12 +162,16 @@ object Updater {
     ): File? = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "update").apply { mkdirs() }
         val out = File(dir, "update.apk")
+        downloadError = null
         runCatching {
-            if (out.exists()) out.delete()
+            if (out.exists() && out.length() != info.size) out.delete()
             out.createNewFile()
             // 用 RandomAccessFile 按段写；进度按字节聚合
             val total = if (info.size > 0) info.size else contentLength(info.url)
             if (total <= 0) error("无法获知安装包大小")
+            // 半截包续传：进度从已下字节起算
+            val resumed = if (out.length() in 1 until total) out.length() else 0L
+            if (resumed > 0) onProgress((resumed * 100 / total).toInt().coerceIn(0, 100))
             val segments = if (total >= 8L * 1024 * 1024) 6 else 1
             val segLen = total / segments
             val done = java.util.concurrent.atomic.AtomicLong(0)
@@ -179,9 +183,11 @@ object Updater {
                     pool.submit(java.util.concurrent.Callable {
                         val a = i.toLong() * segLen
                         val b = if (i == segments - 1) total - 1 else (i + 1).toLong() * segLen - 1
-                        var pos = a
+                        // 断点续传：从上次中断的地方接着拉（半截包保留在 update.apk）
+                        var pos = if (out.length() > a) minOf(out.length(), b + 1) else a
+                        if (pos > b) return@Callable
                         var attempt = 0
-                        while (pos <= b && attempt < 6 && !failed.get()) {
+                        while (pos <= b && attempt < 8 && !failed.get()) {
                             attempt++
                             try {
                                 val conn = (URL(info.url).openConnection() as HttpURLConnection).apply {
@@ -219,16 +225,20 @@ object Updater {
                                     conn.disconnect()
                                 }
                             } catch (e: Exception) {
-                                if (attempt >= 6) failed.set(true)
+                                android.util.Log.w("PadUpdater", "seg$i attempt$attempt failed at $pos: ${e.message}")
+                                if (attempt >= 8) failed.set(true)
                                 // 线程池里不是协程：用 Thread.sleep 退避
-                                Thread.sleep(500L * attempt)
+                                Thread.sleep(800L * attempt)
                             }
                         }
-                        if (pos <= b) failed.set(true)
+                        if (pos <= b) {
+                            android.util.Log.e("PadUpdater", "seg$i exhausted ($pos..$b)")
+                            failed.set(true)
+                        }
                     })
                 }
                 futures.forEach { it.get() }
-                if (done.get() != total) error("下载不完整（${done.get()}/$total），请重试")
+                if (done.get() + resumed != total) error("下载不完整（${done.get() + resumed}/$total），请重试")
             } finally {
                 pool.shutdown()
             }
@@ -237,8 +247,15 @@ object Updater {
                 error("安装包校验失败（可能下到半截），请重试")
             }
             out
+        }.onFailure {
+            downloadError = it.message
+            android.util.Log.e("PadUpdater", "download failed: ${it.message}")
         }.getOrNull()
     }
+
+    /** 最近一次下载失败的原因（UI 直接显示，比笼统的「下载失败」有用）。 */
+    var downloadError: String? = null
+        private set
 
     /** 探一下整包大小（HEAD 不被所有源支持，用 Range 0-0 的 Content-Range 兜底）。 */
     private fun contentLength(url: String): Long {
@@ -454,7 +471,8 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                                 val file = Updater.download(context, info) { p -> progress = p }
                                 if (file == null) {
                                     progress = -1
-                                    error = "下载失败，请检查网络后重试"
+                                    error = Updater.downloadError?.takeIf { it.isNotBlank() }
+                                        ?: "下载失败，请检查网络后重试"
                                 } else {
                                     progress = 100
                                     apkFile = file
