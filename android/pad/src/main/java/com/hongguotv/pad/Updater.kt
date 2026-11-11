@@ -79,6 +79,9 @@ object Updater {
         .map { it to 8_000 }
         .ifEmpty { listOf(UPDATE_BASE to 8_000) }
 
+    /** 动态发现的镜像（cpolar 国内直连等）。check() 时刷新；下载竞速时并入。 */
+    private var discoveredMirrors: List<String> = emptyList()
+
     /** 两个包共用一套代码：按包名挑清单，免得依赖 BuildConfig 的 flavor 字段 */
     private fun manifestOf(pkg: String): String =
         if (pkg.endsWith("nativeapp")) "version-tv.json" else "version-hgpad.json"
@@ -105,6 +108,26 @@ object Updater {
     suspend fun check(context: Context): UpdateInfo? = withContext(Dispatchers.IO) {
         val name = manifestOf(context.packageName)
         val cur = versionCode(context)
+        // 动态镜像发现：服务器上的 update-mirrors.json 列出当前可用的全部镜像
+        // （含 cpolar 国内直连——它的免费域名会变，所以由服务器端 watchdog 维护，
+        //  客户端每次检查更新时动态拉取。失败不影响主流程，BASES 照旧可用。）
+        discoveredMirrors = runCatching {
+            val c = (URL(UPDATE_BASE + "/update-mirrors.json").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 6_000
+                readTimeout = 8_000
+                setRequestProperty("Accept", "application/json")
+            }
+            try {
+                if (c.responseCode !in 200..299) return@runCatching emptyList()
+                val o = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                val arr = o.optJSONArray("mirrors") ?: return@runCatching emptyList()
+                (0 until arr.length()).mapNotNull { i ->
+                    arr.optString(i).takeIf { it.startsWith("http") }
+                }
+            } finally {
+                c.disconnect()
+            }
+        }.getOrDefault(emptyList())
         var lastError: String? = null
         for ((base, timeout) in BASES) {
             var attempt = 0
@@ -137,12 +160,15 @@ object Updater {
             val full = o.optString("url").takeIf { it.startsWith("http") }
                 ?: if (path.isNotEmpty()) "$base/$path" else ""
             if (full.isEmpty()) error("清单缺少下载地址")
-            // 镜像列表：本次命中的 base 放最前，其余 base 附加在后（下载时逐段竞速）。
-            // 顺序影响竞速优先级：清单从哪个 base 拉到，就默认信任它最快。
-            val mirrors = BASES.map { it.first }.map { b ->
-                if (full.startsWith(b)) full
-                else if (path.isNotEmpty()) "$b/$path" else full
-            }.distinct()
+            // 镜像列表：本次命中的 base 放最前（默认信任它最快），其后是动态发现的
+            // 镜像（cpolar 国内直连等），最后是其余 base。下载时逐段竞速。
+            val mirrors = (listOf(base) + discoveredMirrors + BASES.map { it.first })
+                .distinct()
+                .map { b ->
+                    if (full.startsWith(b)) full
+                    else if (path.isNotEmpty()) "$b/$path" else full
+                }
+                .distinct()
             return UpdateInfo(
                 versionCode = o.optInt("versionCode", 0),
                 versionName = o.optString("versionName"),
@@ -199,13 +225,11 @@ object Updater {
                         while (pos <= b && attempt < 12 && !failed.get()) {
                             attempt++
                             try {
-                                // ★ 多源竞速：所有镜像并发发起 Range 请求，谁先吐出第一个字节块
-                                // 就用谁，其余立即关闭。局域网源毫秒级首包，外部用户 3 秒超时
-                                // 后自然只剩公网源（行为与单源一致）。
+                                // ★ 多源竞速：所有镜像并发握手+首字节，赢家地址确定后
+                                // 用它发起干净的新连接拉整段（预读字节只用于判速，
+                                // 正式传输走全新连接，sha256 语义零风险）。
                                 val mirrors = info.urls.ifEmpty { listOf(info.url) }
-                                val winner = java.util.concurrent.atomic.AtomicReference<HttpURLConnection?>(null)
-                                val firstByteRef = java.util.concurrent.atomic.AtomicInteger(-1)
-                                // 每个镜像一个线程直接赛跑；首个「握手完成并吐出首字节」的赢，其余断开
+                                val winnerUrl = java.util.concurrent.atomic.AtomicReference<String?>(null)
                                 val threads = mirrors.map { m ->
                                     Thread {
                                         var c: HttpURLConnection? = null
@@ -219,42 +243,33 @@ object Updater {
                                                 setRequestProperty("User-Agent", "Dalvik/2.1.0")
                                             }
                                             if (c.responseCode !in 200..299) error("HTTP ${c.responseCode}")
-                                            // 预读 1 字节逼真实握手/首包完成，防「已连接但很慢」的假胜出。
-                                            // 读出的字节塞进线程本地，写文件时必须先写它（否则 sha256 必挂）
-                                            val firstByte = c.inputStream.read()
-                                            if (firstByte < 0) error("空响应")
-                                            if (!winner.compareAndSet(null, c)) {
-                                                // 已有更快的赢家：自己输，立刻断开
-                                                c.disconnect()
-                                                return@Thread
-                                            }
-                                            // 只有赢家才需要保存首字节；放在 winner 连接的关联位置
-                                            firstByteRef.set(firstByte)
+                                            if (c.inputStream.read() < 0) error("空响应")
+                                            if (!winnerUrl.compareAndSet(null, m)) c.disconnect()
                                         } catch (e: Exception) {
+                                            android.util.Log.w("PadUpdater", "race $m: ${e.message}")
                                             runCatching { c?.disconnect() }
                                         }
                                     }.apply { isDaemon = true }
                                 }
                                 threads.forEach { it.start() }
-                                // 等第一个赢家出现（全部镜像都失败则等到线程结束再报错）
                                 val deadline = System.currentTimeMillis() + 15_000L
-                                while (winner.get() == null && System.currentTimeMillis() < deadline &&
+                                while (winnerUrl.get() == null && System.currentTimeMillis() < deadline &&
                                        threads.any { it.isAlive }) {
                                     Thread.sleep(50)
                                 }
-                                val conn = winner.get() ?: error("全部镜像无响应")
+                                threads.forEach { it.interrupt() }
+                                val winUrl = winnerUrl.get() ?: error("全部镜像无响应")
+                                val conn = (URL(winUrl).openConnection() as HttpURLConnection).apply {
+                                    connectTimeout = 15_000
+                                    readTimeout = 30_000
+                                    instanceFollowRedirects = true
+                                    setRequestProperty("Range", "bytes=$pos-$b")
+                                    setRequestProperty("User-Agent", "Dalvik/2.1.0")
+                                }
                                 try {
                                     conn.inputStream.use { input ->
                                         java.io.RandomAccessFile(out, "rw").use { raf ->
                                             raf.seek(pos)
-                                            // 竞速预读的那 1 字节先落盘（读流从第 2 字节开始）
-                                            val pb = firstByteRef.get()
-                                            if (pb >= 0) {
-                                                raf.write(pb)
-                                                pos += 1
-                                                done.addAndGet(1)
-                                                firstByteRef.set(-1)
-                                            }
                                             val buf = ByteArray(128 * 1024)
                                             var lastReadAt = System.currentTimeMillis()
                                             while (pos <= b) {
