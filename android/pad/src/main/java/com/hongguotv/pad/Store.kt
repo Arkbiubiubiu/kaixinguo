@@ -44,6 +44,11 @@ object Store : AccountState {
         get() = p().getBoolean("auto_next", true)
         set(v) = p().edit().putBoolean("auto_next", v).apply()
 
+    /** 看完（最后一集播完）自动删除观看记录——与 PC 设置项同名同义。 */
+    var deleteAfterFinish: Boolean
+        get() = p().getBoolean("delete_after_finish", false)
+        set(v) = p().edit().putBoolean("delete_after_finish", v).apply()
+
     /**
      * 软件解码：画面出现**绿块 / 花屏**时打开。
      *
@@ -62,6 +67,43 @@ object Store : AccountState {
     var speed: Float
         get() = p().getFloat("speed", 1.0f)
         set(v) = p().edit().putFloat("speed", v).apply()
+
+    // ---------------- 追更未读角标（与 PC 同语义） ----------------
+
+    /** 未读更新数：进「追更」页清零，每轮检查有新集就累加。 */
+    var followBadge: Int
+        get() = p().getInt("follow_badge", 0)
+        set(v) = p().edit().putInt("follow_badge", v).apply()
+
+    /**
+     * 一轮更新检查：服务端集数 > 基线 → 未读数 +1 并把基线推到最新；
+     * 第一次见到的剧只记基线（和 PC 的 checkFollowUpdates 同口径，PC 那边落通知列表，
+     * 这里只记数字，够画侧栏角标）。
+     */
+    fun checkFollowUpdates(): Int {
+        if (!loggedIn) return 0
+        val page = Api.followUpdates()
+        if (page.items.isEmpty()) return 0
+        var added = 0
+        page.items.forEach { item ->
+            val key = "fb_${item.seriesId}"
+            val baseline = p().getString(key, null)?.toIntOrNull()
+            if (baseline == null) {
+                p().edit().putString(key, item.episodeCount.toString()).apply()
+                return@forEach
+            }
+            if (item.episodeCount <= baseline) return@forEach
+            p().edit().putString(key, item.episodeCount.toString()).apply()
+            added++
+        }
+        if (added > 0) followBadge = followBadge + added
+        return added
+    }
+
+    /** 追更时立刻把基线记成当前集数（避免「刚追完就报更新」）。 */
+    fun seedFollowBaseline(seriesId: String, episodeCount: Int) {
+        p().edit().putString("fb_$seriesId", episodeCount.toString()).apply()
+    }
 
     var darkTheme: Boolean
         get() = p().getBoolean("dark_theme", true)

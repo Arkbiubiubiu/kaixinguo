@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,6 +35,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -73,6 +75,8 @@ private class NavItem(val label: String, val icon: ImageVector?, val custom: Str
  */
 private val navItems = listOf(
     NavItem("推荐", Icons.Filled.Home, null, Screen.Home),
+    // 刷剧：整屏连播（与 PC 刷剧页同一套数据）；Pad 上下滑、TV ↑↓ 换剧
+    NavItem("刷剧", Icons.Filled.PlayArrow, null, Screen.Feed),
     NavItem("找剧", Icons.Filled.Search, null, Screen.Find),
     NavItem("排行榜", null, "rank", Screen.Rank),
     NavItem("新剧", null, "new", Screen.NewDrama),
@@ -105,6 +109,19 @@ fun App() {
     update?.let { info -> UpdateDialog(info) { update = null } }
     // 打赏弹窗：侧栏「打赏」入口，纯展示不接支付，不进路由栈
     var donateOpen by remember { mutableStateOf(false) }
+    // 追更未读角标：启动查一次，之后每 20 分钟一轮（与 PC 同周期）；进「追更」页清零
+    var unreadFollow by remember { mutableStateOf(Store.followBadge) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (Store.loggedIn) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { Store.checkFollowUpdates() }
+                }
+                unreadFollow = Store.followBadge
+            }
+            kotlinx.coroutines.delay(20 * 60 * 1000L)
+        }
+    }
     if (donateOpen) DonateDialog { donateOpen = false }
     val current = stack.last()
 
@@ -250,6 +267,11 @@ fun App() {
             // 等同按确定选中该分类：清掉叠加页、切到目标页
             while (stack.size > 1) stack.removeAt(stack.lastIndex)
             stack[0] = screen
+            // 进「追更」即视为已读：角标清零（与 PC 读通知同语义）
+            if (screen is Screen.Follow) {
+                Store.followBadge = 0
+                unreadFollow = 0
+            }
             if (railLockable) {
                 // TV：进板块 = 锁侧栏 + 焦点送进内容区（遥控器没有"点"，必须自动送焦点）
                 railLocked = true
@@ -286,6 +308,7 @@ fun App() {
             },
     ) {
         NavRail(
+            followBadge = unreadFollow,
             // 侧栏高亮和「当前分类」的焦点入口，都要跟着**栈底那一页**走。
             // 传栈顶的话，进了详情页就没有任何一项是「当前分类」：
             // 红底高亮消失、焦点入口也没挂在任何项上 —— 从内容区往左退回来就掉进空里。
@@ -396,6 +419,22 @@ fun App() {
                     onOpen = { push(Screen.Detail(it.seriesId)) },
                     onPlay = { push(Screen.Play(it.seriesId, 1)) },
                 )
+                is Screen.Feed -> FeedScreen(
+                    onOpenDetail = { push(Screen.Detail(it)) },
+                    onExit = {
+                        if (railLockable) {
+                            // TV：退回导航层（和顶层页按返回同语义），页面本身不换
+                            railLocked = false
+                            bridgeScope.launch {
+                                androidx.compose.runtime.withFrameNanos { }
+                                runCatching { railEntry.requestFocus() }
+                            }
+                        } else {
+                            // 触屏：按返回直接回推荐（同 PC 刷剧页的 onExit）
+                            stack[0] = Screen.Home
+                        }
+                    },
+                )
                 is Screen.Find -> FindScreen(
                     onOpen = { push(Screen.Detail(it.seriesId)) },
                     entryFocus = findEntry,
@@ -481,6 +520,8 @@ private fun NavRail(
     entryFocus: FocusRequester? = null,
     /** false = 侧栏不接收焦点（压栈页期间）。见 App() 里的调用。 */
     enabled: Boolean = true,
+    /** 「追更」项右上角的未读数（0 = 不显示） */
+    followBadge: Int = 0,
 ) {
     val focusManager = LocalFocusManager.current
     Column(
@@ -541,10 +582,30 @@ private fun NavRail(
                     .padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (item.custom != null) {
-                    RailIcon(item.custom, tint)
-                } else {
-                    Icon(item.icon!!, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+                Box {
+                    if (item.custom != null) {
+                        RailIcon(item.custom, tint)
+                    } else {
+                        Icon(item.icon!!, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+                    }
+                    // 「追更」未读角标：红底白字，>99 显示 99+
+                    if (item.screen is Screen.Follow && followBadge > 0) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 10.dp, y = (-6).dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0xFFE5484D))
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        ) {
+                            Text(
+                                if (followBadge > 99) "99+" else "$followBadge",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(

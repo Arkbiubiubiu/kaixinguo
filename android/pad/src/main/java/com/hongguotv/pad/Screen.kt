@@ -3,6 +3,8 @@ package com.hongguotv.pad
 /** 页面路由。与原工程的 sealed class 一一对应（15 个页面）。 */
 sealed class Screen {
     object Home : Screen()
+    /** 刷剧：整屏连播 + 换剧（Pad 触屏滑动 / TV 遥控器 ↑↓）。 */
+    object Feed : Screen()
     object Find : Screen()
     object Rank : Screen()
     object NewDrama : Screen()

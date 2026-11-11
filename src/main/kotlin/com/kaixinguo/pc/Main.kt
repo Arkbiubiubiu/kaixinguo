@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -1065,6 +1067,9 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var subIndex by remember { mutableStateOf(0) }
     var panel by remember { mutableStateOf("") }
     var filterOpen by remember { mutableStateOf(false) }
+    // 月榜（安卓一直有，PC 按用户要求补回）：空 = 当前榜，非空 = 服务器下发的某个月份
+    var month by remember { mutableStateOf("") }
+    var monthOpen by remember { mutableStateOf(false) }
     var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     /** 这一页榜单数据到底是什么时候拉下来的（描述行的兜底时间，别装成「今天刚更新」） */
@@ -1086,7 +1091,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     val tab = tabs.getOrNull(tabIndex)
     val sub = tab?.subs?.getOrNull(subIndex)
 
-    LaunchedEffect(tab?.id, sub?.id, panel) {
+    LaunchedEffect(tab?.id, sub?.id, panel, month) {
         val t = tab ?: return@LaunchedEffect
         // 榜单元数据（子榜的「N月N日已更新」）只在进页面时拉一次的话，
         // 挂着过夜就会一直显示昨天。切榜/换筛选时顺手刷新一下（1 分钟内不重复拉）。
@@ -1100,7 +1105,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         loading = true
         val page = withContext(Dispatchers.IO) {
             // 优先走官方榜单（带筛选面板），失败再退回服务器聚合的 chart
-            val p = runCatching { Api.rank(0, "", t.id, sub?.id ?: "", panel) }.getOrNull()
+            val p = runCatching { Api.rank(0, "", t.id, sub?.id ?: "", panel, month) }.getOrNull()
             if (p != null && p.cards.isNotEmpty()) {
                 p
             } else {
@@ -1126,7 +1131,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     }
 
     // 滚到倒数第三条就开始要下一页（同 find 页的哨兵语义）
-    LaunchedEffect(rankList, cards.size, hasMore, tab?.id, sub?.id, panel) {
+    LaunchedEffect(rankList, cards.size, hasMore, tab?.id, sub?.id, panel, month) {
         androidx.compose.runtime.snapshotFlow {
             rankList.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }.collect { last ->
@@ -1134,7 +1139,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             if (hasMore && !loadingMore && !loading && last >= cards.size - 3) {
                 loadingMore = true
                 val next = withContext(Dispatchers.IO) {
-                    runCatching { Api.rank(nextOffset, session, t.id, sub?.id ?: "", panel) }.getOrNull()
+                    runCatching { Api.rank(nextOffset, session, t.id, sub?.id ?: "", panel, month) }.getOrNull()
                 }
                 if (next != null && next.cards.isNotEmpty()) {
                     val known = cards.map { it.seriesId }.toSet()
@@ -1159,7 +1164,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             tabs.forEachIndexed { index, t ->
-                TabChip(t.label, index == tabIndex) { tabIndex = index; subIndex = 0 }
+                TabChip(t.label, index == tabIndex) { tabIndex = index; subIndex = 0; panel = ""; month = "" }
             }
         }
         if (tab != null && tab.subs.isNotEmpty()) {
@@ -1169,7 +1174,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 tab.subs.forEachIndexed { index, s ->
-                    TabChip(s.label, index == subIndex) { subIndex = index; panel = "" }
+                    TabChip(s.label, index == subIndex) { subIndex = index; panel = ""; month = "" }
                 }
                 // 筛选按钮（旧版 FilterPanelButton）：仅当前子榜自带面板时出现，
                 // chip 形态——未选中灰、选中红；面板里单选，选中后 chip 显示所选名
@@ -1207,6 +1212,43 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                             Icons.Filled.ArrowDropDown,
                             contentDescription = null,
                             tint = if (panel.isNotEmpty()) Palette.accentHover else Palette.dim,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                // 月榜（安卓有、PC 补回）：服务器给月份才出现；选中后 chip 显示月份名
+                if (sub != null && sub.months.isNotEmpty()) {
+                    Spacer(Modifier.width(4.dp))
+                    val monthName = sub.months.firstOrNull { it.id == month }?.name
+                    Row(
+                        Modifier.height(28.dp).clip(Radius.chip)
+                            .background(
+                                if (month.isNotEmpty()) Palette.accent.copy(alpha = 0.16f) else Palette.panel,
+                            )
+                            .border(
+                                1.dp,
+                                if (month.isNotEmpty()) Palette.accent.copy(alpha = 0.45f) else Palette.line,
+                                Radius.chip,
+                            )
+                            .clickable { monthOpen = !monthOpen }.padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.DateRange,
+                            contentDescription = null,
+                            tint = if (month.isNotEmpty()) Palette.accentHover else Palette.dim,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            monthName ?: "月榜",
+                            color = if (month.isNotEmpty()) Palette.accentHover else Palette.dim,
+                            fontSize = 13.sp,
+                        )
+                        Icon(
+                            Icons.Filled.ArrowDropDown,
+                            contentDescription = null,
+                            tint = if (month.isNotEmpty()) Palette.accentHover else Palette.dim,
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -1320,6 +1362,47 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                             panel = if (active) "" else option.id
                         }
                     }
+                }
+            }
+        }
+    }
+    // 月榜浮层：单选，选中即收起；第一项是「当前榜」（= 不带 month 参数）
+    if (monthOpen && subNow != null && subNow.months.isNotEmpty()) {
+        Box(
+            Modifier.matchParentSize()
+                .onPointerEvent(PointerEventType.Press) { monthOpen = false },
+        )
+        Column(
+            Modifier.align(Alignment.TopEnd).padding(top = 96.dp, end = 24.dp)
+                .width(240.dp).heightIn(max = 420.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xF7101014))
+                .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(12.dp))
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("月榜", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                if (month.isNotEmpty()) {
+                    Text(
+                        "重置",
+                        color = Palette.accent, fontSize = 12.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                            .clickable { month = "" }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            androidx.compose.foundation.layout.FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FilterChip("当前榜", month.isEmpty()) { month = ""; monthOpen = false }
+                subNow.months.forEach { m ->
+                    FilterChip(m.name, month == m.id) { month = m.id; monthOpen = false }
                 }
             }
         }
@@ -1920,6 +2003,8 @@ private fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) ->
     var filter by remember { mutableStateOf(0) }
     var confirmClear by remember { mutableStateOf(false) }
     var manageOpen by remember { mutableStateOf(false) }
+    // 与安卓历史页对齐的三个 tab：历史 / 收藏 / 点赞（收藏、点赞复用海报墙）
+    var tab by remember { mutableStateOf(0) }
 
     fun reload() {
         rows = PcStore.history()
@@ -1964,6 +2049,25 @@ private fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) ->
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
+        // 顶部分类（安卓同款三 tab）：历史 / 收藏 / 点赞
+        Row(
+            Modifier.fillMaxWidth().padding(top = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TabChip("历史", tab == 0) { tab = 0 }
+            TabChip("收藏", tab == 1) { tab = 1 }
+            TabChip("点赞", tab == 2) { tab = 2 }
+        }
+        if (tab != 0) {
+            Spacer(Modifier.height(12.dp))
+            ShelfPage(
+                key = if (tab == 1) "favorite" else "like",
+                onOpen = onOpen,
+                onPlay = { id -> onPlay(id, 1, 0L) },
+            )
+            return@Column
+        }
         // 页头：分组 tab + 搜索 + 管理（旧版 history 顶部那一行）
         Row(
             Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
@@ -2054,6 +2158,64 @@ private fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) ->
             }
         }
     }
+    }
+}
+
+@Composable
+private fun ShelfPage(key: String, onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
+    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var syncing by remember { mutableStateOf(false) }
+    var tick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(key, tick, PcStore.loggedIn) {
+        syncing = tick > 0
+        loading = true
+        val ids = PcStore.ids(key)
+        var list = withContext(Dispatchers.IO) {
+            ids.mapNotNull { id ->
+                runCatching { Api.ensureDetail(id) }.getOrNull()?.let { Api.cardOfDetail(it) }
+            }
+        }
+        if (key == "favorite" && PcStore.loggedIn) {
+            // 收藏以云端为准（别的设备取消收藏，这里不该还留着）；拉取失败保留本地
+            val cloud = withContext(Dispatchers.IO) { runCatching { Api.cloudShelf() }.getOrNull() }
+            if (cloud != null) list = cloud
+        }
+        cards = list
+        loading = false
+        syncing = false
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        if (key == "favorite") {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OutlineButton(if (syncing) "刷新中…" else "刷新云端（${cards.size}）") { tick++ }
+            }
+        }
+        when {
+            loading -> CenterLoading()
+            cards.isEmpty() -> EmptyState(
+                title = if (key == "like") "还没有点赞" else "还没有收藏",
+                hint = if (key == "like") "在播放页点「点赞」，点过赞的剧会出现在这里"
+                else "在详情页点「收藏」就会出现在这里",
+                icon = if (key == "like") Icons.Filled.Favorite else Icons.Filled.Star,
+            )
+            else -> PosterGrid(
+                cards = cards,
+                onOpen = { onOpen(it.seriesId) },
+                onPlay = { onPlay(it.seriesId) },
+                onCollect = { c ->
+                    val was = PcStore.contains(key, c.seriesId)
+                    PcStore.toggle(key, c.seriesId)
+                    if (was) cards = cards.filterNot { it.seriesId == c.seriesId }
+                },
+                coverBadge = { if (it.episodeCount > 0) "${it.episodeCount} 集" else null },
+            )
+        }
     }
 }
 
@@ -2760,6 +2922,24 @@ private fun SettingsPage() {
                     }
                     Spacer(Modifier.height(8.dp))
                     Text("自动档按这个上限挑清晰度；播放器清晰度菜单里的「自动」同源。", color = Palette.faint, fontSize = 12.sp)
+                    Spacer(Modifier.height(12.dp))
+                    // 默认倍速（安卓设置里同一项）：播放器起播用它，播放器里改倍速也会写回这里
+                    var rate by remember { mutableStateOf(PcStore.playbackRate) }
+                    Text(
+                        "默认倍速：${if (rate % 1f == 0f) "${rate.toInt()}x" else "${rate}x"}",
+                        color = Palette.text, fontSize = 14.sp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { r ->
+                            TabChip(
+                                if (r % 1f == 0f) "${r.toInt()}x" else "${r}x",
+                                rate == r,
+                            ) { rate = r; PcStore.playbackRate = r }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("播放器里改倍速会记住，下次起播继续用。", color = Palette.faint, fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(12.dp))
                 // 下载（旧版 download 页的等价形态：本集单文件任务列表）

@@ -1851,9 +1851,11 @@ private fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, I
     }
 
     Column(Modifier.fillMaxSize()) {
-        // 筛选行：全部 / 未看完 / 已看完 + 管理（多选删除）
+        // 筛选行：全部 / 未看完 / 已看完 + 搜索 + 清空 + 管理（多选删除）
         var managing by remember { mutableStateOf(false) }
         var picked by remember { mutableStateOf(setOf<String>()) }
+        var search by remember { mutableStateOf("") }
+        var confirmClear by remember { mutableStateOf(false) }
         Row(
             Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1863,8 +1865,73 @@ private fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, I
                 TvChip(label, selected = filter == i) { setFilter(i) }
             }
             Spacer(Modifier.weight(1f))
-            if (!managing) {
-                // 「一键清空」换成多选删除：清空按错就全没了，多选至少能挑
+            // 搜索看过的剧（与 PC 历史页同一项；收藏/点赞 tab 不显示）
+            BasicTextField(
+                value = search,
+                onValueChange = { search = it },
+                textStyle = TextStyle(color = TextMain, fontSize = 14.sp),
+                cursorBrush = SolidColor(Red),
+                singleLine = true,
+                modifier = Modifier
+                    .width(220.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(PanelHi)
+                    .padding(horizontal = 14.dp),
+                decorationBox = { inner ->
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                        if (search.isEmpty()) Text("搜索看过的剧", color = TextDim, fontSize = 13.sp)
+                        inner()
+                    }
+                },
+            )
+            Spacer(Modifier.width(8.dp))
+            if (!managing && !confirmClear) {
+                // 一键清空保留，但必须二次确认（与 PC 同语义）
+                Text(
+                    "清空",
+                    color = TextDim,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(17.dp))
+                        .clickable { confirmClear = true }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+            if (confirmClear) {
+                Text(
+                    "确认清空",
+                    color = Red,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(17.dp))
+                        .background(Red.copy(alpha = 0.12f))
+                        .clickable {
+                            confirmClear = false
+                            val ids = rows.map { it.optString("seriesId") }
+                            rows.clear()
+                            Store.clearHistory()
+                            if (Store.loggedIn) {
+                                scope.launch(Dispatchers.IO) {
+                                    runCatching { Api.deleteOfficialHistory(ids) }
+                                    runCatching { Api.historyDelete(ids) }
+                                }
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "取消",
+                    color = TextDim,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(17.dp))
+                        .clickable { confirmClear = false }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+            if (!managing && !confirmClear) {
                 Text(
                     "管理",
                     color = TextDim,
@@ -1910,7 +1977,9 @@ private fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, I
         val visible = rows.filter { r ->
             val ep = r.optInt("episode", 1)
             val total = r.optInt("total", 0)
-            when (filter) {
+            val matchSearch = search.isBlank() ||
+                r.optString("title").contains(search.trim(), ignoreCase = true)
+            matchSearch && when (filter) {
                 1 -> total <= 0 || ep < total
                 2 -> total > 0 && ep >= total
                 else -> true
@@ -1918,7 +1987,7 @@ private fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, I
         }
         when {
             loading -> StatusBox(loading = true, error = null)
-            visible.isEmpty() -> StatusBox(loading = false, error = null, empty = true, emptyText = "看过的剧会出现在这里")
+            visible.isEmpty() -> StatusBox(loading = false, error = null, empty = true, emptyText = if (search.isNotBlank()) "没有匹配的记录" else "看过的剧会出现在这里")
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
@@ -3083,6 +3152,7 @@ fun SettingsScreen() {
                 // 只写 Store.xxx 不会触发重组，界面毫无变化（就是「点了没反应」）。
                 // 本地 state 承接一下，点完立刻刷新；写盘照旧。
                 var autoNextOn by remember { mutableStateOf(Store.autoNext) }
+                var deleteAfterOn by remember { mutableStateOf(Store.deleteAfterFinish) }
                 var softOn by remember { mutableStateOf(Store.softDecode) }
                 var capHeight by remember { mutableStateOf(Store.maxHeight) }
                 var defSpeed by remember { mutableStateOf(Store.speed) }
@@ -3128,6 +3198,37 @@ fun SettingsScreen() {
                             }
                         }
                         Text("播放完当前集自动接着播下一集", color = TextDim, fontSize = 12.sp)
+                        Spacer(Modifier.height(14.dp))
+                        // 看完自动删除记录（与 PC 同名同义）：最后一集播完把这部剧从观看记录里移除
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    deleteAfterOn = !deleteAfterOn
+                                    Store.deleteAfterFinish = deleteAfterOn
+                                },
+                        ) {
+                            Text("看完自动删除记录", color = TextMain, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                            Box(
+                                Modifier
+                                    .width(46.dp)
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(13.dp))
+                                    .background(if (deleteAfterOn) Red else Color(0x33FFFFFF)),
+                                contentAlignment = Alignment.CenterEnd,
+                            ) {
+                                Box(
+                                    Modifier
+                                        .padding(horizontal = 3.dp)
+                                        .size(20.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(Color.White),
+                                )
+                            }
+                        }
+                        Text("最后一集播完，把这部剧从观看记录里移除", color = TextDim, fontSize = 12.sp)
                         Spacer(Modifier.height(14.dp))
                         // 软件解码：整行可点（同「自动连播」那条的教训——只点右边的小开关，
                         // 遥控器上下做几何搜索会直接越过它落到别的控件上）

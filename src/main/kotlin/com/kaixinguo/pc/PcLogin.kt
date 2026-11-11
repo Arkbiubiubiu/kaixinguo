@@ -17,6 +17,33 @@ object PcLogin {
     private const val SEND_CODE = "/passport/mobile/send_code/v1/"
     private const val SMS_LOGIN = "/passport/mobile/sms_login/"
 
+    /**
+     * 风控要求「短信上行验证」：用户要用手里的手机号给指定号码发一条短信，
+     * 平台核对后才放行。这不是错误，是登录流程的一步，所以单独用异常类型承载。
+     */
+    class NeedMfa(
+        val hint: String,
+        /** 要发送到的号码（可能为空，为空时按提示文案引导） */
+        val channel: String,
+        /** 短信内容 */
+        val content: String,
+        val ctx: MfaCtx,
+    ) : Exception(hint)
+
+    data class MfaCtx(
+        val retryTag: String,
+        val smsCodeKey: String,
+        val encryptUid: String,
+        val logId: String,
+        val verifyReason: String,
+        val verifyScene: String,
+        val copywritingKey: String,
+        val diversionTag: String,
+        var mfaToken: String,
+        val mobile: String,
+        val code: String,
+    )
+
     /** 发码时服务端下发的 csrf，登录提交要带上。 */
     private var csrf = ""
 
@@ -95,45 +122,176 @@ object PcLogin {
         return if (raw.isBlank() || raw.equals("success", true)) "验证码已发送，请查看短信" else raw
     }
 
-    /** 提交验证码完成登录（登录态写进 PcStore）。 */
+    /**
+     * 提交验证码登录（登录态写进 PcStore）。
+     * 风控要求上行短信验证时抛 [NeedMfa]，界面展示提示后按秒轮询 [pollMfa]。
+     */
     fun login(mobile: String, code: String): String {
-        require(isMobileOk(mobile)) { "请输入 11 位手机号" }
-        require(code.length >= 4) { "请输入验证码" }
+        if (!isMobileOk(mobile)) throw IllegalArgumentException("请输入 11 位手机号")
+        if (code.length < 4) throw IllegalArgumentException("请输入验证码")
+        val jwt = submit(mobile, code, null)
+        val (name, uid) = parseUser(jwt.body)
+        saveAccount(jwt.cookies, name, uid)
+        return PcStore.accountName
+    }
 
+    /**
+     * 一次 MFA 轮询：返回 true 表示已通过并完成登录。
+     *
+     * 平台流程是「用户给指定号发短信 → 服务端标记 registered → 我们再拿 mfa token
+     * 重发一次登录换会话」，所以这里不是单纯查询状态。
+     */
+    fun pollMfa(mfa: NeedMfa): Boolean {
+        val ctx = mfa.ctx
+        val biz = JSONObject()
+            .put("passport_mfa_retry_tag", ctx.retryTag)
+            .put("sms_code_key", ctx.smsCodeKey)
+        val pairs = listOf(
+            "biz_params" to biz.toString(),
+            "copywriting_key" to ctx.copywritingKey,
+            "encrypt_uid" to ctx.encryptUid,
+            "ies_safety_diversion_tag" to ctx.diversionTag,
+            "new_authn_sdk_log_id" to ctx.logId,
+            "new_authn_sdk_verify_reason" to ctx.verifyReason,
+            "new_authn_sdk_verify_scene" to ctx.verifyScene,
+            "new_authn_sdk_version" to "1.1.31",
+            "request_tag_from" to "h5",
+            "verify_reason" to ctx.verifyReason,
+            "verify_scene" to ctx.verifyScene,
+            // 官方原样带的空字段：形态校验认它们，空也要有
+            "new_verify_flow" to "",
+            "verify_ticket" to "",
+        )
+        val cookie = buildString {
+            if (csrf.isNotBlank()) append("passport_csrf_token=").append(csrf)
+            if (ctx.mfaToken.isNotBlank()) {
+                if (isNotEmpty()) append("; ")
+                append("passport_mfa_token=").append(ctx.mfaToken)
+            }
+        }
+        val resp = call("/passport/upsms/verify/", pairs, cookie, sdkQuery(withRom = false))
+        val j = JSONObject(resp.body)
+        val err = errorCodeOf(j)
+        if (err == 1045) return false          // 还在等用户发短信
+        if (err != 0) throw IllegalStateException(errorText(j, "上行验证失败"))
+
+        val data = j.optJSONObject("data")
+        val newToken = cookieValue(resp.cookies, "passport_mfa_token")
+        if (newToken.isNotBlank()) ctx.mfaToken = newToken
+        // registered=true：平台侧已核验通过，但还没有会话，要重发登录
+        if (data?.optBoolean("registered") != true) return false
+
+        val jwt = submit(ctx.mobile, ctx.code, ctx)
+        val (name, uid) = parseUser(jwt.body)
+        saveAccount(jwt.cookies, name, uid)
+        return true
+    }
+
+    private data class Jwt(val body: String, val cookies: String)
+
+    private fun submit(mobile: String, code: String, mfa: MfaCtx?): Jwt {
         val pairs = devicePairs() + listOf(
             "mobile" to encodeMobile(mobile),
             "mix_mode" to "1",
             "code" to encodeCode(code),
             "account_sdk_source" to "app",
             "passport_support_flow" to "captcha,verify",
-        )
-        val cookie = if (csrf.isNotBlank()) "passport_csrf_token=$csrf" else ""
-        val resp = call(SMS_LOGIN, pairs, cookie, sdkQuery(true))
-        val json = JSONObject(resp.body)
-
-        // 风控要求上行短信二次验证：这一版不处理，明确告知用户
-        val biz = json.optJSONObject("data")?.optJSONObject("biz_params")
-        if (biz?.optString("passport_mfa_retry_tag").orEmpty().isNotBlank()) {
-            throw IllegalStateException("这次登录需要短信安全验证，请改在电视/手机上登录后用匹配码同步")
+        ) + if (mfa != null) {
+            listOf(
+                "passport_mfa_retry_tag" to mfa.retryTag,
+                "sms_code_key" to encodeCode(mfa.smsCodeKey),
+            )
+        } else {
+            emptyList()
         }
 
-        checkError(json, "登录失败")
+        val cookie = buildString {
+            if (csrf.isNotBlank()) append("passport_csrf_token=").append(csrf)
+            if (mfa != null && mfa.mfaToken.isNotBlank()) {
+                if (isNotEmpty()) append("; ")
+                append("passport_mfa_token=").append(mfa.mfaToken)
+            }
+        }
+        val resp = call(SMS_LOGIN, pairs, cookie, sdkQuery(withRom = true))
+        val j = JSONObject(resp.body)
+
+        // MFA 特征：data.biz_params 里 retry_tag 与 sms_code_key 成对出现
+        val data = j.optJSONObject("data")
+        val biz = data?.optJSONObject("biz_params")?.takeIf { it.has("passport_mfa_retry_tag") } ?: j
+        val tag = biz.optString("passport_mfa_retry_tag")
+        val key = biz.optString("sms_code_key")
+        if (tag.isNotBlank() && key.isNotBlank()) {
+            val way = data?.optJSONArray("verify_ways")
+                ?.let { arr ->
+                    (0 until arr.length()).map { arr.optJSONObject(it) }
+                        .firstOrNull { it?.optString("verify_way") == "mobile_up_sms_verify" }
+                }
+            throw NeedMfa(
+                hint = fieldOf(j, "data.verify_scene_desc").ifBlank {
+                    fieldOf(j, "data.description").ifBlank {
+                        j.optString("message").ifBlank { "安全验证" }
+                    }
+                },
+                channel = way?.optString("channel_mobile").orEmpty(),
+                content = way?.optString("sms_content").orEmpty(),
+                ctx = MfaCtx(
+                    retryTag = tag,
+                    smsCodeKey = key,
+                    encryptUid = fieldOf(j, "data.encrypt_uid"),
+                    logId = fieldOf(j, "data.event_params.log_id"),
+                    verifyReason = fieldOf(j, "data.event_params.verify_reason").ifBlank { "ato" },
+                    verifyScene = fieldOf(j, "data.event_params.verify_scene").ifBlank { "sms_login" },
+                    copywritingKey = fieldOf(j, "data.common_params.copywriting_key").ifBlank { "sms_login" },
+                    diversionTag = fieldOf(j, "data.common_params.ies_safety_diversion_tag").ifBlank { "mfa" },
+                    mfaToken = cookieValue(resp.cookies, "passport_mfa_token"),
+                    mobile = mobile,
+                    code = code,
+                ),
+            )
+        }
+
+        checkError(j, "登录失败")
         val cookies = extractCookies(resp.cookies)
         if (cookies.isEmpty()) throw IllegalStateException("登录成功但没拿到会话，请重试")
+        return Jwt(resp.body, cookies)
+    }
 
-        val data = json.optJSONObject("data") ?: JSONObject()
-        val name = data.optString("user_name").ifBlank { data.optString("name") }
-            .ifBlank { data.optString("screen_name") }
-        val uid = data.optString("user_id").ifBlank { data.optString("uid") }
-            .ifBlank { data.optString("sec_uid") }
-
+    private fun saveAccount(cookies: String, name: String, uid: String) {
         PcStore.accountCookies = cookies
         PcStore.accountName = name.ifBlank { "用户" }
         PcStore.accountUid = uid
         PcStore.accountSource = "local"
         PcStore.accountSyncedAt = System.currentTimeMillis()
         csrf = ""
-        return PcStore.accountName
+    }
+
+    private fun parseUser(body: String): Pair<String, String> {
+        val j = runCatching { JSONObject(body) }.getOrNull() ?: return "" to ""
+        val data = j.optJSONObject("data") ?: j
+        val name = data.optString("user_name").ifBlank { data.optString("name") }
+            .ifBlank { data.optString("screen_name") }
+        val uid = data.optString("user_id").ifBlank { data.optString("uid") }
+            .ifBlank { data.optString("sec_uid") }
+        return name to uid
+    }
+
+    private fun fieldOf(j: JSONObject, path: String): String {
+        var cur: JSONObject = j
+        val parts = path.split('.')
+        for (p in parts.dropLast(1)) {
+            cur = cur.optJSONObject(p) ?: return ""
+        }
+        val v = cur.opt(parts.last())
+        return if (v == null || v == JSONObject.NULL) "" else v.toString()
+    }
+
+    private fun errorText(j: JSONObject, prefix: String): String {
+        val d = j.optJSONObject("data")
+        val msg = d?.optString("description").orEmpty()
+            .ifBlank { d?.optString("message").orEmpty() }
+            .ifBlank { j.optString("message") }
+            .ifBlank { "未知错误" }
+        return "$prefix（${errorCodeOf(j)}）：$msg"
     }
 
     // ---------------- 内部 ----------------

@@ -3,6 +3,7 @@
 package com.kaixinguo.pc
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +51,10 @@ fun LoginScreen(onBack: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
+    // 风控要求上行短信验证时的上下文（展示号码/内容 + 轮询）
+    var mfa by remember { mutableStateOf<PcLogin.NeedMfa?>(null) }
+    var mfaPolling by remember { mutableStateOf(false) }
+    var mfaNote by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun run(label: String, block: () -> String) {
@@ -64,8 +69,15 @@ fun LoginScreen(onBack: () -> Unit) {
                     messageIsError = false
                     message = text
                 }.onFailure { t ->
-                    messageIsError = true
-                    message = t.message ?: "$label 失败"
+                    if (t is PcLogin.NeedMfa) {
+                        // 不是错误：展示「发短信给指定号码」，然后轮询放行
+                        mfa = t
+                        mfaNote = null
+                        message = null
+                    } else {
+                        messageIsError = true
+                        message = t.message ?: "$label 失败"
+                    }
                 }
             }
         }
@@ -120,6 +132,77 @@ fun LoginScreen(onBack: () -> Unit) {
             message?.let {
                 Spacer(Modifier.height(12.dp))
                 Text(it, color = if (messageIsError) Palette.accent else Palette.star, fontSize = 12.sp)
+            }
+
+            mfa?.let { m ->
+                Spacer(Modifier.height(14.dp))
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.panelHi)
+                        .padding(12.dp),
+                ) {
+                    Text("需要短信安全验证", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(m.hint, color = Palette.dim, fontSize = 12.sp)
+                    if (m.channel.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("发送到：${m.channel}", color = Palette.text, fontSize = 13.sp)
+                    }
+                    if (m.content.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text("短信内容：${m.content}", color = Palette.text, fontSize = 13.sp)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PrimaryButton(if (mfaPolling) "验证中…" else "我发好了，开始验证", null) {
+                            if (mfaPolling) return@PrimaryButton
+                            mfaPolling = true
+                            mfaNote = "已开始检查，发完短信后一般几秒内通过…"
+                            scope.launch(Dispatchers.IO) {
+                                var done = false
+                                var fail: String? = null
+                                repeat(60) {
+                                    if (done || fail != null) return@repeat
+                                    val r = runCatching { PcLogin.pollMfa(m) }
+                                    val ok = r.getOrNull()
+                                    if (r.isFailure) {
+                                        fail = r.exceptionOrNull()?.message ?: "上行验证失败"
+                                    } else if (ok == true) {
+                                        done = true
+                                    } else {
+                                        kotlinx.coroutines.delay(2_000)
+                                    }
+                                }
+                                withContext(Dispatchers.Main) {
+                                    mfaPolling = false
+                                    if (done) {
+                                        mfa = null
+                                        messageIsError = false
+                                        message = "登录成功：${PcStore.accountName}"
+                                    } else {
+                                        mfaNote = fail ?: "验证超时（2 分钟），可以重新登录再试"
+                                        messageIsError = true
+                                        message = mfaNote
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "取消",
+                            color = Palette.dim, fontSize = 13.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { mfa = null; mfaPolling = false; mfaNote = null }
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                        )
+                    }
+                    mfaNote?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = Palette.dim, fontSize = 12.sp)
+                    }
+                }
             }
         }
     }

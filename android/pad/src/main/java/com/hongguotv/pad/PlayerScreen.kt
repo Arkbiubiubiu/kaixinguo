@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -112,6 +113,12 @@ fun PlayerScreen(
     onBack: () -> Unit,
     onSwitch: (String, Int) -> Unit,
     onDetail: () -> Unit = {},
+    /** 刷剧模式：不显示控制台，按键改为 ↑↓ 换剧、←→ 快进退、确定暂停、返回退出。 */
+    feedMode: Boolean = false,
+    /** 刷剧模式左下角的一行提示（「第 3 部 · 共 20 部」），null 不显示。 */
+    feedLabel: String? = null,
+    /** 刷剧模式 ↑↓ 的回调：-1 上一部 / +1 下一部。 */
+    onFeedStep: ((Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -144,6 +151,12 @@ fun PlayerScreen(
 
     var dmItems by remember { mutableStateOf<List<DmItem>>(emptyList()) }
     var hint by remember { mutableStateOf<String?>(null) }
+
+    // 播放页互动（与 PC 右侧互动栏对齐）：收藏 / 点赞
+    var fav by remember(seriesId) { mutableStateOf(Store.contains("favorite", seriesId)) }
+    var liked by remember(seriesId) { mutableStateOf(Store.contains("like", seriesId)) }
+    /** 单集评论面板是否打开（打开时按键交给面板，返回键先关面板） */
+    var commentsOpen by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     var preparing by remember { mutableStateOf(true) }
@@ -218,6 +231,17 @@ fun PlayerScreen(
 
     // TV 与 Pad 共用一份源码，靠包名区分：TV 用遥控器，键位和 Pad 的触屏手势不一样
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
+
+    /** 刷剧模式：控制台整体不参与（没有焦点可抢），按键直接作用于播放器/换剧。 */
+    val feed = feedMode && onFeedStep != null
+    // 首次进入刷剧给 6 秒操作提示，之后只留标题/集数
+    var feedTipVisible by remember(feed) { mutableStateOf(feed) }
+    LaunchedEffect(feed) {
+        if (feed) {
+            kotlinx.coroutines.delay(6_000)
+            feedTipVisible = false
+        }
+    }
 
     /**
      * 遥控器焦点是否在底部按钮行上。
@@ -418,12 +442,17 @@ fun PlayerScreen(
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state != Player.STATE_ENDED || !Store.autoNext) return
+                if (state != Player.STATE_ENDED) return
                 // 「下一集是几号」以播放器当前在放的那个地址为准：
                 // 队列自动换集之后，外层导航栈里的集号是旧的，问它会往回跳（实测会跳回第 2 集）
                 val curUri = player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
                 val at = uriToEp[curUri] ?: curIndex
                 Log.i("nextup", "ended at=$at curUri=${curUri.takeLast(16)}")
+                // 不自动连播：这一集播完就停；最后一集且开了「看完自动删除记录」时抹掉历史
+                if (!Store.autoNext) {
+                    if (at >= curCount && Store.deleteAfterFinish) Store.removeHistory(curSeries)
+                    return
+                }
                 if (at < curCount) {
                     curSwitch(curSeries, at + 1)
                     return
@@ -443,8 +472,12 @@ fun PlayerScreen(
                             // 用户能看到进度在末尾、能直接选集或退出，不会以为卡死。
                             seasonJumping = false
                             hint = "已经是最后一集了"
-                            controlsVisible = true
-                            lastActionAt = System.currentTimeMillis()
+                            // 看完（没有下一季了）按设置抹掉观看记录，与 PC 同语义
+                            if (Store.deleteAfterFinish) Store.removeHistory(curSeries)
+                            if (!feed) {
+                                controlsVisible = true
+                                lastActionAt = System.currentTimeMillis()
+                            }
                         }
                     }
                 }
@@ -920,7 +953,8 @@ fun PlayerScreen(
         // 这时候 isPlaying 变 false 是「他要的效果」，不能顺手把控制条亮出来 ——
         // 一亮就把焦点抢进按钮行，第二下右键就变成移动焦点了。
         val justActed = System.currentTimeMillis() - lastActionAt < 1_500L
-        if (!(isTv && justActed)) {
+        // 刷剧模式没有控制台，暂停就只暂停，不亮条、不抢焦点
+        if (!feed && !(isTv && justActed)) {
             controlsVisible = true
             lastActionAt = System.currentTimeMillis()
             Log.d("chrome", "auto show paused index=$index")
@@ -1012,6 +1046,24 @@ fun PlayerScreen(
     }
 
     /**
+     * 刷剧模式键位（TV 极简版，控制台不出现）：
+     * ↑/↓ = 上一部/下一部，确定 = 暂停/继续，←/→ = 快退/快进，返回 = 退出刷剧。
+     */
+    fun feedKeys(ev: KeyEvent): Boolean = when (ev.key) {
+        Key.Back -> { onBack(); true }
+        Key.DirectionCenter, Key.Enter, Key.Spacebar -> {
+            if (player.isPlaying) player.pause() else player.play()
+            mark()
+            true
+        }
+        Key.DirectionLeft -> { seekByKey(-1); true }
+        Key.DirectionRight -> { seekByKey(1); true }
+        Key.DirectionUp -> { onFeedStep?.invoke(-1); true }
+        Key.DirectionDown -> { onFeedStep?.invoke(1); true }
+        else -> false
+    }
+
+    /**
      * TV 键位（遥控器）：
      * - 确认 = 暂停/继续，**不弹控制条**（焦点在按钮行时交给按钮自己）
      * - ←/→ = 快退/快进（单按 5 秒，连按加速到 40 秒），**不弹控制条**（焦点在按钮行时交给焦点移动）
@@ -1088,8 +1140,16 @@ fun PlayerScreen(
             .onFocusChanged { rootHasFocus = it.hasFocus }
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // 评论面板打开时：返回先关面板，其它键交给面板（焦点在列表/输入框上）
+                if (commentsOpen) {
+                    if (ev.key == Key.Back) {
+                        commentsOpen = false
+                        return@onPreviewKeyEvent true
+                    }
+                    return@onPreviewKeyEvent false
+                }
                 mark()
-                if (isTv) tvKeys(ev) else padKeys(ev)
+                if (feed) feedKeys(ev) else if (isTv) tvKeys(ev) else padKeys(ev)
             },
     ) {
         AndroidView(
@@ -1110,7 +1170,10 @@ fun PlayerScreen(
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = {
-                            if (menu != PlayerMenu.None) {
+                            // 刷剧模式没有控制台：单击 = 播放/暂停（和 PC 刷剧页一致）
+                            if (feed) {
+                                if (player.isPlaying) player.pause() else player.play()
+                            } else if (menu != PlayerMenu.None) {
                                 menu = PlayerMenu.None
                             } else {
                                 controlsVisible = !controlsVisible
@@ -1136,6 +1199,24 @@ fun PlayerScreen(
                             if (kotlin.math.abs(acc) > 50) seekBy(if (acc > 0) 5_000 else -5_000)
                         },
                     )
+                }
+                // 刷剧（触屏）：上滑 = 下一部，下滑 = 上一部（PC 是滚轮，同一语义）
+                .pointerInput(feed) {
+                    if (!feed) return@pointerInput
+                    var dx = 0f
+                    var dy = 0f
+                    detectDragGestures(
+                        onDragStart = { dx = 0f; dy = 0f },
+                        onDragEnd = {
+                            if (kotlin.math.abs(dy) > 80 && kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                                onFeedStep?.invoke(if (dy < 0) 1 else -1)
+                            }
+                        },
+                    ) { change, amount ->
+                        dx += amount.x
+                        dy += amount.y
+                        change.consume()
+                    }
                 },
         )
 
@@ -1336,7 +1417,86 @@ fun PlayerScreen(
             onDetail = if (isTv) onDetail else null,
             // 真实焦点状态回流：焦点在按钮行/浮层上时，←/→ 交给焦点移动，其他时候才是快进快退
             onChromeFocus = { chromeFocused = it },
+            fav = fav,
+            liked = liked,
+            onToggleFav = {
+                val target = !fav
+                scope.launch {
+                    withContext(Dispatchers.IO) { runCatching { Api.collectSeries(seriesId, target) } }
+                    if (Store.contains("favorite", seriesId) != target) Store.toggle("favorite", seriesId)
+                    withContext(Dispatchers.Main) { fav = target }
+                    hint = if (target) "已收藏" else "已取消收藏"
+                    mark()
+                }
+            },
+            onToggleLike = {
+                val target = !liked
+                val vid = episodes.getOrNull(index - 1)?.vid.orEmpty()
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        if (vid.isNotBlank()) runCatching { Api.diggVideo(vid, seriesId, target) }
+                    }
+                    if (Store.contains("like", seriesId) != target) Store.toggle("like", seriesId)
+                    withContext(Dispatchers.Main) { liked = target }
+                    hint = if (target) "已点赞" else "已取消点赞"
+                    mark()
+                }
+            },
+            onComments = { commentsOpen = true },
         )
+
+        // 单集评论面板：盖在播放器上，TV 只读、Pad 可发
+        if (commentsOpen) {
+            val vid = episodes.getOrNull(index - 1)?.vid.orEmpty()
+            if (vid.isNotBlank()) {
+                EpisodeCommentsPanel(
+                    vid = vid,
+                    seriesId = seriesId,
+                    readOnly = isTv,
+                    onClose = { commentsOpen = false },
+                )
+            }
+        }
+
+        // 刷剧模式：控制台不出现，只留底部一行标题/集数 + 细进度条（纯展示，不参与焦点）
+        if (feed) {
+            Column(
+                Modifier.align(Alignment.BottomStart)
+                    .padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
+            ) {
+                Text(
+                    title.ifBlank { "刷剧" },
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "第 ${index} 集" + (feedLabel?.let { " · $it" } ?: ""),
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(2.dp)
+                        .background(Color.White.copy(alpha = 0.18f)),
+                ) {
+                    val frac = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+                    Box(
+                        Modifier.fillMaxWidth(frac).height(2.dp)
+                            .background(Color(0xCCFF4A3D)),
+                    )
+                }
+            }
+            if (feedTipVisible) {
+                Text(
+                    if (isTv) "↑↓ 换剧 · 确定暂停 · 返回退出" else "上下滑换剧 · 单击暂停",
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
+                )
+            }
+        }
 
         // 提示条（发送结果之类）：控制条上方居中的小胶囊
         hint?.let { msg ->

@@ -28,6 +28,23 @@ object LocalResolverProvider {
  * 设备参数是**固定值**——每次随机生成 iid/device_id 会被当成新设备，批量取流直接
  * 返回 HTTP 200 空包（实测随机身份命中率只有 20%，固定身份 100%）。
  */
+data class FollowUpdateItem(
+    val seriesId: String,
+    val title: String,
+    val cover: String,
+    val episodeCount: Int,
+    /** 看到第几集（服务端 expand.latest_watched_vid_index，0=没看过） */
+    val watchedIndex: Int = 0,
+    /** 是否完结（expand.series_status != 0） */
+    val finished: Boolean = false,
+)
+
+data class FollowUpdatePage(
+    val items: List<FollowUpdateItem> = emptyList(),
+    val cursor: String = "",
+    val hasMore: Boolean = false,
+)
+
 /** 剧评条目 / 页。 */
 data class ReviewItem(val user: String, val avatar: String, val text: String, val time: String, val likes: String)
 data class ReviewPage(
@@ -44,6 +61,35 @@ data class ReviewPage(
 
 /** 演职员资料。 */
 data class CreatorProfileInfo(val id: String, val name: String, val avatar: String, val desc: String)
+
+/** 单集评论条目（播放器评论区）。 */
+data class EpisodeComment(
+    val id: String,
+    val user: String,
+    val avatar: String,
+    val text: String,
+    val time: String,
+    val likes: String = "",
+    val replyCount: Int = 0,
+    /** 是否已赞（stat.user_digg / digg 状态） */
+    val dug: Boolean = false,
+)
+
+data class EpisodeCommentPage(
+    val items: List<EpisodeComment> = emptyList(),
+    val cursor: String = "",
+    val hasMore: Boolean = false,
+    val total: Int = 0,
+)
+
+/** 一条回复（评论区内联展开）。 */
+data class CommentReply(
+    val id: String,
+    val user: String,
+    val text: String,
+    val time: String,
+    val replyTo: String = "",
+)
 
 object Api {
 
@@ -2314,6 +2360,283 @@ object Api {
      * **不是** video_data 数组——之前按 video_data 收，所以永远 0 条。
      * 条目里没有 series_id/book_id 时用 video_id 兜底（原版 findSeriesId 同口径）。
      */
+    fun followUpdates(cursor: String = ""): FollowUpdatePage {
+        if (!App.state.loggedIn) return FollowUpdatePage()
+        val query = JSONArray()
+            .put(JSONArray().put("action_channel").put("9"))
+            .put(JSONArray().put("count").put("20"))
+            .put(JSONArray().put("cursor_str").put(cursor))
+        val text = runCatching {
+            signedGet("/novel/articleapi/relation/get_user_action/v1/", query)
+        }.getOrNull() ?: return FollowUpdatePage()
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return FollowUpdatePage()
+        if (root.optInt("code", -1) != 0) return FollowUpdatePage()
+        val data = root.optJSONObject("data") ?: return FollowUpdatePage()
+        val info = data.optJSONObject("comment_list_info")
+        val mix = data.optJSONArray("mix_data") ?: JSONArray()
+        val out = mutableListOf<FollowUpdateItem>()
+        for (i in 0 until mix.length()) {
+            val v = mix.optJSONObject(i)?.optJSONObject("video") ?: continue
+            val common = v.optJSONObject("common") ?: continue
+            val sid = v.optString("series_id")
+                .ifEmpty { v.optString("book_id") }
+                .ifEmpty { v.optString("video_id") }
+            if (sid.isEmpty()) continue
+            val expand = v.optJSONObject("expand")
+            out.add(
+                FollowUpdateItem(
+                    seriesId = sid,
+                    title = common.optString("title"),
+                    cover = common.optString("cover"),
+                    episodeCount = expand?.optInt("episode_cnt", 0) ?: 0,
+                    watchedIndex = expand?.optInt("latest_watched_vid_index", 0) ?: 0,
+                    finished = (expand?.optInt("series_status", 0) ?: 0) != 0,
+                ),
+            )
+        }
+        return FollowUpdatePage(
+            items = out,
+            cursor = info?.optString("cursor").orEmpty(),
+            hasMore = info?.optBoolean("has_more", false) ?: false,
+        )
+    }
+
+    fun episodeComments(vid: String, seriesId: String, cursor: String = ""): EpisodeCommentPage {
+        val biz = JSONObject()
+            .put("book_id", seriesId)
+            .put("need_count", cursor.isEmpty())
+            .put("req_type", 0)
+            .put("sort", "video_innerflow")
+            .put("start_offset_time", 0)
+            .put("playlet_consume_duration_ms", 0)
+            .put("playlet_item_consume_duration_ms", 0)
+            .put("outflow_comment_count", 0)
+            .put("is_last_episode", false)
+        val body = JSONObject()
+            .put("aid", 8662)
+            .put("business_param", biz)
+            .put("comment_source", 4)
+            .put("comment_type", 4)
+            .put("compliance_status", 0)
+            .put("count", 10)
+            .put("group_id", vid)
+            .put("group_type", 30)
+            .put("server_channel", 18)
+            .put("sort", 1)
+        if (cursor.isNotEmpty()) body.put("cursor", cursor)
+        val text = runCatching {
+            signedPost("/novel/commentapi/comment/list/$vid/v1/", body.toString())
+        }.getOrNull() ?: return EpisodeCommentPage()
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return EpisodeCommentPage()
+        val code = if (root.has("code")) root.optInt("code", -1) else root.optInt("Code", -1)
+        if (code != 0) {
+            Log.d("PadComment", "list code=$code ${root.optString("Message")}")
+            return EpisodeCommentPage()
+        }
+        val data = root.optJSONObject("data") ?: return EpisodeCommentPage()
+        val info = data.optJSONObject("common_list_info")
+        val out = mutableListOf<EpisodeComment>()
+        val arr = data.optJSONArray("data_list") ?: JSONArray()
+        for (i in 0 until arr.length()) {
+            val c = arr.optJSONObject(i)?.optJSONObject("comment") ?: continue
+            val id = c.optString("comment_id")
+            if (id.isEmpty()) continue
+            val common = c.optJSONObject("common")
+            val txt = when (val content = common?.opt("content")) {
+                is JSONObject -> content.optString("text")
+                is String -> content
+                else -> ""
+            }
+            if (txt.isBlank()) continue
+            val base = common.optJSONObject("user_info")?.optJSONObject("base_info")
+            val ts = common.optLong("create_timestamp", 0) ?: 0L
+            val stat = c.optJSONObject("stat")
+            out.add(
+                EpisodeComment(
+                    id = id,
+                    user = base?.optString("nickname").orEmpty(),
+                    avatar = base?.optString("avatar").orEmpty(),
+                    text = txt,
+                    time = if (ts > 0) java.text.SimpleDateFormat("MM-dd", java.util.Locale.CHINA)
+                        .format(java.util.Date(ts * 1000)) else "",
+                    likes = stat?.optLong("digg_count", 0)?.takeIf { it > 0 }?.toString().orEmpty(),
+                    replyCount = stat?.optInt("reply_count", 0) ?: 0,
+                    dug = (stat?.optInt("user_digg", 0) ?: 0) != 0,
+                ),
+            )
+        }
+        return EpisodeCommentPage(
+            items = out,
+            cursor = info?.optString("cursor").orEmpty(),
+            hasMore = info?.optBoolean("has_more", false) ?: false,
+            total = info?.optInt("total", 0) ?: 0,
+        )
+    }
+
+    fun sendEpisodeComment(vid: String, seriesId: String, text: String): EpisodeComment? {
+        if (!App.state.loggedIn || text.isBlank()) return null
+        val body = JSONObject()
+            .put("aid", 8662)
+            .put(
+                "business_param",
+                JSONObject()
+                    .put("book_id", seriesId)
+                    .put("has_aigc_content", false)
+                    .put("ignore_urge_rule", false)
+                    .put("log_extra", JSONObject())
+                    .put("offset", 0)
+                    .put("preset_text_id", "")
+                    .put("text_feature", JSONObject()),
+            )
+            .put("commit_source", 3)
+            .put("data_type", 4)
+            .put("group_id", vid)
+            .put("group_type", 30)
+            .put("text", text.trim())
+            .toString()
+        val resp = runCatching { signedPost("/novel/commentapi/comment/add/v1/", body) }.getOrNull()
+            ?: return null
+        val root = runCatching { JSONObject(resp) }.getOrNull() ?: return null
+        val code = if (root.has("code")) root.optInt("code", -1) else root.optInt("Code", -1)
+        if (code != 0) {
+            Log.d("PadComment", "send code=$code ${root.optString("Message")}")
+            return null
+        }
+        val c = root.optJSONObject("data")?.optJSONObject("comment_info") ?: return null
+        val common = c.optJSONObject("common")
+        val txt = when (val content = common?.opt("content")) {
+            is JSONObject -> content.optString("text")
+            is String -> content
+            else -> text.trim()
+        }
+        val base = common?.optJSONObject("user_info")?.optJSONObject("base_info")
+        return EpisodeComment(
+            id = c.optString("comment_id"),
+            user = base?.optString("nickname").orEmpty().ifBlank { App.state.accountName },
+            avatar = base?.optString("avatar").orEmpty(),
+            text = txt,
+            time = "刚刚",
+        )
+    }
+
+    fun commentReplies(commentId: String, cursor: String = ""): List<CommentReply> {
+        val biz = JSONObject()
+            .put("book_id", "")
+            .put("start_offset_time", 0)
+        val body = JSONObject()
+            .put("aid", 8662)
+            .put("business_param", biz)
+            .put("comment_source", 504)
+            .put("comment_type", 4)
+            .put("count", 20)
+            .put("group_type", 30)
+            .put("server_channel", 18)
+            .put("sort", 1)
+        if (cursor.isNotEmpty()) body.put("cursor", cursor)
+        val text = runCatching {
+            signedPost("/novel/commentapi/reply/list/$commentId/v1/", body.toString())
+        }.getOrNull() ?: return emptyList()
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return emptyList()
+        val code = if (root.has("code")) root.optInt("code", -1) else root.optInt("Code", -1)
+        if (code != 0) return emptyList()
+        val arr = root.optJSONObject("data")?.optJSONArray("data_list") ?: return emptyList()
+        val out = mutableListOf<CommentReply>()
+        for (i in 0 until arr.length()) {
+            val r = arr.optJSONObject(i)?.optJSONObject("reply")
+                ?: arr.optJSONObject(i)
+                ?: continue
+            val id = r.optString("reply_id").ifEmpty { r.optString("comment_id") }
+            val common = r.optJSONObject("common")
+            val txt = when (val content = common?.opt("content")) {
+                is JSONObject -> content.optString("text")
+                is String -> content
+                else -> ""
+            }
+            if (txt.isBlank()) continue
+            val base = common?.optJSONObject("user_info")?.optJSONObject("base_info")
+            val ts = common?.optLong("create_timestamp", 0) ?: 0L
+            out.add(
+                CommentReply(
+                    id = id,
+                    user = base?.optString("nickname").orEmpty(),
+                    text = txt,
+                    time = if (ts > 0) java.text.SimpleDateFormat("MM-dd", java.util.Locale.CHINA)
+                        .format(java.util.Date(ts * 1000)) else "",
+                ),
+            )
+        }
+        return out
+    }
+
+    fun sendCommentReply(vid: String, seriesId: String, commentId: String, text: String): Boolean {
+        if (!App.state.loggedIn || text.isBlank()) return false
+        val body = JSONObject()
+            .put("aid", 8662)
+            .put(
+                "business_param",
+                JSONObject()
+                    .put("book_id", seriesId)
+                    .put("has_aigc_content", false)
+                    .put("ignore_urge_rule", false)
+                    .put("log_extra", JSONObject())
+                    .put("offset", 0)
+                    .put("text_feature", JSONObject()),
+            )
+            .put("commit_source", 9)
+            .put("data_type", 4)
+            .put("group_id", vid)
+            .put("group_type", 30)
+            .put("reply_to_comment_id", commentId)
+            .put("text", text.trim())
+            .toString()
+        val resp = runCatching { signedPost("/novel/commentapi/comment/add/v1/", body) }.getOrNull()
+            ?: return false
+        val root = runCatching { JSONObject(resp) }.getOrNull() ?: return false
+        val code = if (root.has("code")) root.optInt("code", -1) else root.optInt("Code", -1)
+        return code == 0
+    }
+
+    fun sendSeriesReview(seriesId: String, text: String, score10: Int): Boolean {
+        if (!App.state.loggedIn || text.isBlank()) return false
+        if (score10 !in 1..10) return false
+        val body = JSONObject()
+            .put("aid", 8662)
+            .put(
+                "business_param",
+                JSONObject()
+                    .put("aigc_template_id", "")
+                    .put("aigc_template_text", "")
+                    .put("book_id", seriesId)
+                    .put("comment_tag_list", org.json.JSONArray())
+                    .put("from_famous_comment_id", 0)
+                    .put("has_aigc_content", false)
+                    .put("ignore_urge_rule", false)
+                    .put("is_confirm_request", false)
+                    .put("offset", 0)
+                    .put("read_item_cnt", 0)
+                    .put("score", score10)
+                    .put("support_para_audio_play", false)
+                    .put("text_feature", JSONObject())
+                    .put("video_is_muted", 0),
+            )
+            .put("comment_type", 0)
+            .put("commit_source", 12)
+            .put("data_type", 2)
+            .put("group_id", seriesId)
+            .put("group_type", 1)
+            .put("image_data", org.json.JSONArray())
+            .put("rich_text", org.json.JSONArray())
+            .put("text", text.trim())
+            .toString()
+        val resp = runCatching { signedPost("/novel/commentapi/comment/add/v1/", body) }.getOrNull()
+            ?: return false
+        val root = runCatching { JSONObject(resp) }.getOrNull() ?: return false
+        val code = if (root.has("code")) root.optInt("code", -1) else root.optInt("Code", -1)
+        if (code != 0) Log.d("PadReview", "send code=$code ${root.optString("Message")}")
+        return code == 0
+    }
+
+
     fun followList(): List<SeriesCard> {
         if (!App.state.loggedIn) return emptyList()
         val query = JSONArray()

@@ -32,6 +32,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -683,7 +686,32 @@ fun DetailScreen(
                     activeIndex = resumeIndex - 1,
                     onPick = { i -> onPlay(seriesId, i + 1) },
                 )
-                1 -> ReviewsBlock(reviews, reviewScore, reviewScoreCount)
+                1 -> ReviewsBlock(
+                    reviews, reviewScore, reviewScoreCount,
+                    canPost = Store.loggedIn,
+                    onPost = { text, stars ->
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                runCatching { Api.sendSeriesReview(seriesId, text, stars * 2) }
+                                    .getOrDefault(false)
+                            }
+                            if (ok) {
+                                val rp = withContext(Dispatchers.IO) {
+                                    runCatching { Api.reviews(seriesId, 10) }.getOrNull()
+                                }
+                                if (rp != null) {
+                                    reviews = rp.items
+                                    reviewScore = rp.score
+                                    reviewScoreCount = rp.scoreCount
+                                    reviewTotal = rp.total
+                                }
+                                actionMsg = "剧评已发布"
+                            } else {
+                                actionMsg = "发布失败：先登录再发剧评"
+                            }
+                        }
+                    },
+                )
                 else -> {
                     val groups = buildList {
                         if (seasons.size > 1) {
@@ -862,6 +890,9 @@ private fun ReviewsBlock(
     reviews: List<ReviewItem>,
     score: String = "",
     scoreCount: Int = 0,
+    /** 登录后才显示发布框；TV 也能发（评分 + 文字），与 PC 的剧评发布对齐 */
+    canPost: Boolean = false,
+    onPost: ((String, Int) -> Unit)? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // 评分区（PC 同款：大数字橙色 + 「N人评分」灰色小字并排）
@@ -882,6 +913,58 @@ private fun ReviewsBlock(
                         modifier = Modifier.padding(bottom = 6.dp),
                     )
                 }
+            }
+        }
+        if (canPost && onPost != null) {
+            var stars by remember { mutableStateOf(5) }
+            var text by remember { mutableStateOf("") }
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Panel)
+                    .padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("发剧评", color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.width(10.dp))
+                    (1..5).forEach { i ->
+                        Text(
+                            if (i <= stars) "★" else "☆",
+                            color = Star,
+                            fontSize = 20.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable { stars = i }
+                                .padding(horizontal = 3.dp),
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TvChip("发布", selected = text.isNotBlank()) {
+                        if (text.isNotBlank()) {
+                            onPost(text.trim(), stars)
+                            text = ""
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                BasicTextField(
+                    value = text,
+                    onValueChange = { text = it.take(200) },
+                    textStyle = TextStyle(color = TextMain, fontSize = 13.sp),
+                    cursorBrush = SolidColor(Red),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(PanelHi)
+                        .padding(10.dp),
+                    decorationBox = { inner ->
+                        Box(Modifier.fillMaxSize()) {
+                            if (text.isEmpty()) Text("说说你的看法…", color = TextDim, fontSize = 13.sp)
+                            inner()
+                        }
+                    },
+                )
             }
         }
         if (reviews.isEmpty()) {

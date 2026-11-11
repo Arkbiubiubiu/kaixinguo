@@ -27,6 +27,7 @@ release/
 # 本地开发账本（含内网地址与本机路径，不随仓库公开）
 UI-STATUS.md
 AUDIT.md
+DIFF-3ENDS.md
 HANDOFF.md
 
 # OS

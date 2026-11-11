@@ -74,7 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** 控制台浮层：同一时间只开一个（对齐 Windows 的菜单互斥）。 */
-enum class PlayerMenu { None, Speed, Definition, Episodes, DmSettings }
+enum class PlayerMenu { None, Speed, Definition, Episodes, DmSettings, More }
 
 /** 倍速档位与 Windows 版一致。 */
 private val RATES = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f)
@@ -137,6 +137,13 @@ fun PlayerChrome(
     onToggleDecode: () -> Unit = {},
     /** 真实焦点是否停在控制台（按钮行或浮层）上。PlayerScreen 据此决定方向键是快进退还是移焦点。 */
     onChromeFocus: (Boolean) -> Unit = {},
+    /** 播放页互动：收藏 / 点赞（与 PC 播放器右侧互动栏对齐，TV 收进「更多」） */
+    fav: Boolean = false,
+    liked: Boolean = false,
+    onToggleFav: () -> Unit = {},
+    onToggleLike: () -> Unit = {},
+    /** 打开单集评论面板（TV 只读，Pad 可发） */
+    onComments: (() -> Unit)? = null,
     /** 控制条出现时是否把焦点直接送进按钮行（TV：只有按 ↓ 进来时才要） */
     focusOnShow: Boolean = true,
 ) {
@@ -288,6 +295,12 @@ fun PlayerChrome(
                             onClick = onDetail,
                         ) { c -> InfoGlyph(c) }
                     }
+                    TextBtn(
+                        text = "更多",
+                        height = btnH,
+                        fontSize = if (isTv) 15.sp else 12.sp,
+                        onClick = { onMenu(toggle(menu, PlayerMenu.More)) },
+                    ) { c -> MoreGlyph(c) }
                 }
             }
         }
@@ -353,6 +366,33 @@ fun PlayerChrome(
                     focusFirst = panelFirst,
                     onChange = onDmSettings,
                 )
+
+                PlayerMenu.More -> PanelSurface(180.dp) {
+                    PanelTitle("更多")
+                    if (onComments != null) {
+                        MenuRow("评论", checked = false, tv = isTv) {
+                            onComments()
+                            onMenu(PlayerMenu.None)
+                        }
+                    }
+                    MenuRow(
+                        if (fav) "已收藏" else "收藏",
+                        checked = fav,
+                        tv = isTv,
+                        focusRequester = panelFirst,
+                    ) {
+                        onToggleFav()
+                        onMenu(PlayerMenu.None)
+                    }
+                    MenuRow(
+                        if (liked) "已点赞" else "点赞",
+                        checked = liked,
+                        tv = isTv,
+                    ) {
+                        onToggleLike()
+                        onMenu(PlayerMenu.None)
+                    }
+                }
 
                 PlayerMenu.None -> Unit
             }
@@ -505,9 +545,17 @@ private fun ScrubBar(
 }
 
 /** 弹幕输入框（常驻控制条，对齐 Windows 的 DanmakuSendBox）。 */
+private val DM_EMOJIS = listOf(
+    "😀", "😂", "🤣", "😊", "😍", "🥰", "😘", "😎",
+    "🤔", "😅", "😭", "😡", "😱", "🤯", "😴", "🥳",
+    "👍", "👎", "👏", "🙏", "💪", "🤝", "✌️", "👌",
+    "❤️", "💔", "🔥", "⭐", "🎉", "🌹", "🍉", "🐶",
+)
+
 @Composable
 private fun DmSendBox(onSend: (String) -> Unit, onEditingChange: (Boolean) -> Unit = {}) {
     var text by remember { mutableStateOf("") }
+    var emojiOpen by remember { mutableStateOf(false) }
     val submit = {
         val t = text.trim()
         if (t.isNotEmpty()) {
@@ -515,46 +563,81 @@ private fun DmSendBox(onSend: (String) -> Unit, onEditingChange: (Boolean) -> Un
             text = ""
         }
     }
-    Row(
-        Modifier
-            .height(32.dp)
-            .width(196.dp)
-            .clip(RoundedCornerShape(50))
-            .background(Color(0x26FFFFFF))
-            .padding(start = 12.dp, end = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BasicTextField(
-            value = text,
-            onValueChange = { text = it.take(50) },
-            singleLine = true,
-            textStyle = BarText.copy(color = Color.White, fontFamily = FontFamily.Default),
-            cursorBrush = SolidColor(Red),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { submit() }),
-            modifier = Modifier
-                .weight(1f)
-                .onFocusChanged { onEditingChange(it.isFocused) },
-            decorationBox = { inner ->
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
-                    if (text.isEmpty()) {
-                        Text("发个弹幕…", style = BarText.copy(color = Color(0x8CFFFFFF), fontFamily = FontFamily.Default))
-                    }
-                    inner()
-                }
-            },
-        )
-        Spacer(Modifier.width(6.dp))
-        Box(
+    Box {
+        Row(
             Modifier
-                .height(24.dp)
+                .height(32.dp)
+                .width(226.dp)
                 .clip(RoundedCornerShape(50))
-                .background(if (text.isNotBlank()) Red else Color(0x33FFFFFF))
-                .clickable(enabled = text.isNotBlank()) { submit() }
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center,
+                .background(Color(0x26FFFFFF))
+                .padding(start = 12.dp, end = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("发送", color = Color.White, fontSize = 11.sp)
+            BasicTextField(
+                value = text,
+                onValueChange = { text = it.take(50) },
+                singleLine = true,
+                textStyle = BarText.copy(color = Color.White, fontFamily = FontFamily.Default),
+                cursorBrush = SolidColor(Red),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { submit() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { onEditingChange(it.isFocused) },
+                decorationBox = { inner ->
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                        if (text.isEmpty()) {
+                            Text("发个弹幕…", style = BarText.copy(color = Color(0x8CFFFFFF), fontFamily = FontFamily.Default))
+                        }
+                        inner()
+                    }
+                },
+            )
+            // 表情：点开后输入框上方弹 32 个常用表情（与 PC 的 emoji 宫格同一套）
+            Text(
+                "😀",
+                fontSize = 16.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable { emojiOpen = !emojiOpen }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Box(
+                Modifier
+                    .height(24.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (text.isNotBlank()) Red else Color(0x33FFFFFF))
+                    .clickable(enabled = text.isNotBlank()) { submit() }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("发送", color = Color.White, fontSize = 11.sp)
+            }
+        }
+        if (emojiOpen) {
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .offset(y = (-40).dp)
+                    .width(268.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xF2141014))
+                    .padding(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                DM_EMOJIS.chunked(8).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        row.forEach { e ->
+                            Box(
+                                Modifier.size(30.dp).clip(RoundedCornerShape(6.dp))
+                                    .clickable { text = (text + e).take(50) },
+                                contentAlignment = Alignment.Center,
+                            ) { Text(e, fontSize = 17.sp) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -976,3 +1059,15 @@ private fun DmGlyph(color: Color, gear: Boolean = false, slash: Boolean = false)
     }
 }
 
+
+/** 「更多」三点图标（与其它 Canvas 线稿同一套）。 */
+@Composable
+private fun MoreGlyph(tint: Color) {
+    Canvas(Modifier.size(14.dp)) {
+        val r = size.minDimension * 0.11f
+        val y = size.height / 2
+        drawCircle(tint, r, Offset(size.width * 0.2f, y))
+        drawCircle(tint, r, Offset(size.width * 0.5f, y))
+        drawCircle(tint, r, Offset(size.width * 0.8f, y))
+    }
+}
