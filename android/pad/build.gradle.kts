@@ -11,8 +11,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 205
-        versionName = "2.2.85"
+        versionCode = 206
+        versionName = "2.2.86"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
@@ -58,8 +58,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // 发版改用 release（非 debuggable）：debug 包在 ART 上是解释/JIT 执行，
+            // 电视实测冷启动 10s+（类加载一条消息就 3.3s）；release 安装时会 AOT，
+            // 冷启动明显更快。签名仍用仓库里的 debug keystore，保证老设备覆盖升级。
+            signingConfig = signingConfigs.getByName("debug")
+            // 先不开 R8：Go 绑定（dev.openhongguo.**）走 JNI 按类名/方法名查找，
+            // 混淆必须配 keep 规则，单独一轮验证后再开。
+            isMinifyEnabled = false
         }
         debug {
             isMinifyEnabled = false
