@@ -529,16 +529,18 @@ private fun NavRail(
             .width(72.dp)
             .fillMaxHeight()
             .background(Panel)
-            .padding(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(vertical = 8.dp),
+        // 11 个分类 + 打赏 + 设置：桌面/电视常见 540dp 高度下必须排得下，
+        // 之前加了「刷剧」后底部「设置」被挤出屏幕（文字被裁）——整体收紧间距。
+        verticalArrangement = Arrangement.spacedBy(1.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             "开心果",
             color = Red,
-            fontSize = 15.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp),
+            modifier = Modifier.padding(bottom = 8.dp),
         )
         navItems.forEach { item ->
             // 侧栏只在「顶层页面」可聚焦。进了详情/播放这类压栈页之后，侧栏变暗、不接收焦点——
@@ -551,7 +553,11 @@ private fun NavRail(
                 else -> TextDim
             }
             Column(
+                // 高度用 weight 均分：不同平板/电视的逻辑高度差别很大（实测有的设备
+                // 把底部「设置」挤出屏幕），固定高度排不下。weight 让 11 项永远等分，
+                // 内容垂直居中，任何尺寸都不会被裁。
                 Modifier
+                    .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 9.dp)
                     .clip(RoundedCornerShape(11.dp))
@@ -579,14 +585,15 @@ private fun NavRail(
                                 }
                         },
                     )
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
                 Box {
                     if (item.custom != null) {
                         RailIcon(item.custom, tint)
                     } else {
-                        Icon(item.icon!!, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+                        Icon(item.icon!!, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
                     }
                     // 「追更」未读角标：红底白字，>99 显示 99+
                     if (item.screen is Screen.Follow && followBadge > 0) {
@@ -607,7 +614,7 @@ private fun NavRail(
                         }
                     }
                 }
-                Spacer(Modifier.height(3.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
                     item.label,
                     color = tint,
@@ -622,7 +629,7 @@ private fun NavRail(
 /** 原版同款导航图标（排行榜柱状图 / 新剧锯齿章 / 历史时钟），Canvas 手绘不引图标库。 */
 @Composable
 private fun RailIcon(kind: String, tint: Color) {
-    Canvas(Modifier.size(20.dp)) {
+    Canvas(Modifier.size(18.dp)) {
         val w = size.width
         val h = size.height
         when (kind) {
