@@ -74,6 +74,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -218,6 +219,9 @@ fun PlayerScreen(
     var userPaused by remember { mutableStateOf(false) }
     // 纯键盘暂停（空格）：控制栏不因此弹出来；鼠标点的暂停才常驻控制栏
     var keyboardPaused by remember { mutableStateOf(false) }
+    // 空格防抖：物理键盘按住会触发系统级按键重复（默认 250~500ms 后连续 KeyDown），
+    // 一次「按一下」会被当成暂停+继续两次。500ms 内的重复空格一律吞掉。
+    var lastSpaceAt by remember { mutableLongStateOf(0L) }
     // 引擎创建时刻：起播/换集后 6 秒内不算「暂停」，避免控制栏闪
     var engineReadyAt by remember { mutableStateOf(0L) }
     // 刷剧页（onWheelStep 非空）：控制栏常驻、不倒计时。
@@ -590,7 +594,13 @@ fun PlayerScreen(
                 when (ev.key) {
                     // 纯键盘操作（空格/左右）不弹控制栏：只执行播放/快进，不唤醒 chrome。
                     // 鼠标移动/点击才唤醒；刷剧页本来就常驻。
-                    Key.Spacebar -> { togglePlayByKeyboard(); true }
+                    Key.Spacebar -> {
+                        val now = System.currentTimeMillis()
+                        if (now - lastSpaceAt < 500L) return@onPreviewKeyEvent true
+                        lastSpaceAt = now
+                        togglePlayByKeyboard()
+                        true
+                    }
                     Key.DirectionLeft -> { engine?.seekTo((engine?.positionMs ?: 0) - 5_000); true }
                     Key.DirectionRight -> { engine?.seekTo((engine?.positionMs ?: 0) + 5_000); true }
                     // 刷剧页面（onWheelStep 非空）：上/下 = 上一部 / 下一部剧，和滚轮同语义。
