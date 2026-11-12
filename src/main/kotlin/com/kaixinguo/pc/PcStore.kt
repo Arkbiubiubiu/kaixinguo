@@ -84,9 +84,13 @@ object PcStore : AccountState {
         get() = str("sign_url").ifBlank { BuildDefaults.SIGN_URL }
         set(v) = put("sign_url", v.trim())
 
-    /** 播放源（逗号分隔，按顺序回退；空 = 走随包本机 resolver） */
+    /**
+     * 播放源（逗号分隔，按顺序回退；空 = 走随包本机 resolver）。
+     * 已保存过配置的机器也把构建默认里的新兜底地址合并进来 —— 否则升级后
+     * 新增的 Tailscale/樱花地址永远不会生效（老配置里只有局域网）。
+     */
     var playBases: String
-        get() = str("play_bases").ifBlank { BuildDefaults.PLAY_BASES }
+        get() = mergeWithDefaults(str("play_bases"), BuildDefaults.PLAY_BASES)
         set(v) = put("play_bases", v.trim())
 
     /** 播放令牌（随播放源下发的校验参数，空 = 不带） */
@@ -96,8 +100,23 @@ object PcStore : AccountState {
 
     /** 历史/云端接口基址（空 = 与签名服务同源） */
     var historyBase: String
-        get() = str("history_base").ifBlank { BuildDefaults.HISTORY_BASE }
+        get() = mergeWithDefaults(str("history_base"), BuildDefaults.HISTORY_BASE)
         set(v) = put("history_base", v.trim())
+
+    /**
+     * 构建默认（局域网 → Tailscale → 樱花）排在前面，老配置里多出来的自定义地址接在后面；
+     * 顺手剔除已停用的 Cloudflare 域名（hgtv.fabao.xin，2026-11-12 已停用，留着只会白等超时）。
+     * 公开构建默认值为空，完全不受影响。
+     */
+    private fun mergeWithDefaults(stored: String, defaults: String): String {
+        if (defaults.isBlank()) return stored
+        val dead = listOf("hgtv.fabao.xin")
+        fun clean(list: List<String>) = list.map { it.trim() }
+            .filter { it.isNotEmpty() && dead.none { d -> it.contains(d) } }
+        val out = clean(defaults.split(",")).toMutableList()
+        for (s0 in clean(stored.split(","))) if (s0 !in out) out.add(s0)
+        return out.joinToString(",")
+    }
 
     /** 设备身份（空 = 用占位默认值；公开版不内置真实指纹） */
     var deviceIid: String
