@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>开心果短剧 · 下载</title>
+<meta name="description" content="开心果短剧客户端下载：Windows 电脑版、安卓平板版、电视版。免费、无广告，历史与收藏多端同步。">
+<meta name="theme-color" content="#0f0d0f">
+<meta property="og:title" content="开心果短剧 · 下载">
+<meta property="og:description" content="手机、平板、电视、电脑，四端都能看。免费、无广告。">
+<style>
+  :root{
+    --bg:#0f0d0f;
+    --panel:#17141a;
+    --panel-2:#1d1920;
+    --line:#2b2630;
+    --text:#f3efe8;
+    --muted:#a49da8;
+    --accent:#e0312f;
+    --accent-soft:rgba(224,49,47,.12);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+    line-height:1.65; -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+  /* header */
+  header{border-bottom:1px solid var(--line)}
+  .bar{display:flex;align-items:center;gap:12px;height:68px}
+  .logo{width:34px;height:34px;flex:none}
+  .brand{font-size:17px;font-weight:600;letter-spacing:.5px}
+  .bar nav{margin-left:auto;display:flex;gap:26px;font-size:14px;color:var(--muted)}
+  .bar nav a{text-decoration:none}
+  .bar nav a:hover{color:var(--text)}
+  @media (max-width:640px){.bar nav{display:none}}
+
+  /* hero */
+  .hero{padding:84px 0 64px;text-align:center}
+  .hero h1{font-size:40px;line-height:1.25;margin:0 0 16px;font-weight:600;letter-spacing:.5px}
+  .hero p{color:var(--muted);font-size:16px;margin:0 auto;max-width:640px;text-wrap:balance}
+  .tagline{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:26px}
+  .chip{border:1px solid var(--line);border-radius:999px;padding:5px 13px;font-size:13px;color:var(--muted)}
+  @media (max-width:640px){.hero{padding:56px 0 40px}.hero h1{font-size:29px}}
+
+  /* download cards */
+  .dl{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:50px}
+  @media (max-width:860px){.dl{grid-template-columns:1fr}}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:24px;display:flex;flex-direction:column;gap:6px;
+  }
+  .card .ico{width:30px;height:30px;margin-bottom:8px;color:var(--text)}
+  .card h3{margin:0;font-size:17px;font-weight:600}
+  .card .meta{color:var(--muted);font-size:13px}
+  .card .ver{color:var(--muted);font-size:13px;margin-top:2px}
+  .card a.btn{
+    margin-top:16px;display:flex;align-items:center;justify-content:center;gap:8px;
+    height:46px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;
+    font-size:15px;font-weight:600;
+  }
+  .card a.btn:hover{filter:brightness(1.08)}
+  .card .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
+
+  /* sections */
+  section{padding:72px 0;border-top:1px solid var(--line)}
+  section h2{font-size:24px;margin:0 0 8px;font-weight:600}
+  section .sub{color:var(--muted);font-size:14px;margin:0 0 34px}
+
+  .shots{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media (max-width:860px){.shots{grid-template-columns:1fr}}
+  .shots figure{margin:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+  .shots img{display:block;width:100%;height:auto}
+  .shots figcaption{font-size:12px;color:var(--muted);padding:10px 12px;border-top:1px solid var(--line)}
+
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;counter-reset:step}
+  @media (max-width:860px){.steps{grid-template-columns:1fr}}
+  .step{border:1px solid var(--line);border-radius:12px;padding:20px;background:var(--panel-2)}
+  .step::before{counter-increment:step;content:counter(step);display:block;font-size:13px;color:var(--accent);font-weight:700;margin-bottom:10px}
+  .step b{display:block;font-size:15px;margin-bottom:6px}
+  .step span{font-size:13px;color:var(--muted)}
+
+  .faq{display:flex;flex-direction:column;gap:2px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  details{background:var(--panel);padding:0 20px}
+  details+details{border-top:1px solid var(--line)}
+  summary{cursor:pointer;padding:18px 0;font-size:15px;font-weight:500;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";color:var(--muted);font-size:18px;line-height:1}
+  details[open] summary::after{content:"–"}
+  details p{margin:0 0 18px;color:var(--muted);font-size:14px}
+  details p a{color:var(--text)}
+
+  footer{border-top:1px solid var(--line);padding:34px 0 44px;color:var(--muted);font-size:13px}
+  .foot{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .foot .right{margin-left:auto}
+  @media (max-width:640px){.foot .right{margin-left:0}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#FF4A3D"/><stop offset="1" stop-color="#C40817"/>
+      </linearGradient></defs>
+      <rect width="64" height="64" rx="15" fill="url(#g)"/>
+      <g transform="rotate(-8 32 32)">
+        <rect x="22" y="13" width="20" height="38" rx="5" fill="#FFF6E7"/>
+        <path d="M29.5 26.5 L38.5 32 L29.5 37.5 Z" fill="#D3091A"/>
+      </g>
+    </svg>
+    <span class="brand">开心果短剧</span>
+    <nav>
+      <a href="#download">下载</a>
+      <a href="#shots">界面</a>
+      <a href="#install">安装</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <h1>短剧，一个 App 就够了</h1>
+    <p>手机、平板、电视、电脑都能看。免费、无广告、不用会员，历史与收藏多端同步。</p>
+    <div class="tagline">
+      <span class="chip">免费无广告</span>
+      <span class="chip">四端同步</span>
+      <span class="chip">开箱即用</span>
+    </div>
+  </div>
+
+  <div class="dl" id="download">
+    <div class="card" data-manifest="version-pc.json" data-file="kaixinguo-1.2.36.msi" data-ver="1.2.36" data-size="169705322">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="4" width="19" height="12.5" rx="1.6"/><path d="M8.5 20.5h7M12 16.5v4"/>
+      </svg>
+      <h3>电脑版</h3>
+      <div class="meta">Windows 10 / 11 · 64 位</div>
+      <div class="ver"><span class="v">1.2.36</span> · <span class="s">161.8 MB</span></div>
+      <a class="btn" href="kaixinguo-1.2.36.msi" download>下载安装包</a>
+      <div class="note">下载后双击安装，按提示下一步即可。</div>
+    </div>
+
+    <div class="card" data-manifest="version-hgpad.json" data-file="hongguo-pad-2.2.117.apk" data-ver="2.2.117" data-size="41607541">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/><path d="M10.5 18.5h3"/>
+      </svg>
+      <h3>手机 / 平板版</h3>
+      <div class="meta">Android 8.0 及以上</div>
+      <div class="ver"><span class="v">2.2.117</span> · <span class="s">39.7 MB</span></div>
+      <a class="btn" href="hongguo-pad-2.2.117.apk" download>下载安装包</a>
+      <div class="note">通用包，所有机型都能装。之后在软件内更新时只下载自己机型那一份。</div>
+    </div>
+
+    <div class="card" data-manifest="version-tv.json" data-file="hongguo-tv-2.2.117.apk" data-ver="2.2.117" data-size="41607549">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2" y="4.5" width="20" height="12" rx="2"/><path d="M9 20.5l-1.2-4M15 20.5l1.2-4"/>
+      </svg>
+      <h3>电视版</h3>
+      <div class="meta">Android TV 8.0 及以上</div>
+      <div class="ver"><span class="v">2.2.117</span> · <span class="s">39.7 MB</span></div>
+      <a class="btn" href="hongguo-tv-2.2.117.apk" download>下载安装包</a>
+      <div class="note">遥控器操作，大屏看剧。支持 U 盘安装。</div>
+    </div>
+  </div>
+
+  <section id="shots">
+    <h2>界面</h2>
+    <p class="sub">和官方一致的剧集内容，重新做的观看体验。</p>
+    <div class="shots">
+      <figure><img src="shots/home.jpg" alt="首页" loading="lazy"><figcaption>首页：推荐、漫剧、真人剧</figcaption></figure>
+      <figure><img src="shots/detail.jpg" alt="详情页" loading="lazy"><figcaption>详情：选集、剧评、相关推荐</figcaption></figure>
+      <figure><img src="shots/player.jpg" alt="播放页" loading="lazy"><figcaption>播放：弹幕、清晰度、倍速</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>安装</h2>
+    <p class="sub">安卓端需要允许一次「安装未知应用」，之后更新都自动完成。</p>
+    <div class="steps">
+      <div class="step"><b>下载安装包</b><span>电视可以用 U 盘把 APK 拷过去，或用电视自带浏览器打开本页。</span></div>
+      <div class="step"><b>允许安装</b><span>系统提示「禁止安装未知应用」时，进入设置允许文件管理器或浏览器安装。</span></div>
+      <div class="step"><b>打开就能看</b><span>无需注册、无需配置。登录后历史和收藏会在几端之间同步。</span></div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <h2>常见问题</h2>
+    <p class="sub"></p>
+    <div class="faq">
+      <details open>
+        <summary>浏览器提示「您的连接不是私密连接」怎么办？</summary>
+        <p>本页用的是免费隧道和自签名证书。点「高级」→「继续前往」即可正常下载，不影响安装包本身。介意的话可以从 <a href="https://github.com/Arkbiubiubiu/kaixinguo/releases/latest" rel="noopener">GitHub Releases</a> 下载。</p>
+      </details>
+      <details>
+        <summary>电视怎么安装？</summary>
+        <p>把电视版 APK 拷到 U 盘，插到电视上，用电视的文件管理器打开安装；也可以在电视浏览器里直接打开本页下载。安装时选择「允许来自未知来源」。</p>
+      </details>
+      <details>
+        <summary>需要登录吗？收费吗？</summary>
+        <p>不登录也能看，历史和收藏先记在本机；登录后走云端，多端一致。软件完全免费，没有广告、没有会员、没有内购。</p>
+      </details>
+      <details>
+        <summary>以后怎么更新？</summary>
+        <p>打开软件会自己检查更新，点一下就能装。第一次装的是通用包，之后每次更新只会下载你设备对应架构的版本（约 20MB，是原来的一半）。</p>
+      </details>
+      <details>
+        <summary>支持哪些设备？</summary>
+        <p>Windows 10/11 电脑；Android 8.0 以上的手机、平板和电视（电视需要能安装第三方 APK）。</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>© 2026 开心果短剧</span>
+    <span>免费 · 无广告 · 无会员</span>
+    <span class="right"><a href="https://github.com/Arkbiubiubiu/kaixinguo" rel="noopener">GitHub</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var MB = function (b) { return (b / 1048576).toFixed(1) + ' MB'; };
+  document.querySelectorAll('.card[data-manifest]').forEach(function (card) {
+    var name = card.getAttribute('data-manifest');
+    var btn = card.querySelector('a.btn');
+    fetch(name + '?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+      .then(function (m) {
+        if (m.versionName) card.querySelector('.v').textContent = m.versionName;
+        if (m.size) card.querySelector('.s').textContent = MB(m.size);
+        if (m.path && btn) btn.setAttribute('href', m.path);
+      })
+      .catch(function () { /* 清单取不到就用页面里的默认值 */ });
+  });
+})();
+</script>
+</body>
+</html>
