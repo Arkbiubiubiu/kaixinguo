@@ -274,6 +274,10 @@ fun PlayerScreen(
     var decodeGen by remember { mutableStateOf(0) }
     /** 重建后要跳回的位置（切换前记下来的秒数，毫秒） */
     var decodeSeekTo by remember { mutableStateOf(-1L) }
+    /** 当前这一集第一次真正出画的时间（0 = 还没出过画），自动软解兜底用 */
+    var firstFrameAt by remember { mutableStateOf(0L) }
+    /** 这一集是否已经自动切过一次软解，防止来回重建 */
+    var autoSoftTried by remember { mutableStateOf(false) }
 
     val player = remember(decodeGen) {
         val load = DefaultLoadControl.Builder()
@@ -302,6 +306,28 @@ fun PlayerScreen(
         }
         ExoPlayer.Builder(context, renderers).setLoadControl(load).build()
             .apply { playWhenReady = true }
+    }
+
+    // 个别剧「有声无画」：硬解不报错，但一帧都不吐（当前这部的漫剧就是这种）。
+    // 兜底：播放器已 READY、音频在走、2.5 秒还没首帧 → 自动切软解重建一次。
+    // 每集只自动切一次（autoSoftTried），换集/换剧会重置。
+    LaunchedEffect(player, softMode) {
+        if (softMode) return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.delay(500)
+            if (firstFrameAt != 0L || autoSoftTried) break
+            if (player.playbackState == Player.STATE_READY && player.isPlaying && player.currentPosition > 2500) {
+                autoSoftTried = true
+                android.util.Log.w("nextup", "no frame in ${player.currentPosition}ms -> auto soft decode")
+                runCatching {
+                    android.widget.Toast.makeText(context, "画面异常，已自动切换软解", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                decodeSeekTo = player.currentPosition
+                softMode = true
+                decodeGen += 1
+                break
+            }
+        }
     }
 
     // ---- 换集最后一帧定格 ----
@@ -373,6 +399,9 @@ fun PlayerScreen(
              * 所以没有解码器重建、没有画面定格。要做的只是把状态对齐到新的那一集。
              */
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // 新的一集：重新等首帧（自动软解看门狗按集计时）
+                firstFrameAt = 0L
+                autoSoftTried = false
                 // 换源这一拍解码器已释放、画面是黑的：抓到过片尾帧就立刻盖上。
                 // 加 isPlaying 判断——万一回调晚于新一集出画，宁可不盖，也别糊住正在播的画面
                 val now = System.currentTimeMillis()
@@ -435,6 +464,8 @@ fun PlayerScreen(
             }
 
             override fun onRenderedFirstFrame() {
+                // 这一集真正出画了：自动软解看门狗不用再管
+                firstFrameAt = System.currentTimeMillis()
                 // 新一集真正出画了：撤掉换集时顶着的定格帧
                 if (heldVisible) {
                     android.util.Log.i("nextup", "held frame release after ${System.currentTimeMillis() - heldAt}ms")
