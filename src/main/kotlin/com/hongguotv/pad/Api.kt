@@ -116,7 +116,8 @@ object Api {
             "?iid=${device["iid"]}&device_id=${device["device_id"]}&aid=1967&version_code=71332" +
             "&version_name=7.1.3.32&device_level=1&update_version_code=71332&device_brand=Redmi" +
             "&os_version=16&device_platform=android&cdid=${device["cdid"]}"
-    private val HISTORY_BASES: List<String> get() = App.historyBase.takeIf { it.isNotBlank() }?.let { listOf(it) } ?: emptyList()
+    private val HISTORY_BASES: List<String>
+        get() = App.historyBase.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
     /** 自己的服务器：局域网优先（40ms），出门自动走公网隧道。 */
     private val PLAY_BASES: List<String> get() = App.playBases
@@ -166,6 +167,32 @@ object Api {
             "ssmix" to "a",
         )
 
+
+    // ---------------- 樱花通道的 TLS ----------------
+    // 樱花隧道把 TLS 终止在本地 8081，用的是自签证书；只有樱花域名放行，
+    // 其它 HTTPS 仍然严格校验证书（和更新器 Updater 里同一套做法）。
+    private val SAKURA_HOSTS = setOf("frp-bar.com", "dx.frp-bar.com", "yd.frp-bar.com", "lt.frp-bar.com")
+    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
+        val tm = object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+        }
+        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
+        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
+    }
+
+    /** 统一开连接：樱花域名套自签信任，其它原样。 */
+    private fun URL.open(): HttpURLConnection {
+        val conn = openConnection() as HttpURLConnection
+        if (conn is javax.net.ssl.HttpsURLConnection && host?.lowercase() in SAKURA_HOSTS) {
+            conn.sslSocketFactory = sakuraTls.first
+            conn.hostnameVerifier = sakuraTls.second
+        }
+        return conn
+    }
+
     private fun serverBases(): List<String> {
         val pref = preferredBase ?: return PLAY_BASES
         return listOf(pref) + PLAY_BASES.filter { it != pref }
@@ -180,7 +207,7 @@ object Api {
      * 返回响应文本；空响应直接抛异常（否则上层拿到空串会误当成功）。
      */
     private fun requestOnce(url: String, body: String?, ua: String, token: String = ""): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = URL(url).open()
         try {
             conn.requestMethod = if (body == null) "GET" else "POST"
             conn.setRequestProperty("User-Agent", ua)
@@ -278,7 +305,7 @@ object Api {
 
     /** POST 一次 /api/fetch，按 Content-Encoding 解 gzip，返回 text 与数据年龄。 */
     private fun postFetch(base: String, payload: JSONObject): FetchReply? = runCatching {
-        val conn = URL(base.trimEnd('/') + "/api/fetch").openConnection() as HttpURLConnection
+        val conn = URL(base.trimEnd('/') + "/api/fetch").open()
         try {
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -345,7 +372,7 @@ object Api {
         headers: JSONObject,
         extras: Map<String, String> = emptyMap(),
     ): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = URL(url).open()
         try {
             conn.requestMethod = if (body == null) "GET" else "POST"
             val merged = LinkedHashMap<String, String>()
@@ -533,7 +560,7 @@ object Api {
         val body = JSONObject().put("vid", vid).put("want", want).toString()
         for (base in serverBases()) {
             val data = runCatching {
-                val conn = URL(base.trimEnd('/') + "/api/playinfo").openConnection() as HttpURLConnection
+                val conn = URL(base.trimEnd('/') + "/api/playinfo").open()
                 try {
                     conn.requestMethod = "POST"
                     conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -1139,7 +1166,7 @@ object Api {
         // landpage 全挂 → 找剧只剩体裁行、列表 0 条。
         val (url, headers) = signEndpoint(LAND_ORIGIN, path, JSONArray(), body.toString())
             ?: return null
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = URL(url).open()
         try {
             conn.requestMethod = "POST"
             headers.keys().forEach { k -> conn.setRequestProperty(k, headers.optString(k)) }
@@ -1545,7 +1572,7 @@ object Api {
             val text = runCatching {
                 val conn = URL(
                     base0.trimEnd('/') + "/api/chart?metric=" + metric + "&genre=" + genre + "&limit=" + limit,
-                ).openConnection() as HttpURLConnection
+                ).open()
                 conn.connectTimeout = if (base0.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 15_000
                 conn.inputStream.bufferedReader().use { it.readText() }
@@ -1711,7 +1738,7 @@ object Api {
     private fun fetchRankMeta(): List<RankTabsel>? {
         for (base in serverBases()) {
             val text = runCatching {
-                val conn = URL(base.trimEnd('/') + "/api/rankmeta").openConnection() as HttpURLConnection
+                val conn = URL(base.trimEnd('/') + "/api/rankmeta").open()
                 conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 20_000
                 conn.inputStream.bufferedReader().use { it.readText() }
@@ -3006,7 +3033,7 @@ object Api {
             for (base in serverBases()) {
                 val text = runCatching {
                     val conn = URL(base.trimEnd('/') + "/api/family?title=" + q + "&loose=" + loose)
-                        .openConnection() as HttpURLConnection
+                        .open()
                     conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                     conn.readTimeout = 15_000
                     conn.inputStream.bufferedReader().use { it.readText() }
@@ -3042,7 +3069,7 @@ object Api {
         // 服务器侧 /api/seasons 转发给 streamsrv，用的是跑通的 openhongguo 签名。
         for (base in serverBases()) {
             val text = runCatching {
-                val conn = URL(base.trimEnd('/') + "/api/seasons?id=" + seriesId).openConnection() as HttpURLConnection
+                val conn = URL(base.trimEnd('/') + "/api/seasons?id=" + seriesId).open()
                 conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 25_000
                 conn.inputStream.bufferedReader().use { it.readText() }
@@ -3150,7 +3177,7 @@ object Api {
             val text = runCatching {
                 val conn = URL(
                     base.trimEnd('/') + "/api/heat?ids=" + ids.joinToString(","),
-                ).openConnection() as HttpURLConnection
+                ).open()
                 conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 20_000
                 conn.inputStream.bufferedReader().use { it.readText() }
@@ -3624,7 +3651,7 @@ object Api {
      */
     fun passportPost(path: String, form: String, cookie: String, query: JSONArray): RawResp? {
         val (url, headers) = signEndpoint(PASSPORT_HOST, path, query, form) ?: return null
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = URL(url).open()
         try {
             conn.requestMethod = "POST"
             headers.keys().forEach { k ->
