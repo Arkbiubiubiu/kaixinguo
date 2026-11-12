@@ -222,6 +222,8 @@ fun PlayerScreen(
     // 空格防抖：物理键盘按住会触发系统级按键重复（默认 250~500ms 后连续 KeyDown），
     // 一次「按一下」会被当成暂停+继续两次。500ms 内的重复空格一律吞掉。
     var lastSpaceAt by remember { mutableLongStateOf(0L) }
+    // 空格键是否处于按下状态：按键重复只有 KeyDown 没有 KeyUp，靠它彻底忽略长按重复
+    var spaceHeld by remember { mutableStateOf(false) }
     // 引擎创建时刻：起播/换集后 6 秒内不算「暂停」，避免控制栏闪
     var engineReadyAt by remember { mutableStateOf(0L) }
     // 刷剧页（onWheelStep 非空）：控制栏常驻、不倒计时。
@@ -488,6 +490,45 @@ fun PlayerScreen(
         }
     }
 
+    // 播放进度回写：本地历史每 4 秒刷一次「看到第几秒」，官方进度每 20 秒报一次。
+    // 这两个原来在 PC 端完全没有 —— 历史页（登录后读云端 officialHistory）永远停在
+    // 上一次别的设备/旧版本报的位置，用户在 PC 上看到第 35 集，历史里还是第 4 集。
+    // 刷剧（embedded）是预览连播，不计历史也不上报（与 record() 的口径一致）。
+    LaunchedEffect(index, engine, episodes.size, embedded) {
+        if (embedded) return@LaunchedEffect
+        var tick = 0
+        while (true) {
+            delay(4_000)
+            tick++
+            val ep = episodes.getOrNull(index - 1) ?: continue
+            val pos = runCatching { engine?.positionMs ?: 0L }.getOrDefault(0L)
+            if (pos <= 0L) continue
+            PcStore.markPos(ep.vid, pos)
+            PcStore.touchHistoryPos(seriesId, index, pos)
+            // 20 秒报一次官方；开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）
+            if (tick % 5 == 0 && pos > 5_000L && ep.vid.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    runCatching { Api.reportProgress(seriesId, ep.vid, index, pos) }
+                }
+            }
+        }
+    }
+
+    // 换集/退出时补报一次，别丢掉最后 20 秒的进度（与安卓的 DisposableEffect 同口径）
+    DisposableEffect(index, engine, episodes.size) {
+        val idx = index
+        val vid = episodes.getOrNull(index - 1)?.vid.orEmpty()
+        val eng = engine
+        onDispose {
+            if (!embedded && vid.isNotEmpty()) {
+                val pos = runCatching { eng?.positionMs ?: 0L }.getOrDefault(0L)
+                if (pos > 5_000L) {
+                    Thread { runCatching { Api.reportProgress(seriesId, vid, idx, pos) } }.start()
+                }
+            }
+        }
+    }
+
     // 连播预取：起播后按设置往后预取 N 集（0 = 关闭）
     LaunchedEffect(index, episodes.size, PcStore.prefetchEpisodes, PcStore.maxHeight) {
         val n = PcStore.prefetchEpisodes
@@ -590,17 +631,25 @@ fun PlayerScreen(
             .focusRequester(focus)
             .focusable()
             .onPreviewKeyEvent { ev ->
+                // 空格单独处理：按住会触发系统级按键重复（只有 KeyDown），
+                // 所以必须等 KeyUp 之后的下一次 KeyDown 才算「新的一次按键」，
+                // 再叠加 500ms 时间防抖（某些键盘会发 down/up/down 抖动）。
+                if (ev.key == Key.Spacebar) {
+                    if (ev.type == KeyEventType.KeyUp) {
+                        spaceHeld = false
+                        return@onPreviewKeyEvent true
+                    }
+                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val now = System.currentTimeMillis()
+                    if (spaceHeld || now - lastSpaceAt < 500L) return@onPreviewKeyEvent true
+                    spaceHeld = true
+                    lastSpaceAt = now
+                    Log.d("PlayerKey", "space toggle t=$now playing=${engine?.playing}")
+                    togglePlayByKeyboard()
+                    return@onPreviewKeyEvent true
+                }
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key) {
-                    // 纯键盘操作（空格/左右）不弹控制栏：只执行播放/快进，不唤醒 chrome。
-                    // 鼠标移动/点击才唤醒；刷剧页本来就常驻。
-                    Key.Spacebar -> {
-                        val now = System.currentTimeMillis()
-                        if (now - lastSpaceAt < 500L) return@onPreviewKeyEvent true
-                        lastSpaceAt = now
-                        togglePlayByKeyboard()
-                        true
-                    }
                     Key.DirectionLeft -> { engine?.seekTo((engine?.positionMs ?: 0) - 5_000); true }
                     Key.DirectionRight -> { engine?.seekTo((engine?.positionMs ?: 0) + 5_000); true }
                     // 刷剧页面（onWheelStep 非空）：上/下 = 上一部 / 下一部剧，和滚轮同语义。

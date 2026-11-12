@@ -381,9 +381,11 @@ object PcStore : AccountState {
 
     fun posOf(vid: String): Long = str("pos_$vid", "0").toLongOrNull() ?: 0L
 
+    /** 记「这一集看到第几秒」：换集/重进播放器时续播用。每 5 秒才落一次盘。 */
     fun markPos(vid: String, positionMs: Long) {
-        if (positionMs <= 0) return
-        put("pos_$vid", positionMs.toString())
+        if (vid.isEmpty() || positionMs <= 0L) return
+        val saved = str("pos_$vid", "0").toLongOrNull() ?: 0L
+        if (kotlin.math.abs(positionMs - saved) >= 5_000L) put("pos_$vid", positionMs.toString())
     }
 
     fun removeHistory(seriesId: String) {
