@@ -79,24 +79,28 @@ object PcStore : AccountState {
         get() = str("account_source")
         set(v) = put("account_source", v)
 
+    /**
+     * 签名服务：自用版（构建参数非空）**固定用构建值**，忽略本机旧配置 ——
+     * 作者必须和普通用户走完全相同的公网通道，避免「我能用、别人不能用」的假正常。
+     * 公开版构建为空，仍可在设置里自己填。
+     */
     override var signUrl: String
-        // 自用版由构建参数注入（BuildDefaults），开源版构建为空：首次启动由用户填写自己的签名服务地址
-        get() = str("sign_url").ifBlank { BuildDefaults.SIGN_URL }
+        get() = if (BuildDefaults.SIGN_URL.isNotBlank()) BuildDefaults.SIGN_URL else str("sign_url")
         set(v) = put("sign_url", v.trim())
 
-    /** 播放源（逗号分隔，按顺序回退；空 = 走随包本机 resolver） */
+    /** 播放源：自用版固定用构建值（公网通道）；公开版构建为空时可自行填写。 */
     var playBases: String
-        get() = str("play_bases").ifBlank { BuildDefaults.PLAY_BASES }
+        get() = if (BuildDefaults.PLAY_BASES.isNotBlank()) BuildDefaults.PLAY_BASES else str("play_bases")
         set(v) = put("play_bases", v.trim())
 
-    /** 播放令牌（随播放源下发的校验参数，空 = 不带） */
+    /** 播放令牌（自用版固定构建值；公开版空则不带） */
     var playToken: String
-        get() = str("play_token").ifBlank { BuildDefaults.PLAY_TOKEN }
+        get() = if (BuildDefaults.PLAY_TOKEN.isNotBlank()) BuildDefaults.PLAY_TOKEN else str("play_token")
         set(v) = put("play_token", v.trim())
 
-    /** 历史/云端接口基址（空 = 与签名服务同源） */
+    /** 历史/云端接口基址：自用版固定构建值（公网）；公开版空则可配置。 */
     var historyBase: String
-        get() = str("history_base").ifBlank { BuildDefaults.HISTORY_BASE }
+        get() = if (BuildDefaults.HISTORY_BASE.isNotBlank()) BuildDefaults.HISTORY_BASE else str("history_base")
         set(v) = put("history_base", v.trim())
 
     /** 设备身份（空 = 用占位默认值；公开版不内置真实指纹） */
