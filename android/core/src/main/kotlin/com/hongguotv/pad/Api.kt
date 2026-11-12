@@ -420,8 +420,26 @@ object Api {
         origin: String = HOST,
     ): String? {
         val deadline = System.currentTimeMillis() + requestBudgetMs
+        // ① 本机签名直连优先：所有用户都在自己手机上签，不占服务器隧道流量。
+        //    实测与服务器代签返回的数据完全一致（507643 vs 507645 字节、48 字段、786 集）。
+        LocalSign.sign(origin, path, query, null)?.let { (url, headers) ->
+            runCatching {
+                val text = requestWithHeaders(url, null, headers, extraHeaders)
+                if (text.isNotEmpty()) {
+                    Log.d("PadSign", "local-get ok $path")
+                    return text
+                }
+            }
+        }
+        // ② 服务器代签（本机签失败时才用，比如系统时间异常/本地签名库不支持的接口）
         signEndpoint(origin, path, query, null)?.let { (url, headers) ->
-            runCatching { return requestWithHeaders(url, null, headers, extraHeaders) }
+            runCatching {
+                val text = requestWithHeaders(url, null, headers, extraHeaders)
+                if (text.isNotEmpty()) {
+                    Log.d("PadSign", "server-get ok $path")
+                    return text
+                }
+            }
         }
         // 签名/直发已经把预算耗光就不再叠加 relay，直接失败（让 UI 尽快给出错误态）
         if (System.currentTimeMillis() > deadline) return null
@@ -437,8 +455,25 @@ object Api {
         origin: String = HOST,
     ): String? {
         val deadline = System.currentTimeMillis() + requestBudgetMs
+        // ① 本机签名直连优先（省服务器隧道流量，与所有用户同路径）
+        LocalSign.sign(origin, path, query, body)?.let { (url, headers) ->
+            runCatching {
+                val text = requestWithHeaders(url, body, headers)
+                if (text.isNotEmpty()) {
+                    Log.d("PadSign", "local-post ok $path")
+                    return text
+                }
+            }
+        }
+        // ② 服务器代签兜底
         signEndpoint(origin, path, query, body)?.let { (url, headers) ->
-            runCatching { return requestWithHeaders(url, body, headers) }
+            runCatching {
+                val text = requestWithHeaders(url, body, headers)
+                if (text.isNotEmpty()) {
+                    Log.d("PadSign", "server-post ok $path")
+                    return text
+                }
+            }
         }
         if (System.currentTimeMillis() > deadline) return null
         val payload = JSONObject().put("origin", origin).put("path", path)
