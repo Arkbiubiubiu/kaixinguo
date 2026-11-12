@@ -11,8 +11,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 233
-        versionName = "2.2.113"
+        versionCode = 237
+        versionName = "2.2.117"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
@@ -86,6 +86,17 @@ android {
     }
     packaging {
         resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/DEPENDENCIES")
+    }
+    // 按 CPU 架构拆包：Release 额外产出 arm64-v8a / armeabi-v7a / x86_64 三个小包
+    // （+ 一个 universal 通用包留给老版本客户端和手动安装）。
+    // 客户端更新时按 Build.SUPPORTED_ABIS 自动选，用户无感；每个包约 22MB，省一半流量。
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
     }
     // 资源已被混淆成短名，不能按名字收缩，否则会误删
     androidResources { noCompress += listOf("ttf") }
