@@ -2727,162 +2727,13 @@ private fun SettingsPage() {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
-                // 服务配置（内容接口内置签名；播放才需要自备取流服务）
-                SettingBlock("服务配置", icon = Icons.Filled.Settings) {
-                    var sign by remember { mutableStateOf(PcStore.signUrl) }
-                    var bases by remember { mutableStateOf(PcStore.playBases) }
-                    var token by remember { mutableStateOf(PcStore.playToken) }
-                    var hist by remember { mutableStateOf(PcStore.historyBase) }
-                    if (!PcStore.configured) {
-                        Text(
-                            "已内置本机取流服务，装好就能看。想换成自己的取流服务，在下面填地址即可。",
-                            color = Palette.accent, fontSize = 12.sp,
-                        )
-                        Spacer(Modifier.height(10.dp))
-                    }
-                    ServiceField("取流服务", bases, "留空 = 用内置本机取流（推荐）") { bases = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField(
-                        "签名服务",
-                        sign,
-                        "留空 = 内置签名（推荐）；填地址 = 走你自己的代签服务",
-                    ) { sign = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("取流令牌", token, "取流服务的 X-Token，可留空") { token = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("历史基址", hist, "可留空，默认与取流服务同源") { hist = it }
-                    Spacer(Modifier.height(8.dp))
-                    var upBase by remember { mutableStateOf(PcStore.updateBase) }
-                    ServiceField(
-                        "更新源",
-                        upBase,
-                        "留空 = 自建服务器（推荐）；也可填自己的更新目录（含 version-pc.json）",
-                    ) { upBase = it }
-                    Spacer(Modifier.height(8.dp))
-                    var did by remember { mutableStateOf(PcStore.deviceId) }
-                    var iid by remember { mutableStateOf(PcStore.deviceIid) }
-                    var cdid by remember { mutableStateOf(PcStore.deviceCdid) }
-                    ServiceField("设备 device_id", did, "可留空（留空用内置设备）") { did = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("设备 iid", iid, "可留空（留空用内置设备）") { iid = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("设备 cdid", cdid, "可留空（留空用内置设备）") { cdid = it }
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlineButton("保存") {
-                            PcStore.signUrl = sign
-                            PcStore.playBases = bases
-                            PcStore.playToken = token
-                            PcStore.historyBase = hist
-                            PcStore.updateBase = upBase
-                            PcStore.deviceId = did
-                            PcStore.deviceIid = iid
-                            PcStore.deviceCdid = cdid
-                            applyServiceConfig()
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Text("保存后立即生效（无需重启）", color = Palette.faint, fontSize = 11.sp)
-                    }
-                }
-                // 账户（旧版 settings 第一张卡）：头像 + 昵称 + 红果号 + 退出，
-                // 下面挂「设备匹配」——把本机登录态绑到匹配码上，别的设备填码即同步
-                SettingBlock("账户", icon = Icons.Filled.Person) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.size(40.dp).clip(RoundedCornerShape(50))
-                                .background(Palette.panelHi)
-                                .border(1.dp, if (PcStore.loggedIn) Palette.accent else Palette.line, RoundedCornerShape(50)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Filled.Person,
-                                contentDescription = null,
-                                tint = if (PcStore.loggedIn) Palette.accent else Palette.faint,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(12.dp))
+                SettingBlock("关于") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                if (PcStore.loggedIn) PcStore.accountName.ifBlank { "已登录" } else "未登录",
-                                color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                if (PcStore.loggedIn) "收藏 / 追更 / 预约 / 历史都在跟着账号走" else "手机号登录去「我的」页",
-                                color = Palette.dim, fontSize = 12.sp,
-                            )
+                            UpdateRow()
                         }
-                        if (PcStore.loggedIn) {
-                            OutlineButton("退出登录") {
-                                PcStore.accountCookies = ""
-                                PcStore.accountName = ""
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    // 设备匹配
-                    var pairCode by remember { mutableStateOf("") }
-                    var pairHint by remember { mutableStateOf<String?>(null) }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("设备匹配", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (PcStore.loggedIn) "主设备" else "未绑定",
-                            color = if (PcStore.loggedIn) Palette.accent else Palette.faint,
-                            fontSize = 10.sp,
-                            modifier = Modifier.clip(RoundedCornerShape(4.dp))
-                                .background(Color(0x1AFF4D4F)).padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "把本机登录态绑到匹配码上，其它设备输入它，就能用同一个账号（收藏/追更/预约同步）。",
-                        color = Palette.faint, fontSize = 12.sp, lineHeight = 18.sp,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.width(140.dp).height(34.dp).clip(RoundedCornerShape(8.dp))
-                                .background(Palette.coverPlaceholder)
-                                .border(1.dp, Palette.line, RoundedCornerShape(8.dp))
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.CenterStart,
-                        ) {
-                            if (pairCode.isEmpty()) Text("匹配码", color = Palette.faint, fontSize = 12.sp)
-                            androidx.compose.foundation.text.BasicTextField(
-                                value = pairCode,
-                                onValueChange = { pairCode = it.filter { c -> c.isLetterOrDigit() }.take(12) },
-                                textStyle = androidx.compose.ui.text.TextStyle(color = Palette.text, fontSize = 14.sp),
-                                cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.accent),
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        PrimaryButton("保存并共享", null) {
-                            val code = pairCode.trim()
-                            when {
-                                code.length < 4 -> pairHint = "匹配码至少 4 位"
-                                !PcStore.loggedIn -> pairHint = "先登录再把匹配码共享给其它设备"
-                                else -> {
-                                    pairHint = "保存中…"
-                                    scope.launch(Dispatchers.IO) {
-                                        val r = runCatching { Api.pairUpload(code) }
-                                        withContext(Dispatchers.Main) {
-                                            pairHint = r.fold(
-                                                onSuccess = { "已保存：其它设备输入 $code 即可同步" },
-                                                onFailure = { it.message ?: "保存失败" },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    pairHint?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text(it, color = Palette.accent, fontSize = 12.sp)
+                        Spacer(Modifier.width(24.dp))
+                        OfficialSiteCard()
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -3058,21 +2909,69 @@ private fun SettingsPage() {
                     Text("清理后封面会在浏览时自动重新下载。", color = Palette.faint, fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(12.dp))
-                SettingBlock("关于") {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                        Column(Modifier.weight(1f)) {
-                            UpdateRow()
-                            Spacer(Modifier.height(4.dp))
-                            Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
-                                color = Palette.faint, fontSize = 12.sp,
-                            )
-                        }
-                        Spacer(Modifier.width(24.dp))
-                        OfficialSiteCard()
+                // 服务配置（内容接口内置签名；播放才需要自备取流服务）
+                SettingBlock("服务配置", icon = Icons.Filled.Settings) {
+                    var sign by remember { mutableStateOf(PcStore.signUrl) }
+                    var bases by remember { mutableStateOf(PcStore.playBases) }
+                    var token by remember { mutableStateOf(PcStore.playToken) }
+                    var hist by remember { mutableStateOf(PcStore.historyBase) }
+                    if (!PcStore.configured) {
+                        Text(
+                            "已内置本机取流服务，装好就能看。想换成自己的取流服务，在下面填地址即可。",
+                            color = Palette.accent, fontSize = 12.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
                     }
+                    ServiceField("取流服务", bases, "留空 = 用内置本机取流（推荐）") { bases = it }
+                    Spacer(Modifier.height(8.dp))
+                    ServiceField(
+                        "签名服务",
+                        sign,
+                        "留空 = 内置签名（推荐）；填地址 = 走你自己的代签服务",
+                    ) { sign = it }
+                    Spacer(Modifier.height(8.dp))
+                    ServiceField("取流令牌", token, "取流服务的 X-Token，可留空") { token = it }
+                    Spacer(Modifier.height(8.dp))
+                    ServiceField("历史基址", hist, "可留空，默认与取流服务同源") { hist = it }
+                    Spacer(Modifier.height(8.dp))
+                    var upBase by remember { mutableStateOf(PcStore.updateBase) }
+                    ServiceField(
+                        "更新源",
+                        upBase,
+                        "留空 = 自建服务器（推荐）；也可填自己的更新目录（含 version-pc.json）",
+                    ) { upBase = it }
+                    Spacer(Modifier.height(8.dp))
+                    var did by remember { mutableStateOf(PcStore.deviceId) }
+                    var iid by remember { mutableStateOf(PcStore.deviceIid) }
+                    var cdid by remember { mutableStateOf(PcStore.deviceCdid) }
+                    ServiceField("设备 device_id", did, "可留空（留空用内置设备）") { did = it }
+                    Spacer(Modifier.height(8.dp))
+                    ServiceField("设备 iid", iid, "可留空（留空用内置设备）") { iid = it }
+                    Spacer(Modifier.height(8.dp))
+                    ServiceField("设备 cdid", cdid, "可留空（留空用内置设备）") { cdid = it }
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlineButton("保存") {
+                            PcStore.signUrl = sign
+                            PcStore.playBases = bases
+                            PcStore.playToken = token
+                            PcStore.historyBase = hist
+                            PcStore.updateBase = upBase
+                            PcStore.deviceId = did
+                            PcStore.deviceIid = iid
+                            PcStore.deviceCdid = cdid
+                            applyServiceConfig()
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text("保存后立即生效（无需重启）", color = Palette.faint, fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
+                        color = Palette.faint, fontSize = 12.sp,
+                    )
                 }
                 Spacer(Modifier.height(24.dp))
             }
