@@ -144,7 +144,7 @@
       <h3>电脑版</h3>
       <div class="meta">Windows 10 / 11 · 64 位</div>
       <div class="ver"><span class="v">1.2.36</span> · <span class="s">161.8 MB</span></div>
-      <a class="btn" href="kaixinguo-1.2.36.msi" download>下载安装包</a>
+      <a class="btn" href="/get/kaixinguo-1.2.36.msi" download>下载安装包</a>
       <div class="note">下载后双击安装，按提示下一步即可。</div>
     </div>
 
@@ -155,7 +155,7 @@
       <h3>手机 / 平板版</h3>
       <div class="meta">Android 8.0 及以上</div>
       <div class="ver"><span class="v">2.2.117</span> · <span class="s">39.7 MB</span></div>
-      <a class="btn" href="hongguo-pad-2.2.117.apk" download>下载安装包</a>
+      <a class="btn" href="/get/hongguo-pad-2.2.117.apk" download>下载安装包</a>
       <div class="note">通用包，所有机型都能装。之后在软件内更新时只下载自己机型那一份。</div>
     </div>
 
@@ -166,7 +166,7 @@
       <h3>电视版</h3>
       <div class="meta">Android TV 8.0 及以上</div>
       <div class="ver"><span class="v">2.2.117</span> · <span class="s">39.7 MB</span></div>
-      <a class="btn" href="hongguo-tv-2.2.117.apk" download>下载安装包</a>
+      <a class="btn" href="/get/hongguo-tv-2.2.117.apk" download>下载安装包</a>
       <div class="note">遥控器操作，大屏看剧。支持 U 盘安装。</div>
     </div>
   </div>
@@ -196,8 +196,8 @@
     <p class="sub"></p>
     <div class="faq">
       <details open>
-        <summary>地址后面的「:44468」是什么？</summary>
-        <p>这是下载服务的端口号，直接访问即可，不影响下载和使用。页面和安装包走的是同一条线路，下载速度取决于你的网络。</p>
+        <summary>下载速度怎么样？</summary>
+        <p>安装包走的是直连线路，一般能跑到 1MB/s 以上，具体取决于你的网络。页面和下载是两条线路，页面轻、下载快。</p>
       </details>
       <details>
         <summary>电视怎么安装？</summary>
@@ -238,7 +238,7 @@
       .then(function (m) {
         if (m.versionName) card.querySelector('.v').textContent = m.versionName;
         if (m.size) card.querySelector('.s').textContent = MB(m.size);
-        if (m.path && btn) btn.setAttribute('href', m.path);
+        if (m.path && btn) btn.setAttribute('href', '/get/' + m.path);
       })
       .catch(function () { /* 清单取不到就用页面里的默认值 */ });
   });
