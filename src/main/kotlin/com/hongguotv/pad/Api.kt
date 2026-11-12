@@ -193,11 +193,6 @@ object Api {
         return conn
     }
 
-
-    /** 局域网 / Tailscale 叠加网（100.64.0.0/10）：连不上要快速回落，别按公网超时等 8 秒。 */
-    private fun isLanLike(base: String): Boolean =
-        isLanLike(base) || base.contains("://100.")
-
     private fun serverBases(): List<String> {
         val pref = preferredBase ?: return PLAY_BASES
         return listOf(pref) + PLAY_BASES.filter { it != pref }
@@ -317,7 +312,7 @@ object Api {
             conn.setRequestProperty("X-Token", PLAY_TOKEN)
             conn.setRequestProperty("Accept-Encoding", "gzip")
             // 内网地址不在同网段时别死等；但签名接口首包要 1.4s+，2 秒会误杀
-            conn.connectTimeout = if (isLanLike(base)) 4_000 else 6_000
+            conn.connectTimeout = if (base.contains("192.168.")) 4_000 else 6_000
             conn.readTimeout = 25_000
             conn.doOutput = true
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
@@ -571,7 +566,7 @@ object Api {
                     conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     conn.setRequestProperty("X-Token", PLAY_TOKEN)
                     conn.setRequestProperty("Accept-Encoding", "gzip")
-                    conn.connectTimeout = if (isLanLike(base)) 2_500 else 8_000
+                    conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                     conn.readTimeout = 25_000
                     conn.doOutput = true
                     conn.outputStream.use { it.write(body.toByteArray()) }
@@ -1578,7 +1573,7 @@ object Api {
                 val conn = URL(
                     base0.trimEnd('/') + "/api/chart?metric=" + metric + "&genre=" + genre + "&limit=" + limit,
                 ).open()
-                conn.connectTimeout = if (isLanLike(base0)) 2_500 else 8_000
+                conn.connectTimeout = if (base0.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 15_000
                 conn.inputStream.bufferedReader().use { it.readText() }
             }.getOrNull()
@@ -1744,7 +1739,7 @@ object Api {
         for (base in serverBases()) {
             val text = runCatching {
                 val conn = URL(base.trimEnd('/') + "/api/rankmeta").open()
-                conn.connectTimeout = if (isLanLike(base)) 2_500 else 8_000
+                conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 20_000
                 conn.inputStream.bufferedReader().use { it.readText() }
             }.getOrNull()
@@ -3039,7 +3034,7 @@ object Api {
                 val text = runCatching {
                     val conn = URL(base.trimEnd('/') + "/api/family?title=" + q + "&loose=" + loose)
                         .open()
-                    conn.connectTimeout = if (isLanLike(base)) 2_500 else 8_000
+                    conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                     conn.readTimeout = 15_000
                     conn.inputStream.bufferedReader().use { it.readText() }
                 }.getOrNull()
@@ -3075,7 +3070,7 @@ object Api {
         for (base in serverBases()) {
             val text = runCatching {
                 val conn = URL(base.trimEnd('/') + "/api/seasons?id=" + seriesId).open()
-                conn.connectTimeout = if (isLanLike(base)) 2_500 else 8_000
+                conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 25_000
                 conn.inputStream.bufferedReader().use { it.readText() }
             }.getOrNull()
@@ -3183,7 +3178,7 @@ object Api {
                 val conn = URL(
                     base.trimEnd('/') + "/api/heat?ids=" + ids.joinToString(","),
                 ).open()
-                conn.connectTimeout = if (isLanLike(base)) 2_500 else 8_000
+                conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
                 conn.readTimeout = 20_000
                 conn.inputStream.bufferedReader().use { it.readText() }
             }.getOrNull() ?: continue
