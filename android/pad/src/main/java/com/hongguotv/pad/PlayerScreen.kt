@@ -114,7 +114,7 @@ fun PlayerScreen(
     onBack: () -> Unit,
     onSwitch: (String, Int) -> Unit,
     onDetail: () -> Unit = {},
-    /** 刷剧模式：不显示控制台，按键改为 ↑↓ 换剧、←→ 快进退、确定暂停、返回退出。 */
+    /** 刷剧模式：不显示控制台，按键改为 ↑↓ 换剧、←→ 进详情、确定暂停、返回退出。 */
     feedMode: Boolean = false,
     /** 刷剧模式左下角的一行提示（「第 3 部 · 共 20 部」），null 不显示。 */
     feedLabel: String? = null,
@@ -1083,7 +1083,10 @@ fun PlayerScreen(
 
     /**
      * 刷剧模式键位（TV 极简版，控制台不出现）：
-     * ↑/↓ = 上一部/下一部，确定 = 暂停/继续，←/→ = 快退/快进，返回 = 退出刷剧。
+     * ↑/↓ = 上一部/下一部，确定 = 暂停/继续，←/→ = 进入当前这部剧的详情页，返回 = 退出刷剧。
+     *
+     * ←/→ 原来是快退/快进；刷剧时用户更常见的诉求是「这部好看，想看完整版/选集」，
+     * 而详情页原本没有任何入口（TV 上没有可点的按钮），所以左右键统一改成进详情。
      */
     fun feedKeys(ev: KeyEvent): Boolean = when (ev.key) {
         Key.Back -> { onBack(); true }
@@ -1092,8 +1095,8 @@ fun PlayerScreen(
             mark()
             true
         }
-        Key.DirectionLeft -> { seekByKey(-1); true }
-        Key.DirectionRight -> { seekByKey(1); true }
+        Key.DirectionLeft -> { onDetail(); true }
+        Key.DirectionRight -> { onDetail(); true }
         Key.DirectionUp -> { onFeedStep?.invoke(-1); true }
         Key.DirectionDown -> { onFeedStep?.invoke(1); true }
         else -> false
