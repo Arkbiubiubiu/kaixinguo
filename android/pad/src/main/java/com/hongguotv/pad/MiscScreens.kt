@@ -1,5 +1,6 @@
 ﻿package com.hongguotv.pad
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +45,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -3072,6 +3075,30 @@ private fun LoginField(
     )
 }
 
+/** 官网入口：二维码 + 域名（版本更新右侧；手机/平板扫码即可打开）。 */
+@Composable
+private fun OfficialSiteColumn() {
+    val uri = LocalUriHandler.current
+    val url = "https://kxg.fabao.xin/"
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("官方网站", color = TextMain, fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        Image(
+            painter = painterResource(R.drawable.official_qr),
+            contentDescription = "官网二维码",
+            modifier = Modifier
+                .size(104.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White)
+                .padding(5.dp)
+                .clickable { runCatching { uri.openUri(url) } },
+        )
+        Spacer(Modifier.height(8.dp))
+        Text("kxg.fabao.xin", color = TextDim, fontSize = 12.sp)
+        Text("扫码打开", color = TextDim, fontSize = 11.sp)
+    }
+}
+
 @Composable
 fun SettingsScreen() {
     val testScope = rememberCoroutineScope()
@@ -3094,44 +3121,48 @@ fun SettingsScreen() {
                         .background(Panel, RoundedCornerShape(12.dp))
                         .padding(16.dp),
                 ) {
-                    Column {
-                        Text("版本更新", color = TextMain, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "当前版本 ${Updater.versionName(Store.appContext)}（${Updater.versionCode(Store.appContext)}）",
-                            color = TextDim,
-                            fontSize = 13.sp,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "更新走自建服务器，边缘节点加速下载",
-                            color = TextDim,
-                            fontSize = 12.sp,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TvChip(if (checking) "检查中…" else "检查更新", selected = false) {
-                                if (checking) return@TvChip
-                                checking = true
-                                status = null
-                                upScope.launch {
-                                    // check() 在「全部更新源连不上」时会抛 CheckException：
-                                    // 必须如实显示失败，不能当成「已是最新」（外网 2.2.73 谎报事故）
-                                    val r = runCatching { Updater.check(Store.appContext) }
-                                    checking = false
-                                    r.getOrNull()?.let { info = it }
-                                    if (r.exceptionOrNull() is Updater.CheckException) {
-                                        status = "检查失败：网络连不上更新源，请重试"
-                                    } else if (r.getOrNull() == null) {
-                                        status = "已是最新版本"
+                    Row(verticalAlignment = Alignment.Top) {
+                        Column(Modifier.weight(1f)) {
+                            Text("版本更新", color = TextMain, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "当前版本 ${Updater.versionName(Store.appContext)}（${Updater.versionCode(Store.appContext)}）",
+                                color = TextDim,
+                                fontSize = 13.sp,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "更新走自建服务器，边缘节点加速下载",
+                                color = TextDim,
+                                fontSize = 12.sp,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TvChip(if (checking) "检查中…" else "检查更新", selected = false) {
+                                    if (checking) return@TvChip
+                                    checking = true
+                                    status = null
+                                    upScope.launch {
+                                        // check() 在「全部更新源连不上」时会抛 CheckException：
+                                        // 必须如实显示失败，不能当成「已是最新」（外网 2.2.73 谎报事故）
+                                        val r = runCatching { Updater.check(Store.appContext) }
+                                        checking = false
+                                        r.getOrNull()?.let { info = it }
+                                        if (r.exceptionOrNull() is Updater.CheckException) {
+                                            status = "检查失败：网络连不上更新源，请重试"
+                                        } else if (r.getOrNull() == null) {
+                                            status = "已是最新版本"
+                                        }
                                     }
                                 }
-                            }
-                            status?.let {
-                                Spacer(Modifier.width(10.dp))
-                                Text(it, color = TextDim, fontSize = 12.sp)
+                                status?.let {
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(it, color = TextDim, fontSize = 12.sp)
+                                }
                             }
                         }
+                        Spacer(Modifier.width(20.dp))
+                        OfficialSiteColumn()
                     }
                 }
                 info?.let { UpdateDialog(it) { info = null } }

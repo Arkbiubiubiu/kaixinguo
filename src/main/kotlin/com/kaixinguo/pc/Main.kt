@@ -5,6 +5,7 @@
 
 package com.kaixinguo.pc
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -104,6 +106,17 @@ import kotlin.math.roundToInt
 private val brandBitmap: ImageBitmap? by lazy {
     runCatching {
         val stream = object {}.javaClass.getResourceAsStream("/brand.png")
+            ?: return@runCatching null
+        stream.use { javax.imageio.ImageIO.read(it).toComposeImageBitmap() }
+    }.getOrNull()
+}
+
+/** 官网（设置页「关于」右侧：二维码 + 地址，扫码或点击打开）。 */
+private const val OFFICIAL_SITE = "https://kxg.fabao.xin/"
+
+private val officialQrBitmap: ImageBitmap? by lazy {
+    runCatching {
+        val stream = object {}.javaClass.getResourceAsStream("/official_qr.png")
             ?: return@runCatching null
         stream.use { javax.imageio.ImageIO.read(it).toComposeImageBitmap() }
     }.getOrNull()
@@ -3046,14 +3059,20 @@ private fun SettingsPage() {
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingBlock("关于") {
-                    UpdateRow()
-                    Spacer(Modifier.height(4.dp))
-                    Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
-                        color = Palette.faint, fontSize = 12.sp,
-                    )
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Column(Modifier.weight(1f)) {
+                            UpdateRow()
+                            Spacer(Modifier.height(4.dp))
+                            Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
+                                color = Palette.faint, fontSize = 12.sp,
+                            )
+                        }
+                        Spacer(Modifier.width(24.dp))
+                        OfficialSiteCard()
+                    }
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -3097,6 +3116,49 @@ private fun SettingBlock(title: String, icon: androidx.compose.ui.graphics.vecto
         Spacer(Modifier.height(10.dp))
         content()
     }
+}
+
+/** 设置页「关于」右侧的官网入口：二维码扫码打开，地址可点击，旁边可复制链接。 */
+@Composable
+private fun OfficialSiteCard() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        officialQrBitmap?.let { bmp ->
+            Image(
+                bitmap = bmp,
+                contentDescription = "官网二维码",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(104.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White)
+                    .padding(6.dp)
+                    .clickable { openOfficialSite() },
+            )
+            Spacer(Modifier.width(12.dp))
+        }
+        Column {
+            Text("官方网站", color = Palette.text, fontSize = 14.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "kxg.fabao.xin",
+                color = Palette.accent,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable { openOfficialSite() },
+            )
+            Spacer(Modifier.height(4.dp))
+            Text("扫码或点击打开，方便分享", color = Palette.faint, fontSize = 11.sp)
+            Spacer(Modifier.height(8.dp))
+            OutlineButton("复制链接") {
+                runCatching {
+                    java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                        .setContents(java.awt.datatransfer.StringSelection(OFFICIAL_SITE), null)
+                }
+            }
+        }
+    }
+}
+
+private fun openOfficialSite() {
+    runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(OFFICIAL_SITE)) }
 }
 
 // ---------------------------------------------------------------- 通用

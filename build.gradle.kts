@@ -60,7 +60,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "开心果"
-            packageVersion = "1.2.36"
+            packageVersion = "1.2.37"
             // 安装包 / 快捷方式 / 任务栏图标（与安卓启动图标同一张）
             windows {
                 iconFile.set(project.layout.projectDirectory.file("brand.ico"))
