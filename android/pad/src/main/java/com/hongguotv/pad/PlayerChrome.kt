@@ -146,6 +146,8 @@ fun PlayerChrome(
     onComments: (() -> Unit)? = null,
     /** 控制条出现时是否把焦点直接送进按钮行（TV：只有按 ↓ 进来时才要） */
     focusOnShow: Boolean = true,
+    /** 评论面板等模态层打开时=true：控制条不许把焦点抢回来（否则面板拿了焦点又被夺走） */
+    modalOpen: Boolean = false,
 ) {
     // 控制条收起时把浮层一并收掉，否则会孤零零挂在画面上
     LaunchedEffect(visible) { if (!visible) onMenu(PlayerMenu.None) }
@@ -162,8 +164,8 @@ fun PlayerChrome(
     // 按钮是随控制条一起出现的，requestFocus 必须等这一帧 layout 结束（节点已 placed），
     // 否则 FocusRequester 未初始化直接抛异常 —— 之前就是被 runCatching 吞掉，
     // 焦点永远留在全屏 Box 上，遥控器根本进不来。
-    LaunchedEffect(visible, isTv, focusOnShow) {
-        if (isTv && visible && focusOnShow && menu == PlayerMenu.None) {
+    LaunchedEffect(visible, isTv, focusOnShow, modalOpen) {
+        if (isTv && visible && focusOnShow && menu == PlayerMenu.None && !modalOpen) {
             withFrameNanos { }
             runCatching { playFocus?.requestFocus() }
         }
@@ -171,13 +173,14 @@ fun PlayerChrome(
 
     // 浮层开了把焦点送进去，关了送回按钮行（不回全屏层，否则又要按一次 ↓）
     var prevMenu by remember { mutableStateOf(PlayerMenu.None) }
-    LaunchedEffect(menu) {
+    LaunchedEffect(menu, modalOpen) {
         if (isTv) {
             withFrameNanos { }
             withFrameNanos { }
             if (menu != PlayerMenu.None) {
                 runCatching { panelFirst.requestFocus() }
-            } else if (prevMenu != PlayerMenu.None) {
+            } else if (prevMenu != PlayerMenu.None && !modalOpen) {
+                // 从浮层关回按钮行；评论面板打开时不能抢（它自己已经拿到焦点）
                 runCatching { playFocus?.requestFocus() }
             }
         }

@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -220,11 +221,15 @@ fun DanmakuLayer(
 
     LaunchedEffect(player) {
         while (true) {
+            val playing = runCatching { player?.isPlaying == true }.getOrDefault(false)
             withFrameNanos { ns ->
                 engine.step(ns, player, itemsNow, size, dpi, fontScale, density, area, paint)
             }
             // 写 state 只为触发画布重绘（draw 里读它，不会带来重组）
             frame++
+            // 暂停/缓冲时弹幕本来就不动，还按 60fps 重绘等于白烧 GPU、让电视一直醒着。
+            // 改成 5fps 低频唤醒（暂停中拖动进度也能在 200ms 内跟上），复播立刻回逐帧。
+            if (!playing) delay(200)
         }
     }
 

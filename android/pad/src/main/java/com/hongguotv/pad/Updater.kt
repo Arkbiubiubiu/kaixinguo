@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import android.content.Context
 import android.content.Intent
@@ -97,6 +97,12 @@ object Updater {
         ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
     }
 
+    /** 樱花自签放行判定：必须精确到 host（旧实现 url.contains 会被 frp-bar.com.evil.tld 命中）。 */
+    private fun isSakuraHost(u: String): Boolean {
+        val host = runCatching { java.net.URI(u).host?.lowercase() }.getOrNull() ?: return false
+        return host == "frp-bar.com" || host.endsWith(".frp-bar.com")
+    }
+
     /** 统一开连接：对樱花域名套自签证书信任，其余域名保持默认。 */
     private fun openConn(url: String, connectTimeoutMs: Int, readTimeoutMs: Int): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -104,7 +110,7 @@ object Updater {
         conn.readTimeout = readTimeoutMs
         conn.instanceFollowRedirects = true
         conn.setRequestProperty("User-Agent", "Dalvik/2.1.0")
-        if (conn is javax.net.ssl.HttpsURLConnection && url.contains("frp-bar.com")) {
+        if (conn is javax.net.ssl.HttpsURLConnection && isSakuraHost(url)) {
             conn.sslSocketFactory = sakuraTls.first
             conn.hostnameVerifier = sakuraTls.second
         }
@@ -155,6 +161,7 @@ object Updater {
                 c.disconnect()
             }
         }.getOrDefault(emptyList())
+        android.util.Log.i("PadUpdater", "mirrors=${discoveredMirrors.joinToString()} bases=${BASES.map { it.first }.joinToString()}")
         var lastError: String? = null
         for ((base, timeout) in BASES) {
             var attempt = 0
@@ -162,6 +169,7 @@ object Updater {
                 attempt++
                 val info = runCatching { fetch("$base/$name", base, timeout) }.getOrNull()
                 if (info != null) {
+                    android.util.Log.i("PadUpdater", "manifest ok via $base: vc=${info.versionCode} cur=$cur")
                     // 能拿到清单就说明通道是通的：不比当前新就直接结束
                     return@withContext if (info.versionCode > cur) info else null
                 }
@@ -229,6 +237,7 @@ object Updater {
             if (f != out && f.name.startsWith("update")) f.delete()
         }
         downloadError = null
+        val t0 = System.currentTimeMillis()
         runCatching {
             if (out.exists() && out.length() != info.size) out.delete()
             out.createNewFile()
@@ -245,11 +254,20 @@ object Updater {
                 out.delete()
                 out.createNewFile()
             }
-            // 半截包续传：进度从已下字节起算
-            val resumed = if (out.length() in 1 until total) out.length() else 0L
-            if (resumed > 0) onProgress((resumed * 100 / total).toInt().coerceIn(0, 100))
-            val segments = if (total >= 8L * 1024 * 1024) 6 else 1
+            // 3 段是樱花隧道的实测峰值（1.3-1.4MB/s）；6 段没有提升，反而把连接数打满
+            val segments = if (total >= 8L * 1024 * 1024) 3 else 1
             val segLen = total / segments
+            // 续传改为「每段独立文件」：旧实现 3 段写同一文件、用整文件长度当每段进度，
+            // 任意一段写满就等于其它段也判「已完成」→ 装出残缺包（审计 P0）
+            val segDir = File(dir, "segs-${info.versionCode}").apply { mkdirs() }
+            segDir.listFiles()?.forEach { f -> if (f.length() > segLen + 1) f.delete() }
+            val segFiles = (0 until segments).map { File(segDir, "p$it") }
+            val resumed = segFiles.sumOf { it.length() }.coerceAtMost(total)
+            if (resumed > 0) onProgress((resumed * 100 / total).toInt().coerceIn(0, 100))
+            // 只走樱花（用户口径）：选线一次，所有段共用同一条线。
+            // 每段各探测/竞速一次会把隧道连接数打满，实测速度从 1.3MB/s 掉到 0.4MB/s。
+            val lines = info.urls.ifEmpty { listOf(info.url) }
+            val firstLine = pickLine(lines)
             val done = java.util.concurrent.atomic.AtomicLong(0)
             val lastPct = java.util.concurrent.atomic.AtomicInteger(-1)
             val failed = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -259,63 +277,36 @@ object Updater {
                     pool.submit(java.util.concurrent.Callable {
                         val a = i.toLong() * segLen
                         val b = if (i == segments - 1) total - 1 else (i + 1).toLong() * segLen - 1
-                        // 断点续传：从上次中断的地方接着拉（半截包保留在 update.apk）
-                        var pos = if (out.length() > a) minOf(out.length(), b + 1) else a
-                        if (pos > b) return@Callable
+                        val segSize = b - a + 1
+                        val segFile = segFiles[i]
+                        // 段内偏移 = 该段文件已有字节（每段独立，互不影响）
+                        var pos = segFile.length().coerceAtMost(segSize)
+                        if (pos >= segSize) return@Callable
                         var attempt = 0
-                        while (pos <= b && attempt < 12 && !failed.get()) {
+                        var url = firstLine
+                        while (pos < segSize && attempt < 12 && !failed.get()) {
                             attempt++
                             try {
-                                // ★ 多源竞速：所有镜像并发握手+首字节，赢家地址确定后
-                                // 用它发起干净的新连接拉整段（预读字节只用于判速，
-                                // 正式传输走全新连接，sha256 语义零风险）。
-                                val mirrors = info.urls.ifEmpty { listOf(info.url) }
-                                val winnerUrl = java.util.concurrent.atomic.AtomicReference<String?>(null)
-                                val threads = mirrors.map { m ->
-                                    Thread {
-                                        var c: HttpURLConnection? = null
-                                        try {
-                                            c = openConn(m, if (m.contains("192.168.")) 2_500 else 8_000, 30_000).apply {
-                                                setRequestProperty("Range", "bytes=$pos-$b")
-                                            }
-                                            if (c.responseCode !in 200..299) error("HTTP ${c.responseCode}")
-                                            if (c.inputStream.read() < 0) error("空响应")
-                                            if (!winnerUrl.compareAndSet(null, m)) c.disconnect()
-                                        } catch (e: Exception) {
-                                            android.util.Log.w("PadUpdater", "race $m: ${e.message}")
-                                            runCatching { c?.disconnect() }
-                                        }
-                                    }.apply { isDaemon = true }
-                                }
-                                threads.forEach { it.start() }
-                                val deadline = System.currentTimeMillis() + 15_000L
-                                while (winnerUrl.get() == null && System.currentTimeMillis() < deadline &&
-                                       threads.any { it.isAlive }) {
-                                    Thread.sleep(50)
-                                }
-                                threads.forEach { it.interrupt() }
-                                val winUrl = winnerUrl.get() ?: error("全部镜像无响应")
-                                val conn = openConn(winUrl, 15_000, 30_000).apply {
-                                    setRequestProperty("Range", "bytes=$pos-$b")
+                                val conn = openConn(url, 15_000, 30_000).apply {
+                                    setRequestProperty("Range", "bytes=${a + pos}-$b")
                                 }
                                 try {
                                     conn.inputStream.use { input ->
-                                        java.io.RandomAccessFile(out, "rw").use { raf ->
+                                        java.io.RandomAccessFile(segFile, "rw").use { raf ->
                                             raf.seek(pos)
                                             val buf = ByteArray(128 * 1024)
                                             var lastReadAt = System.currentTimeMillis()
-                                            while (pos <= b) {
-                                                val want = minOf(buf.size, (b - pos + 1).toInt())
+                                            while (pos < segSize) {
+                                                val want = minOf(buf.size.toLong(), segSize - pos).toInt()
                                                 val n = input.read(buf, 0, want)
                                                 if (n <= 0) break
                                                 raf.write(buf, 0, n)
                                                 pos += n
                                                 val d = done.addAndGet(n.toLong())
-                                                val p = (d * 100 / total).toInt().coerceIn(0, 100)
+                                                val p = ((d + resumed) * 100 / total).toInt().coerceIn(0, 100)
                                                 val prev = lastPct.getAndSet(p)
                                                 if (p != prev) onProgress(p)
                                                 if (System.currentTimeMillis() - lastReadAt > 60_000) {
-                                                    // 完全无进展才算超时；慢连接（每秒几 KB）不算
                                                     error("分段 60 秒无进展")
                                                 }
                                                 lastReadAt = System.currentTimeMillis()
@@ -326,20 +317,30 @@ object Updater {
                                     conn.disconnect()
                                 }
                             } catch (e: Exception) {
-                                android.util.Log.w("PadUpdater", "seg$i attempt$attempt failed at $pos/${b - a + 1}: ${e.message}")
+                                android.util.Log.w("PadUpdater", "seg$i attempt$attempt via ${url.substringAfter("://").substringBefore("/")} failed at $pos/$segSize: ${e.message}")
+                                url = nextLine(lines, url)
                                 if (attempt >= 12) failed.set(true)
-                                // 线程池里不是协程：用 Thread.sleep 退避
                                 Thread.sleep(800L * attempt)
                             }
                         }
-                        if (pos <= b) {
-                            android.util.Log.e("PadUpdater", "seg$i exhausted ($pos..$b)")
+                        if (pos < segSize) {
+                            android.util.Log.e("PadUpdater", "seg$i exhausted ($pos/$segSize)")
                             failed.set(true)
                         }
                     })
                 }
                 futures.forEach { it.get() }
-                if (done.get() + resumed != total) error("下载不完整（${done.get() + resumed}/$total），请重试")
+                if (failed.get()) error("下载失败（分段未完成），请重试")
+                // 合并各段 → 最终 apk
+                out.outputStream().use { o ->
+                    segFiles.forEachIndexed { i, f ->
+                        if (!f.exists()) error("分段 ${i} 缺失")
+                        f.inputStream().use { it.copyTo(o, 256 * 1024) }
+                    }
+                }
+                if (out.length() != total) error("下载不完整（${out.length()}/$total），请重试")
+                segFiles.forEach { it.delete() }
+                segDir.delete()
             } finally {
                 pool.shutdown()
             }
@@ -347,11 +348,40 @@ object Updater {
                 out.delete()
                 error("安装包校验失败（可能下到半截），请重试")
             }
+            android.util.Log.i("PadUpdater", "download done ${out.length()}B in ${System.currentTimeMillis() - t0}ms")
             out
         }.onFailure {
             downloadError = it.message
             android.util.Log.e("PadUpdater", "download failed: ${it.message}")
         }.getOrNull()
+    }
+
+    /**
+     * 选下载线：按顺序探测（Range 0-0 + 读 1 字节），第一条通的留下。
+     * 只探测一次、所有段共用 —— 每段各探测一次会把隧道连接数打满。
+     */
+    private fun pickLine(lines: List<String>): String {
+        for (u in lines) {
+            var c: HttpURLConnection? = null
+            try {
+                c = openConn(u, 6_000, 8_000).apply { setRequestProperty("Range", "bytes=0-0") }
+                if (c.responseCode in 200..299 && c.inputStream.read() >= 0) {
+                    android.util.Log.i("PadUpdater", "line picked=${u.substringAfter("://").substringBefore("/")}")
+                    return u
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("PadUpdater", "probe $u: ${e.message}")
+            } finally {
+                runCatching { c?.disconnect() }
+            }
+        }
+        return lines.first()
+    }
+
+    /** 段失败换下一条线（轮换），全部试过就回第一条。 */
+    private fun nextLine(lines: List<String>, cur: String): String {
+        val i = lines.indexOf(cur)
+        return if (i >= 0 && i + 1 < lines.size) lines[i + 1] else lines.first()
     }
 
     /** 最近一次下载失败的原因（UI 直接显示，比笼统的「下载失败」有用）。 */

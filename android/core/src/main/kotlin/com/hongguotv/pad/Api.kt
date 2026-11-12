@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,7 +46,15 @@ data class FollowUpdatePage(
 )
 
 /** 剧评条目 / 页。 */
-data class ReviewItem(val user: String, val avatar: String, val text: String, val time: String, val likes: String)
+data class ReviewItem(
+    val user: String,
+    val avatar: String,
+    val text: String,
+    val time: String,
+    val likes: String,
+    /** 剧评评分（comment/expand/score 十分制，展示 ÷2 转星）；单集评论恒空 */
+    val score: String = "",
+)
 data class ReviewPage(
     val items: List<ReviewItem> = emptyList(),
     val cursor: String = "",
@@ -91,6 +99,14 @@ data class CommentReply(
     val replyTo: String = "",
 )
 
+/**
+ * ⚠️ 本文件有两份副本，改这里必须同步另一份：
+ *   - android/core/src/main/kotlin/com/hongguotv/pad/Api.kt（安卓 pad/TV，gomobile 取流）
+ *   - src/main/kotlin/com/hongguotv/pad/Api.kt（PC 桌面，本地签名兜底）
+ * 允许的平台差异只有三处：取流兜底通道（LocalResolverProvider / localPlay）、
+ * ReviewItem.score 的解析、设备身份默认值来源。其余逻辑必须逐字一致，
+ * 否则修 bug 会出现「一端修好另一端还在」。
+ */
 object Api {
 
     const val UA = "com.phoenix.read/74232 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001;tt-ok/3.12.13.20)"
@@ -104,7 +120,6 @@ object Api {
     private const val DETAIL_PATH = "/novel/player/video_detail/v1/"
     private const val RANK_CELL = "7470092475068071998"
     private const val NEW_CELL = "7431550523368554558"
-    const val DOWN_STATUS = "已下架"
 
     private val PLAY_TOKEN: String get() = App.playToken
     private val MULTI_URL: String
@@ -368,15 +383,21 @@ object Api {
     }
 
     /** 代签 + 客户端直发；失败才退回服务器代取（兜底，可能拿到降级数据）。 */
+    /** 单个逻辑请求的总预算：签名 + 直发 + relay 三段叠加时最坏会到 200s 级（审计 P0）。 */
+    private val requestBudgetMs = 25_000L
+
     private fun signedGet(
         path: String,
         query: JSONArray = JSONArray(),
         extraHeaders: Map<String, String> = emptyMap(),
         origin: String = HOST,
     ): String? {
+        val deadline = System.currentTimeMillis() + requestBudgetMs
         signEndpoint(origin, path, query, null)?.let { (url, headers) ->
             runCatching { return requestWithHeaders(url, null, headers, extraHeaders) }
         }
+        // 签名/直发已经把预算耗光就不再叠加 relay，直接失败（让 UI 尽快给出错误态）
+        if (System.currentTimeMillis() > deadline) return null
         val payload = JSONObject().put("origin", origin).put("path", path)
             .put("query", query).put("body", "")
         return viaServer(payload, extraHeaders)
@@ -388,9 +409,11 @@ object Api {
         query: JSONArray = JSONArray(),
         origin: String = HOST,
     ): String? {
+        val deadline = System.currentTimeMillis() + requestBudgetMs
         signEndpoint(origin, path, query, body)?.let { (url, headers) ->
             runCatching { return requestWithHeaders(url, body, headers) }
         }
+        if (System.currentTimeMillis() > deadline) return null
         val payload = JSONObject().put("origin", origin).put("path", path)
             .put("query", query).put("body", body.asSignBody())
         return viaServer(payload)
@@ -745,7 +768,10 @@ object Api {
             if (vd.length() == 0) return null
             // 退化数据不算成功：签名/身份不对时上游会回 code=0 但把 video_list 清空。
             // 这时必须落到下一档（设备直发），否则详情页永远只有标题没有分集。
-            if (!vd.has("video_list")) return null
+            // 键存在但为空数组也算退化数据（上游风控时 code=0 + 空 list），不能落缓存
+            val vl = vd.opt("video_list")
+            if (vl == null) return null
+            if (vl is org.json.JSONArray && vl.length() == 0) return null
             if (!vd.has("series_id")) vd.put("series_id", seriesId)
             DetailCache.put(vd)
             return vd
@@ -774,6 +800,40 @@ object Api {
      * 首页首屏：走 bookmall/tab/v，把 tab_item 里的卡片全收出来。
      * 拿不到 cell/plan 时用 TAB_IDS 的兜底值（老 cell 还在服务）。
      */
+    /** 列表首屏缓存：3 分钟内切走再回来直接返回（「换一批」调 clearListCache 强制刷新）。 */
+    private val listCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Any>>()
+    private const val LIST_TTL = 3 * 60_000L
+
+    fun clearListCache() {
+        listCache.clear()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <T : Any> listCached(key: String, block: () -> T?): T? {
+        listCache[key]?.let { (at, v) ->
+            if (System.currentTimeMillis() - at < LIST_TTL) return v as T
+        }
+        val v = block() ?: return null
+        listCache[key] = System.currentTimeMillis() to v
+        return v
+    }
+
+    /** 首页首屏（带 3 分钟缓存，内部「墙要满」的补拉只跑一次）。 */
+    fun firstPageCached(tabType: String): FeedPage =
+        listCached("first|$tabType") { firstPage(tabType) } ?: FeedPage()
+
+    /** 排行榜（带 3 分钟缓存）。 */
+    fun rankCached(offset: Int, sessionId: String, genre: String, sub: String, panel: String = "", month: String = ""): FeedPage =
+        listCached("rank|$offset|$genre|$sub|$panel|$month") { rank(offset, sessionId, genre, sub, panel, month) } ?: FeedPage()
+
+    /** 新剧列表（带 3 分钟缓存）。 */
+    fun newDramaCached(gender: Int, offset: Int, sessionId: String): FeedPage =
+        listCached("new|$gender|$offset") { newDrama(gender, offset, sessionId) } ?: FeedPage()
+
+    /** 预约列表（带 3 分钟缓存）。 */
+    fun reserveListCached(): List<SeriesCard> =
+        listCached("reserve") { reserveList() } ?: emptyList()
+
     fun firstPage(tabType: String): FeedPage {
         val qs = baseQuery() +
             "&auth_aweme=true&auth_backward=true&bottom_tab_type=7&client_req_type=4" +
@@ -2015,8 +2075,12 @@ object Api {
         val bases = serverBases().map { it.trimEnd('/') } + HISTORY_BASES
         for (base in bases.distinct()) {
             val ok = runCatching {
-                requestOnce("$base/api/history?key=$key", body, UA)
-                true
+                val resp = requestOnce("$base/api/history?key=$key", body, UA)
+                // 服务端返回删除后的列表：要删的 id 都还在返回里说明没删掉，不能当成功
+                val items = org.json.JSONObject(resp).optJSONArray("items")
+                val left = (0 until (items?.length() ?: 0)).mapNotNull { items?.optJSONObject(it) }
+                    .map { it.optString("seriesId") }.toSet()
+                seriesIds.isEmpty() || seriesIds.none { it in left }
             }.getOrDefault(false)
             if (ok) return true
         }
@@ -2030,10 +2094,12 @@ object Api {
      */
     fun backfillHistoryCovers(): Int {
         val rows = App.state.history()
+        // 先建 id→行 的 map：原来 filter 内嵌 first{} 是 O(n²)，1500 条历史时明显卡
+        val byId = rows.associateBy { it.optString("seriesId") }
         val missing = rows.map { it.optString("seriesId") }
-            .filter { id -> id.isNotEmpty() && rows.first { it.optString("seriesId") == id }.optString("cover").isEmpty() }
+            .filter { id -> id.isNotEmpty() && byId[id]?.optString("cover").isNullOrEmpty() }
             .distinct()
-            .take(40)
+            .take(10)
         if (missing.isEmpty()) return 0
         val covers = java.util.concurrent.ConcurrentHashMap<String, String>()
         for (id in missing) {
@@ -2043,13 +2109,14 @@ object Api {
         if (need.isNotEmpty()) {
             val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
             try {
-                val futures = need.map { id ->
-                    pool.submit {
+                val tasks = need.map { id ->
+                    java.util.concurrent.Callable {
                         runCatching { fetchSeriesData(id) }
                         DetailCache.get(id)?.cover?.takeIf { it.isNotEmpty() }?.let { covers[id] = it }
                     }
                 }
-                futures.forEach { runCatching { it.get(30, java.util.concurrent.TimeUnit.SECONDS) } }
+                // 并发执行：原来 forEach { get(30s) } 是逐个串行等待，60 条最坏 5 分钟白屏
+                runCatching { pool.invokeAll(tasks, 30, java.util.concurrent.TimeUnit.SECONDS) }
             } finally {
                 pool.shutdownNow()
             }
@@ -2739,6 +2806,8 @@ object Api {
                         .format(java.util.Date(ts * 1000)) else "",
                     likes = c.optJSONObject("stat")?.optLong("digg_count", 0)
                         ?.takeIf { it > 0 }?.toString().orEmpty(),
+                    // 剧评评分（comment/expand/score 十分制；单集评论恒空）
+                    score = c.optJSONObject("expand")?.opt("score")?.toString().orEmpty(),
                 ),
             )
         }
@@ -2761,7 +2830,13 @@ object Api {
      * 不嵌套 video_detail——之前只按嵌套结构收，导致信息（标题/评分/角标）丢失。
      * 原版还会重试 3 次（间隔 400/700ms），因为「猜你喜欢」常需要多次才有数据。
      */
+    /** 相关推荐本地缓存（同一部剧 6 小时内不重复打上游）。 */
+    private val relatedCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<RelatedGroup>>>()
+
     fun relatedSeries(seriesId: String): List<RelatedGroup> {
+        relatedCache[seriesId]?.let { (at, cached) ->
+            if (System.currentTimeMillis() - at < 6 * 3600_000L) return cached
+        }
         // 参数与原版逐项一致（缺了上游会回 100103）
         val query = JSONArray()
             .put(JSONArray().put("book_id").put(seriesId))
@@ -2778,7 +2853,7 @@ object Api {
             .put(JSONArray().put("total_chapter_num").put("0"))
 
         repeat(3) { attempt ->
-            if (attempt > 0) runCatching { Thread.sleep(400L + (attempt - 1) * 300L) }
+            if (attempt > 0) runCatching { Thread.sleep(120L + (attempt - 1) * 80L) }
             val text = runCatching { signedGet("/reading/bookapi/plan/v", query) }.getOrNull()
                 ?: return@repeat
             val root = runCatching { JSONObject(text) }.getOrNull() ?: return@repeat
@@ -2805,7 +2880,10 @@ object Api {
                     .distinctBy { it.seriesId }
                 if (name.isNotEmpty() && items.isNotEmpty()) groups.add(RelatedGroup(name, items))
             }
-            if (groups.isNotEmpty()) return groups
+            if (groups.isNotEmpty()) {
+                relatedCache[seriesId] = System.currentTimeMillis() to groups
+                return groups
+            }
         }
         return emptyList()
     }
@@ -2906,7 +2984,7 @@ object Api {
 
         val out = mutableListOf<SeasonRef>()
         // 每部候选都要拉一次详情（详情才有季号和主创），限制次数免得进页面拖太久
-        var budget = 10
+        var budget = 3
         for ((id, name) in cands) {
             if (budget <= 0 || missing.isEmpty()) break
             if (id == seriesId) continue
@@ -2984,7 +3062,13 @@ object Api {
      * 这是上游唯一靠谱的季清单 —— 相关推荐会漏季，标题匹配更不可靠
      * （《全球躲猫猫》第二季叫「我是林岁安第二季」，前缀和其他季完全不同）。
      */
+    private val seasonsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SeasonRef>>>()
+
     fun seasons(seriesId: String): List<SeasonRef> {
+        seasonsCache[seriesId]?.let { (at, cached) ->
+            // 同一部剧 10 分钟内不重复打 /api/seasons（每次进详情、每次切季都会调）
+            if (System.currentTimeMillis() - at < 10 * 60_000L) return cached
+        }
         // 季清单必须由服务器出：plan 接口要官方签名，客户端自己请求拿到的
         // 是降级推荐位（里面混着别的剧），怎么调都不对。
         // 服务器侧 /api/seasons 转发给 streamsrv，用的是跑通的 openhongguo 签名。
@@ -3012,7 +3096,11 @@ object Api {
                     ),
                 )
             }
-            if (out.isNotEmpty()) return out.sortedBy { it.index }
+            if (out.isNotEmpty()) {
+                val sorted = out.sortedBy { it.index }
+                seasonsCache[seriesId] = System.currentTimeMillis() to sorted
+                return sorted
+            }
         }
         return emptyList()
     }

@@ -2,6 +2,8 @@ package com.hongguotv.pad
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -29,8 +32,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,6 +76,14 @@ fun EpisodeCommentsPanel(
     var replies by remember { mutableStateOf<List<CommentReply>>(emptyList()) }
     var replyText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    // TV：面板本身要拿焦点，才能用方向键滚列表（列表项没有可聚焦节点，
+    // 不拿焦点的话整块面板方向键无响应 —— 遥控器只能看第一屏）。
+    val listState = rememberLazyListState()
+    val panelFocus = remember { FocusRequester() }
+    val stepPx = with(LocalDensity.current) { 120.dp.toPx() }
+    LaunchedEffect(Unit) {
+        if (readOnly) runCatching { panelFocus.requestFocus() }
+    }
 
     LaunchedEffect(vid) {
         loading = true
@@ -97,6 +116,25 @@ fun EpisodeCommentsPanel(
                 .fillMaxHeight()
                 .background(Panel)
                 .clickable(enabled = false) { }
+                // 面板拿焦点：上下方向键滚动列表（一次 120dp），左右同上/下，
+                // 返回键由播放页根节点处理（关面板）。触摸设备 UI 不受影响。
+                .focusRequester(panelFocus)
+                .onPreviewKeyEvent { ev ->
+                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (ev.key) {
+                        Key.DirectionDown, Key.DirectionRight -> {
+                            scope.launch { listState.animateScrollBy(stepPx) }
+                            true
+                        }
+                        Key.DirectionUp, Key.DirectionLeft -> {
+                            scope.launch { listState.animateScrollBy(-stepPx) }
+                            true
+                        }
+                        Key.DirectionCenter, Key.Enter -> true
+                        else -> false
+                    }
+                }
+                .focusable()
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
             // 头部
@@ -130,6 +168,7 @@ fun EpisodeCommentsPanel(
                 }
                 else -> LazyColumn(
                     Modifier.fillMaxWidth().weight(1f),
+                    state = listState,
                     contentPadding = PaddingValues(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {

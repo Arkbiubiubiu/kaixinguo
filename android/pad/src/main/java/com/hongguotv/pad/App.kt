@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -323,6 +323,10 @@ fun App() {
             // 只切页不进内容区的话，遥控器还停在侧栏上，等于没"进去"。
             // 右键不再算确认（用户明确要求：侧栏只认上下 + 确定），见 NavRail 里的按键处理。
             onPick = enterContent,
+            // 右键 = 把焦点送进内容区（保持当前分类，不切板块）。
+            // 直接 requestFocus 到 1dp 桥接条在这条路径上不生效（实测按 → 仍无反应），
+            // 走 enterContent 与「确定」同一条已验证的链路。
+            onRight = { enterContent(stack.first()) },
         )
         // focusGroup：把内容区当成一个整体参与方向键搜索。
         // 不加的话，从 72dp 宽的侧栏往右找落点时，如果内容区第一个可聚焦控件
@@ -522,6 +526,8 @@ private fun NavRail(
     enabled: Boolean = true,
     /** 「追更」项右上角的未读数（0 = 不显示） */
     followBadge: Int = 0,
+    /** 侧栏上按右键：不切板块（用户要求），但要把焦点送进内容区，否则按了没反应 */
+    onRight: () -> Unit = {},
 ) {
     val focusManager = LocalFocusManager.current
     Column(
@@ -576,10 +582,11 @@ private fun NavRail(
                                 .onFocusChanged { if (it.isFocused) onFocused(item.screen) }
                                 .clickable { onPick(item.screen) }
                                 // 侧栏只认「上下移动 + 确定进入」。右键以前被当成确认
-                                // （按下就切板块），用户明确不要；但不处理的话默认焦点搜索
-                                // 会把焦点从侧栏溜进右边内容区，所以这里把右键吃掉、什么也不做。
+                                // （按下就切板块），用户明确不要；但什么也不做的话按 → 完全没反应，
+                                // 用户会以为遥控器坏了。现在：右键不切板块，只把焦点送进内容区。
                                 .onPreviewKeyEvent { ev ->
                                     if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionRight) {
+                                        onRight()
                                         true
                                     } else false
                                 }

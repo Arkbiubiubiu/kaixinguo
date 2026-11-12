@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import java.io.BufferedInputStream
 import java.io.InputStream
@@ -278,7 +278,12 @@ class StreamProxy(private val remote: RemoteVideo, port: Int = 0) {
                     while (at <= end) {
                         val want = minOf(1024 * 1024L, end - at + 1).toInt()
                         val data = remote.read(at, want)
-                        if (data.isEmpty()) break
+                        if (data.isEmpty()) {
+                            // 短读：Content-Length 已声明完整长度，剩余字节发不出来时必须立刻断开，
+                            // 否则播放器会永久等待 body（黑屏/卡死）。断开后播放器可自行重试 Range。
+                            Log.e("PadPlayer", "proxy short read at=$at end=$end（已发 ${at - start}B），断开连接")
+                            return@use
+                        }
                         output.write(data)
                         output.flush()
                         at += data.size

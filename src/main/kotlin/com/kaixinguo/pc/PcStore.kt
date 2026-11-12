@@ -1,4 +1,4 @@
-package com.kaixinguo.pc
+﻿package com.kaixinguo.pc
 
 import androidx.compose.runtime.mutableStateOf
 import com.hongguotv.pad.AccountState
@@ -50,7 +50,7 @@ object PcStore : AccountState {
         props.setProperty(key, value); save()
     }
 
-    /** 在线更新源（留空 = 自建服务器 hgtv.fabao.xin）。自建多入口时可填自己的更新目录。 */
+    /** 在线更新源（留空 = 樱花主 + cpolar 自动发现）。自建多入口时可填自己的更新目录。 */
     var updateBase: String
         get() = str("update_base", "")
         set(v) { put("update_base", v.trim()) }
@@ -293,7 +293,7 @@ object PcStore : AccountState {
     override fun history(): List<JSONObject> = runCatching {
         val arr = JSONArray(str("history", "[]"))
         (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-            .groupBy { it.optString("title") }
+            .groupBy { it.optString("seriesId") }
             .values
             .mapNotNull { same -> same.maxWithOrNull(compareBy({ it.optInt("episode", 0) }, { it.optLong("at") })) }
             .sortedByDescending { it.optLong("at") }
@@ -308,8 +308,16 @@ object PcStore : AccountState {
             if (old == null) {
                 merged[id] = row
             } else {
-                val rowBetter = row.optInt("episode", 0) > old.optInt("episode", 0) ||
-                    (row.optInt("episode", 0) == old.optInt("episode", 0) && row.optLong("at") > old.optLong("at"))
+                // 进度优先：集数大 > 同集秒数大 > 时间戳新（与服务端 history_merge 同规则）
+                val re = row.optInt("episode", 0)
+                val oe = old.optInt("episode", 0)
+                val rp = row.optLong("positionMs", 0)
+                val op = old.optLong("positionMs", 0)
+                val rowBetter = when {
+                    re != oe -> re > oe
+                    rp != op -> rp > op
+                    else -> row.optLong("at") > old.optLong("at")
+                }
                 val win = if (rowBetter) row else old
                 val lose = if (rowBetter) old else row
                 if (win.optString("cover").isEmpty()) win.put("cover", lose.optString("cover"))
@@ -354,6 +362,21 @@ object PcStore : AccountState {
         list.take(200).forEach { arr.put(it) }
         put("history", arr.toString())
         put("progress_$seriesId", keep.toString())
+    }
+
+    /**
+     * 播放中刷新历史行的「看到第几秒」+ at。
+     * 原来 positionMs 只在进入播放器时写一次，历史页永远显示刚点进去的位置。
+     */
+    fun touchHistoryPos(seriesId: String, episode: Int, positionMs: Long) {
+        if (positionMs <= 0) return
+        val rows = history()
+        val row = rows.firstOrNull { it.optString("seriesId") == seriesId } ?: return
+        if (row.optInt("episode") != episode) return
+        row.put("positionMs", positionMs).put("at", System.currentTimeMillis())
+        val arr = JSONArray()
+        rows.take(200).forEach { arr.put(it) }
+        put("history", arr.toString())
     }
 
     fun posOf(vid: String): Long = str("pos_$vid", "0").toLongOrNull() ?: 0L

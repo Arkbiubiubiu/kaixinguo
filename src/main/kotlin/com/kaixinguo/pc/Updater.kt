@@ -31,14 +31,15 @@ import java.security.MessageDigest
 
 /** 版本号唯一来源：发版时只改这里（与 build.gradle.kts 的 packageVersion 对齐）。 */
 object BuildInfo {
-    const val VERSION = "1.2.16"
-    const val CODE = 10216
+    const val VERSION = "1.2.27"
+    const val CODE = 10227
 }
 
 data class PcUpdate(
     val versionCode: Int,
     val versionName: String,
     val url: String,
+    val path: String,
     val size: Long,
     val sha256: String,
     val notes: String,
@@ -47,26 +48,93 @@ data class PcUpdate(
 /**
  * PC 在线更新。
  *
- * 唯一更新源 = 自建服务器（https://hgtv.fabao.xin，Cloudflare 边缘缓存 APK，
- * 大陆实测 0.1~2 MB/s；GitHub release 大陆只有几十 KB/s，2026-11-11 起弃用）。
+ * 更新源 = 樱花穿透四线（主，实测 1.3-1.5MB/s）+ cpolar 动态兜底；
+ * 清单和包都走公网隧道，与外部用户完全一致（2026-11-11 CF 的 h2 对 hgtv 域名
+ * 被针对性 reset，CF 不再作为下载源）。
  * 清单 path 是安装包文件名，用同一个 base 拼下载地址 —— 换版本不用改代码。
  * 下载完校验 sha256，再交给一个临时 .bat：等 msiexec 装完、自动把新版本拉起来。
  * 设置里的「更新源」字段保留：留空用上面的默认源，填了就覆盖（自建多入口时用）。
  */
 object PcUpdater {
 
-    /** 留空 = 自建服务器；设置里填了「更新源」就用用户自己的。 */
-    private fun base(): String =
-        PcStore.updateBase.trim().trimEnd('/').ifBlank {
-            "https://hgtv.fabao.xin"
-        }
+    /**
+     * 下载镜像：樱花穿透四线（主，实测 1.3-1.5MB/s）。
+     * cpolar 域名会漂移，check 时从 update-mirrors.json 动态取，作为兜底。
+     * 2026-11-11 起 CF 的 HTTP/2 对 hgtv 域名被针对性 reset（他站 CF 正常），
+     * CF 不再作为下载源；设置里的「更新源」仍可覆盖（自建多入口时用）。
+     */
+    private val SAKURA = listOf(
+        "https://frp-bar.com:44468",
+        "https://dx.frp-bar.com:44468",
+        "https://yd.frp-bar.com:44468",
+        "https://lt.frp-bar.com:44468",
+    )
 
-    private fun fetchManifest(): PcUpdate? {
-        val root = base()
-        val conn = (URL("$root/version-pc.json").openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8_000
-            readTimeout = 12_000
+    private val SAKURA_HOSTS = setOf("frp-bar.com", "dx.frp-bar.com", "yd.frp-bar.com", "lt.frp-bar.com")
+
+    /** 樱花 TLS 终止在本地 8081，自签证书；只对樱花域名放行，其他域名仍严格校验。 */
+    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
+        val tm = object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+        }
+        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
+        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
+    }
+
+    /** 动态镜像（樱花 + cpolar），每次 check 刷新。 */
+    private var mirrors: List<String> = emptyList()
+
+    private fun openConn(url: String, connectMs: Int, readMs: Int): HttpURLConnection {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = connectMs
+            readTimeout = readMs
             instanceFollowRedirects = true
+        }
+        val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull()
+        if (conn is javax.net.ssl.HttpsURLConnection && host in SAKURA_HOSTS) {
+            conn.sslSocketFactory = sakuraTls.first
+            conn.hostnameVerifier = sakuraTls.second
+        }
+        return conn
+    }
+
+    /** 留空 = 默认（樱花 + cpolar 动态发现）；设置里填了「更新源」就只用它。 */
+    private fun configuredBase(): String = PcStore.updateBase.trim().trimEnd('/')
+
+    private fun discoverMirrors() {
+        if (configuredBase().isNotBlank()) return
+        for (b in (SAKURA + mirrors).distinct()) {
+            val list = runCatching {
+                val conn = openConn("$b/update-mirrors.json", 5_000, 7_000).apply {
+                    setRequestProperty("Accept", "application/json")
+                }
+                try {
+                    if (conn.responseCode !in 200..299) return@runCatching null
+                    val o = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val arr = o.optJSONArray("mirrors") ?: return@runCatching null
+                    (0 until arr.length())
+                        .map { arr.optString(it).trim().trimEnd('/') }
+                        .filter { it.startsWith("https://") || it.startsWith("http://") }
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+            if (!list.isNullOrEmpty()) {
+                mirrors = list
+                return
+            }
+        }
+    }
+
+    private fun bases(): List<String> =
+        if (configuredBase().isNotBlank()) listOf(configuredBase())
+        else (mirrors + SAKURA).distinct()
+
+    private fun fetchManifest(root: String): PcUpdate? {
+        val conn = openConn("$root/version-pc.json", 8_000, 12_000).apply {
             setRequestProperty("Accept", "application/json")
         }
         try {
@@ -81,6 +149,7 @@ object PcUpdater {
                 versionCode = o.optInt("versionCode", 0),
                 versionName = o.optString("versionName"),
                 url = full,
+                path = path,
                 size = o.optLong("size", 0L),
                 sha256 = o.optString("sha256"),
                 notes = o.optString("notes"),
@@ -95,65 +164,75 @@ object PcUpdater {
 
     /** 有新版返回信息；已是最新返回 null；连不上抛 [CheckException]。 */
     suspend fun check(): PcUpdate? = withContext(Dispatchers.IO) {
-        val info = runCatching { fetchManifest() }.getOrNull()
-            ?: throw CheckException("更新源连不上")
-        if (info.versionCode > BuildInfo.CODE) info else null
+        discoverMirrors()
+        for (b in bases()) {
+            val info = runCatching { fetchManifest(b) }.getOrNull()
+            if (info != null) return@withContext if (info.versionCode > BuildInfo.CODE) info else null
+        }
+        throw CheckException("更新源连不上")
     }
 
+    /** 下载整包：按「清单给定地址 → 镜像列表」逐个尝试，校验大小和 sha256。 */
     suspend fun download(info: PcUpdate, onProgress: (Int) -> Unit): File? =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val dir = File(System.getProperty("java.io.tmpdir"), "kaixinguo-update").apply { mkdirs() }
-                val out = File(dir, "kaixinguo-${info.versionName}.msi")
-                if (out.exists()) out.delete()
-                val conn = (URL(info.url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15_000
-                    readTimeout = 60_000
-                    instanceFollowRedirects = true
-                }
-                try {
-                    if (conn.responseCode !in 200..299) error("HTTP ${conn.responseCode}")
-                    val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.size
-                    var read = 0L
-                    var last = -1
-                    conn.inputStream.use { input ->
-                        out.outputStream().use { output ->
-                            val buf = ByteArray(128 * 1024)
-                            while (true) {
-                                val n = input.read(buf)
-                                if (n <= 0) break
-                                output.write(buf, 0, n)
-                                read += n
-                                if (total > 0) {
-                                    val p = (read * 100 / total).toInt()
-                                    if (p != last) {
-                                        last = p
-                                        onProgress(p)
-                                    }
-                                }
+            val dir = File(System.getProperty("java.io.tmpdir"), "kaixinguo-update").apply { mkdirs() }
+            val out = File(dir, "kaixinguo-${info.versionName}.msi")
+            val urls = buildList {
+                add(info.url)
+                for (b in bases()) if (info.path.isNotEmpty()) add("$b/${info.path}")
+            }.distinct()
+            for (u in urls) {
+                out.delete()
+                val ok = runCatching { downloadOne(u, out, info, onProgress) }.getOrDefault(false)
+                if (ok) return@withContext out
+            }
+            null
+        }
+
+    private fun downloadOne(url: String, out: File, info: PcUpdate, onProgress: (Int) -> Unit): Boolean {
+        val conn = openConn(url, 15_000, 60_000)
+        try {
+            if (conn.responseCode !in 200..299) return false
+            val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.size
+            var read = 0L
+            var last = -1
+            conn.inputStream.use { input ->
+                out.outputStream().use { output ->
+                    val buf = ByteArray(128 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        output.write(buf, 0, n)
+                        read += n
+                        if (total > 0) {
+                            val p = (read * 100 / total).toInt()
+                            if (p != last) {
+                                last = p
+                                onProgress(p)
                             }
                         }
                     }
-                } finally {
-                    conn.disconnect()
                 }
-                if (info.size > 0 && out.length() != info.size) error("大小不对")
-                if (info.sha256.isNotBlank()) {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    out.inputStream().use { input ->
-                        val buf = ByteArray(1 shl 20)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n <= 0) break
-                            digest.update(buf, 0, n)
-                        }
-                    }
-                    val hex = digest.digest().joinToString("") { "%02x".format(it) }
-                    if (!hex.equals(info.sha256, ignoreCase = true)) error("校验失败")
-                }
-                out
-            }.getOrNull()
+            }
+        } finally {
+            conn.disconnect()
         }
+        if (info.size > 0 && out.length() != info.size) return false
+        if (info.sha256.isNotBlank()) {
+            val digest = MessageDigest.getInstance("SHA-256")
+            out.inputStream().use { input ->
+                val buf = ByteArray(1 shl 20)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            val hex = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!hex.equals(info.sha256, ignoreCase = true)) return false
+        }
+        return true
+    }
 
     /**
      * 装包：写一个临时 .bat，跑完安装再把程序拉起来，然后自己退出。

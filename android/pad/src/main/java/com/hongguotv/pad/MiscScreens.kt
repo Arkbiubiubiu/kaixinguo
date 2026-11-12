@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -834,7 +834,7 @@ fun RankScreen(
         }
         persons.clear()
         val page = withContext(Dispatchers.IO) {
-            runCatching { Api.rank(0, "", reqGenre, reqSub, panelSel, monthSel) }.getOrNull()
+            runCatching { Api.rankCached(0, "", reqGenre, reqSub, panelSel, monthSel) }.getOrNull()
         }
         cards.clear()
         if (page != null && page.cards.isNotEmpty()) {
@@ -1242,7 +1242,7 @@ fun NewDramaScreen(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit = {}) 
         hasMore = true
         var err: String? = null
         val page = withContext(Dispatchers.IO) {
-            try { Api.newDrama(gender, 0, "") } catch (e: Exception) { err = e.message; null }
+            try { Api.newDramaCached(gender, 0, "") } catch (e: Exception) { err = e.message; null }
         }
         cards.clear()
         if (page != null && page.cards.isNotEmpty()) {
@@ -2192,7 +2192,7 @@ fun FollowReserveScreen(
             return@LaunchedEffect
         }
         val result = withContext(Dispatchers.IO) {
-            runCatching { if (mode == 0) Api.followList() else Api.reserveList() }
+            runCatching { if (mode == 0) Api.followList() else Api.reserveListCached() }
         }
         result.onSuccess { cards.addAll(it) }
         // 失败不能当成「空」——原来那样写，网络抖一下界面就变成
@@ -3074,6 +3074,7 @@ private fun LoginField(
 
 @Composable
 fun SettingsScreen() {
+    val testScope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize()) {
         PageHeader(title = "设置")
         LazyColumn(
@@ -3358,17 +3359,13 @@ fun SettingsScreen() {
                             Spacer(Modifier.width(10.dp))
                             TvChip("测试连接", selected = false) {
                                 Store.signUrl = signUrl
-                                try {
-                                    val ok = kotlinx.coroutines.runBlocking {
-                                        withContext(Dispatchers.IO) {
-                                            runCatching {
-                                                Api.testSignService(signUrl)
-                                            }.getOrDefault(false)
-                                        }
+                                signState = "正在测试…"
+                                // 原来 runBlocking 把主线程卡住 12~25 秒（遥控器完全无响应，可能 ANR）
+                                testScope.launch {
+                                    val ok = withContext(Dispatchers.IO) {
+                                        runCatching { Api.testSignService(signUrl) }.getOrDefault(false)
                                     }
                                     signState = if (ok) "连接正常" else "连不上，检查地址"
-                                } catch (e: Exception) {
-                                    signState = "连不上：${e.message}"
                                 }
                             }
                         }

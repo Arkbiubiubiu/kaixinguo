@@ -1,4 +1,4 @@
-package com.kaixinguo.pc
+﻿package com.kaixinguo.pc
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -44,7 +44,7 @@ object Covers {
         .build()
 
     private val memory = object : LinkedHashMap<String, ImageBitmap>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) = size > 200
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) = size > 120
     }
 
     private val dir: File by lazy {
@@ -73,11 +73,12 @@ object Covers {
             }
         } ?: return null
 
-        var bitmap = decode(bytes)
+        // 解码也必须在 IO 线程：原来在主线程解码，满墙封面同时解码会卡住 UI（审计 P1）
+        var bitmap = withContext(Dispatchers.IO) { decode(bytes) }
         if (bitmap == null) {
             // HEIC 兜底：交给 ffmpeg 转 PNG
             val png = withContext(Dispatchers.IO) { Ffmpeg.heicToPng(bytes) }
-            if (png != null) bitmap = decode(png)
+            if (png != null) bitmap = withContext(Dispatchers.IO) { decode(png) }
         }
         if (bitmap != null) synchronized(memory) { memory[url] = bitmap }
         return bitmap

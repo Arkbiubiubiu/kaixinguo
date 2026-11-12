@@ -1,4 +1,4 @@
-package com.kaixinguo.pc
+﻿package com.kaixinguo.pc
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,7 +82,8 @@ class VideoEngine(private val sourceUrl: String) {
     private var outHeight = 720
     private var outWidth = 1280
 
-    private val queue = ArrayBlockingQueue<TimedFrame>(24)
+    // 6 帧缓冲够 25fps 平滑（约 240ms）；原来 24 帧按每帧 1.2-3.7MB 算占 28-88MB/引擎
+    private val queue = ArrayBlockingQueue<TimedFrame>(6)
     private lateinit var bitmap: Bitmap
 
     private class TimedFrame(val atMs: Long, val bytes: ByteArray)

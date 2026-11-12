@@ -67,6 +67,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -507,6 +508,10 @@ fun PlayerScreen(
                 runCatching { p.stop() }
                 r.close()
             }
+            // 队列里已挂上的预取集（StreamProxy 线程池 + 端口 + OkHttp）必须逐个释放，
+            // 否则每集泄漏 1~2 路，刷剧连看十几集后连接/端口堆积
+            queued.values.forEach { dropReady(it) }
+            queued.clear()
         }
     }
 
@@ -535,40 +540,14 @@ fun PlayerScreen(
         }
     }
 
-    // 本地续播位置：每 4 秒记一次。退出播放页、切集、甚至杀进程后，
-    // 从历史/追更进来都能接着上次的位置看（以前只存内存，重启就归零）
-    LaunchedEffect(seriesId, index, player) {
-        while (true) {
-            delay(4_000)
-            // 从「历史 / 追更」直接点继续播放进来时，这一帧详情还没到、episodes 是空的。
-            // 以前在协程开头 getOrNull(...) ?: return 会直接结束整个循环，
-            // 于是这一整集既不留秒级位置、也不上报（详情页进来的那条路有缓存，看不出问题）。
-            // 改成每次 tick 再取，详情到位后自然接上。
-            val ep = episodes.getOrNull(index - 1) ?: continue
-            val pos = runCatching { player.currentPosition }.getOrDefault(0L)
-            Store.markPos(ep.vid, pos)
-        }
-    }
-
-    // 播放中定期把秒级位置报给官方（互通的关键：手机端能看到「看到第几分第几秒」）
-    LaunchedEffect(seriesId, index, player) {
-        while (true) {
-            delay(30_000)
-            val ep = episodes.getOrNull(index - 1) ?: continue
-            val pos = runCatching { player.currentPosition }.getOrDefault(0L)
-            // 开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）。
-            // 但这里必须是 continue 不能是 break：网慢、或者用户一进来就按了暂停时，
-            // 第一条 tick 读到的位置还在 5 秒内，break 会让这个协程直接结束，
-            // 这一整集再也不上报 —— 手机上就永远看不到「电视里看到第几分钟」。
-            if (pos <= 5_000) continue
-            withContext(Dispatchers.IO) {
-                val ok = runCatching {
-                    Api.reportProgress(seriesId, ep.vid, index, pos)
-                }.getOrDefault(false)
-                Log.d("PadReport", "ep=$index pos=${pos}ms ok=$ok")
-            }
-        }
-    }
+    // 本地续播位置 + 官方进度上报：
+    // 原来这是两个独立的 while(true) 协程（每 4 秒存本地、每 20 秒报官方），
+    // 加上下面那个每 400ms 的状态循环，三处各读一次 player.currentPosition，
+    // 电视上等于每秒 5 次跨线程读播放器。合并进主循环、用拍数分频即可：
+    // 10 拍≈4 秒存一次本地历史，50 拍≈20 秒报一次官方。
+    // 从「历史 / 追更」直接点继续播放进来时，开头几帧 episodes 还是空的 ——
+    // 每拍都重新取，详情到位后自然接上，不会像以前那样直接结束循环。
+    var reportTick = 0
 
     // 换了清晰度就不是"队列已接手"那一集了，得重新取流
     LaunchedEffect(defWant) { seamlessHandled = -1 }
@@ -885,7 +864,27 @@ fun PlayerScreen(
                 }
                 // 顺手记下这一集看到哪儿：播放页被销毁（比如跳详情页）后回来能接着看
                 episodes.getOrNull(index - 1)?.let { ep -> Store.markPos(ep.vid, position) }
+                // 10 拍≈4 秒：写一次本地历史（退出播放页、切集、杀进程后能续上）
+                if (reportTick % 10 == 0) {
+                    Store.touchHistoryPos(seriesId, index, position)
+                }
+                // 50 拍≈20 秒：把秒级位置报给官方（互通的关键，手机端能看到看到第几秒）。
+                // 开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）；
+                // 上报走 IO，不能卡住这个 400ms 循环。
+                if (reportTick % 50 == 0) {
+                    val ep = episodes.getOrNull(index - 1)
+                    val pos = position
+                    if (ep != null && pos > 5_000) {
+                        launch(Dispatchers.IO) {
+                            val ok = runCatching {
+                                Api.reportProgress(seriesId, ep.vid, index, pos)
+                            }.getOrDefault(false)
+                            Log.d("PadReport", "ep=$index pos=${pos}ms ok=$ok")
+                        }
+                    }
+                }
             }
+            reportTick++
             delay(400)
         }
     }
@@ -910,11 +909,12 @@ fun PlayerScreen(
             if (!page.hasMore) break
             val next = if (page.nextStart > start) page.nextStart else start + 30_000L
             if (totalMs > 0 && next > totalMs + 5_000L) break
-            // 播到窗口边界附近再拉下一窗（官方就是播到哪拉到哪，一次拉全会触发风控降级）
-            var waited = 0
-            while (position < next - 5_000L && waited < 600_000) {
-                delay(500)
-                waited += 500
+            // 播到窗口边界附近再拉下一窗（官方就是播到哪拉到哪，一次拉全会触发风控降级）。
+            // 原来是 while(position<…)delay(500) 死等：暂停时 position 不动，
+            // 它就每 500ms 空转一次、最长转 10 分钟。改成挂在 position 的快照流上，
+            // 位置不变就完全不被唤醒，最多等 10 分钟兜底。
+            withTimeoutOrNull(600_000L) {
+                snapshotFlow { position }.first { it >= next - 5_000L }
             }
             cursor = page.cursor
             start = next
@@ -1136,6 +1136,17 @@ fun PlayerScreen(
         else -> false
     }
 
+    /**
+     * 关评论面板，并把焦点还给全屏层。面板自己持有焦点，节点一移除焦点就悬空；
+     * 不显式还焦点的话，关面板后遥控器方向键/确定全部失灵（只剩返回可用）。
+     */
+    fun closeComments() {
+        if (!commentsOpen) return
+        commentsOpen = false
+        focusManager.clearFocus()
+        runCatching { focus.requestFocus() }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -1148,7 +1159,7 @@ fun PlayerScreen(
                 // 评论面板打开时：返回先关面板，其它键交给面板（焦点在列表/输入框上）
                 if (commentsOpen) {
                     if (ev.key == Key.Back) {
-                        commentsOpen = false
+                        closeComments()
                         return@onPreviewKeyEvent true
                     }
                     return@onPreviewKeyEvent false
@@ -1330,6 +1341,8 @@ fun PlayerScreen(
             menu = menu,
             // ↑ 只亮控制条（不抢焦点，左右键照常快进）；↓ 进来时才把焦点交给按钮行
             focusOnShow = chromeFocused,
+            // 评论面板是模态的：它开着时控制条不许再 requestFocus（会从面板手里抢焦点）
+            modalOpen = commentsOpen,
             onMenu = {
                 menu = it
                 // 浮层关闭也算一次操作，否则关完立刻开始倒计时
@@ -1447,7 +1460,11 @@ fun PlayerScreen(
                     mark()
                 }
             },
-            onComments = { commentsOpen = true },
+            onComments = {
+                commentsOpen = true
+                // 面板自己会拿焦点；控制条这边先退出焦点态，5 秒后自动收起
+                chromeFocused = false
+            },
         )
 
         // 单集评论面板：盖在播放器上，TV 只读、Pad 可发
@@ -1458,7 +1475,7 @@ fun PlayerScreen(
                     vid = vid,
                     seriesId = seriesId,
                     readOnly = isTv,
-                    onClose = { commentsOpen = false },
+                    onClose = { closeComments() },
                 )
             }
         }

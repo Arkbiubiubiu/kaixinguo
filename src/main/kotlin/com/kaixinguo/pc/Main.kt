@@ -401,7 +401,11 @@ private object SearchHolder {
  * 全部来自本地设置（设置页「服务配置」），首次启动引导用户填写。
  */
 private fun boot() {
-    Log.sink = { level, tag, message -> println("$level/$tag: $message") }
+    Log.sink = { level, tag, message ->
+        println("$level/$tag: $message")
+        // 打包版没有控制台：同时落盘，出问题让用户把 app.log 发回来即可定位
+        runCatching { DiagLog.write(level, tag, message) }
+    }
     App.state = PcStore
     Palette.applyTheme(PcStore.theme)
     applyServiceConfig()
@@ -579,7 +583,7 @@ private fun HomePage(
     LaunchedEffect(tab, refresh) {
         loading = true
         val result = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPage(tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]) }.getOrNull()
+            runCatching { Api.firstPageCached(tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]) }.getOrNull()
         }
         var cur = result
         // 墙要「满」：首批不足两屏（约 16 张）时自动续拉，最多补 2 轮（旧版同语义）
@@ -619,6 +623,7 @@ private fun HomePage(
     // 「换一批」：feed 游标前进一页当新首屏（firstPage 每次返回同批，
     // 只重拉没有换批效果）；到尾就回绕首批
     fun swapBatch() {
+        Api.clearListCache()   // 换一批：作废列表缓存，强制拉新
         val c = cursor ?: return
         if (moreLoading) return
         scope.launch {
@@ -1107,7 +1112,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         loading = true
         val page = withContext(Dispatchers.IO) {
             // 优先走官方榜单（带筛选面板），失败再退回服务器聚合的 chart
-            val p = runCatching { Api.rank(0, "", t.id, sub?.id ?: "", panel, month) }.getOrNull()
+            val p = runCatching { Api.rankCached(0, "", t.id, sub?.id ?: "", panel, month) }.getOrNull()
             if (p != null && p.cards.isNotEmpty()) {
                 p
             } else {
@@ -1574,7 +1579,7 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     LaunchedEffect(view, gender) {
         if (view == 0) {
             loading = true
-            page = withContext(Dispatchers.IO) { runCatching { Api.newDrama(gender, 0, "") }.getOrNull() }
+            page = withContext(Dispatchers.IO) { runCatching { Api.newDramaCached(gender, 0, "") }.getOrNull() }
             loading = false
         }
     }
@@ -2021,8 +2026,7 @@ private fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) ->
                 runCatching { Api.officialHistory(3) }.getOrDefault(emptyList())
             }
         } else {
-            withContext(Dispatchers.IO) { runCatching { Api.historySyncAsync() } }
-            kotlinx.coroutines.delay(1500)
+            // 未登录没有云端历史：直接读本地（原实现调 historySyncAsync 内部立刻 return，再白等 1.5 秒）
             reload()
         }
         syncing = false
@@ -2173,16 +2177,19 @@ private fun ShelfPage(key: String, onOpen: (String) -> Unit, onPlay: (String) ->
     LaunchedEffect(key, tick, PcStore.loggedIn) {
         syncing = tick > 0
         loading = true
-        val ids = PcStore.ids(key)
-        var list = withContext(Dispatchers.IO) {
-            ids.mapNotNull { id ->
-                runCatching { Api.ensureDetail(id) }.getOrNull()?.let { Api.cardOfDetail(it) }
-            }
-        }
+        // 收藏以云端为准：先拉云端（1 跳）；只有未登录/云端失败才回落到本地逐条补详情。
+        // 原实现先对 N 个 id 串行 ensureDetail（每个 1-3 秒），再被云端结果整批覆盖——前面的请求全白做。
+        var list: List<SeriesCard> = emptyList()
         if (key == "favorite" && PcStore.loggedIn) {
-            // 收藏以云端为准（别的设备取消收藏，这里不该还留着）；拉取失败保留本地
-            val cloud = withContext(Dispatchers.IO) { runCatching { Api.cloudShelf() }.getOrNull() }
-            if (cloud != null) list = cloud
+            list = withContext(Dispatchers.IO) { runCatching { Api.cloudShelf() }.getOrNull() } ?: emptyList()
+        }
+        if (list.isEmpty()) {
+            val ids = PcStore.ids(key)
+            list = withContext(Dispatchers.IO) {
+                ids.mapNotNull { id ->
+                    runCatching { Api.ensureDetail(id) }.getOrNull()?.let { Api.cardOfDetail(it) }
+                }
+            }
         }
         cards = list
         loading = false
@@ -2459,7 +2466,7 @@ private fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
 
     LaunchedEffect(Unit) {
         loading = true
-        cards = withContext(Dispatchers.IO) { runCatching { Api.reserveList() }.getOrDefault(emptyList()) }
+        cards = withContext(Dispatchers.IO) { runCatching { Api.reserveListCached() }.getOrDefault(emptyList()) }
         loading = false
     }
 
@@ -3219,6 +3226,31 @@ fun CenterMessage(text: String) {
     }
 }
 
+/**
+ * 诊断日志落盘（PC）。打包版没有控制台，日志只进这里：
+ * %APPDATA%\KaixinguoPCpp.log；超过 5MB 启动时清空重来。
+ */
+object DiagLog {
+    private val file by lazy {
+        File(System.getenv("APPDATA") ?: ".", "KaixinguoPC/app.log").also { f ->
+            runCatching {
+                f.parentFile?.mkdirs()
+                if (f.length() > 5L * 1024 * 1024) f.delete()
+            }
+        }
+    }
 
+    private val writer by lazy {
+        java.io.BufferedWriter(java.io.FileWriter(file, true))
+    }
 
+    private val fmt by lazy { java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.CHINA) }
 
+    fun write(level: String, tag: String, message: String) {
+        val line = "${fmt.format(java.util.Date())} $level/$tag: $message" + System.lineSeparator()
+        synchronized(writer) {
+            writer.write(line)
+            writer.flush()
+        }
+    }
+}

@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -394,6 +394,24 @@ object Store : AccountState {
         }
     }
 
+    /**
+     * 播放中刷新历史行的「看到第几秒」+ at（历史页显示最新进度，而不是进入时的位置）。
+     */
+    fun touchHistoryPos(seriesId: String, episode: Int, positionMs: Long) {
+        if (positionMs <= 0) return
+        // 读-改-写必须串行：this 每 4 秒一次，与 historySync 的 mergeHistory 并发会互相覆盖丢写
+        synchronized(historyLock) {
+            val rows = history()
+            val row = rows.firstOrNull { it.optString("seriesId") == seriesId } ?: return
+            if (row.optInt("episode") != episode) return
+            row.put("positionMs", positionMs).put("at", System.currentTimeMillis())
+            val arr = JSONArray()
+            rows.take(500).forEach { arr.put(it) }
+            p().edit().putString("history", arr.toString()).apply()
+            historyStamp.value = System.currentTimeMillis()
+        }
+    }
+
     /** 该集上次看到的毫秒数；内存没有就读盘（跨进程也能接着看）。 */
     fun posOf(vid: String): Long =
         if (vid.isEmpty()) 0L
@@ -411,7 +429,13 @@ object Store : AccountState {
     val historyStamp: MutableState<Long> = mutableStateOf(0L)
 
     /** 与云端历史合并：同一条目按集数取大（集数相同才比时间）。 */
-    override fun mergeHistory(remote: List<JSONObject>): List<JSONObject> {
+    private val historyLock = Any()
+
+    override fun mergeHistory(remote: List<JSONObject>): List<JSONObject> = synchronized(historyLock) {
+        mergeHistoryLocked(remote)
+    }
+
+    private fun mergeHistoryLocked(remote: List<JSONObject>): List<JSONObject> {
         val merged = LinkedHashMap<String, JSONObject>()
         (history() + remote).forEach { row ->
             val id = row.optString("seriesId")
@@ -420,9 +444,16 @@ object Store : AccountState {
             if (old == null) {
                 merged[id] = row
             } else {
-                val rowBetter = row.optInt("episode", 0) > old.optInt("episode", 0) ||
-                    (row.optInt("episode", 0) == old.optInt("episode", 0) &&
-                        row.optLong("at") > old.optLong("at"))
+                // 进度优先：集数大 > 同集秒数大 > 时间戳新（与服务端 / PC 同规则）
+                val re = row.optInt("episode", 0)
+                val oe = old.optInt("episode", 0)
+                val rp = row.optLong("positionMs", 0)
+                val op = old.optLong("positionMs", 0)
+                val rowBetter = when {
+                    re != oe -> re > oe
+                    rp != op -> rp > op
+                    else -> row.optLong("at") > old.optLong("at")
+                }
                 val win = if (rowBetter) row else old
                 val lose = if (rowBetter) old else row
                 // 空字段互补：历史记录里 cover 曾是空串，合并后不应把已有封面覆盖成空

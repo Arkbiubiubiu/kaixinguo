@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 /**
  * 数据模型。字段名与顺序按反编译出来的原工程还原
@@ -89,7 +89,6 @@ data class SeriesCard(
     val fromOther: Boolean = false,
 )
 
-data class RankUser(val userId: String, val name: String, val avatar: String)
 
 /** 详情页「相关推荐」的一个分组（相关作品 / 猜你喜欢），原版就是分两组展示的。 */
 data class RelatedGroup(val name: String, val items: List<SeriesCard>)
@@ -101,7 +100,6 @@ data class FeedPage(
     val hasMore: Boolean = true,
     val cellId: String = "",
     val planId: String = "",
-    val users: List<RankUser> = emptyList(),
     /**
      * 这份数据离「从上游真正拉下来」过去了多少秒（来自服务端 /api/fetch 的 age）。
      * 0 = 本次现取；>0 = 命中了服务端共享缓存（榜单缓存 5 分钟）。

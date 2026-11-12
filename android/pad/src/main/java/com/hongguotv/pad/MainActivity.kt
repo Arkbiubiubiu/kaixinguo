@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -32,8 +32,22 @@ object AppLifecycle {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 日志同时落盘：电视/平板连不上 adb 时，把 app.log 发回来就能定位问题
+        val logFile = java.io.File(filesDir, "app.log")
+        if (logFile.length() > 5L * 1024 * 1024) logFile.delete()
+        val logWriter = runCatching {
+            java.io.BufferedWriter(java.io.FileWriter(logFile, true))
+        }.getOrNull()
         Log.sink = { level, tag, message ->
             android.util.Log.println(if (level == "E") android.util.Log.ERROR else android.util.Log.DEBUG, tag, message)
+            runCatching {
+                logWriter?.let { w ->
+                    synchronized(w) {
+                        w.write(level + "/" + tag + ": " + message + System.lineSeparator())
+                        w.flush()
+                    }
+                }
+            }
         }
         Store.init(this)
         App.state = Store

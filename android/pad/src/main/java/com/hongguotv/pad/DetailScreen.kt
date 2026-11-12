@@ -68,29 +68,32 @@ fun DetailScreen(
     onCreator: (String) -> Unit,
     onOpen: (String) -> Unit = {},
 ) {
-    var detail by remember { mutableStateOf<SeriesDetail?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var favorite by remember { mutableStateOf(Store.contains(Store.KEY_FAVORITE, seriesId)) }
+    // 全部按 seriesId 记住：详情页「相关推荐 → 另一部剧」是同一个 when 分支、
+    // 同一个调用点，Compose 会复用组合槽。不加 key 的话收藏/预约/追更/当前 tab/
+    // 简介展开这些状态会从上一部剧原样带过来（看着像新剧已收藏、剧评 tab 空的）。
+    var detail by remember(seriesId) { mutableStateOf<SeriesDetail?>(null) }
+    var error by remember(seriesId) { mutableStateOf<String?>(null) }
+    var loading by remember(seriesId) { mutableStateOf(true) }
+    var favorite by remember(seriesId) { mutableStateOf(Store.contains(Store.KEY_FAVORITE, seriesId)) }
     // 云端「已预约」优先：换设备后本地没有记录，但服务端有
-    var reserved by remember { mutableStateOf(Store.contains(Store.KEY_RESERVE, seriesId)) }
-    var followed by remember { mutableStateOf(Store.contains(Store.KEY_FOLLOW, seriesId)) }
-    var relatedGroups by remember { mutableStateOf<List<RelatedGroup>>(emptyList()) }
+    var reserved by remember(seriesId) { mutableStateOf(Store.contains(Store.KEY_RESERVE, seriesId)) }
+    var followed by remember(seriesId) { mutableStateOf(Store.contains(Store.KEY_FOLLOW, seriesId)) }
+    var relatedGroups by remember(seriesId) { mutableStateOf<List<RelatedGroup>>(emptyList()) }
     /** 同一部剧的全部季（plan 接口）；相关推荐会漏季，这里单独补一份完整的 */
-    var seasons by remember { mutableStateOf<List<SeasonRef>>(emptyList()) }
+    var seasons by remember(seriesId) { mutableStateOf<List<SeasonRef>>(emptyList()) }
     // 服务端已预约的 series_id：相关推荐里每张待上线卡的「预约 / 已预约」靠它
-    var reservedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var reviews by remember { mutableStateOf<List<ReviewItem>>(emptyList()) }
+    var reservedIds by remember(seriesId) { mutableStateOf<Set<String>>(emptySet()) }
+    var reviews by remember(seriesId) { mutableStateOf<List<ReviewItem>>(emptyList()) }
     /** 评分/人数（剧评接口 extra，与 PC 同源） */
-    var reviewScore by remember { mutableStateOf("") }
-    var reviewScoreCount by remember { mutableStateOf(0) }
+    var reviewScore by remember(seriesId) { mutableStateOf("") }
+    var reviewScoreCount by remember(seriesId) { mutableStateOf(0) }
     /** 剧评总数（PC 的 tab 上会显示「剧评 2109」） */
-    var reviewTotal by remember { mutableStateOf(0) }
-    var tab by remember { mutableStateOf(0) }
-    var introExpanded by remember { mutableStateOf(false) }
+    var reviewTotal by remember(seriesId) { mutableStateOf(0) }
+    var tab by remember(seriesId) { mutableStateOf(0) }
+    var introExpanded by remember(seriesId) { mutableStateOf(false) }
     // 续播集数：初始取本地，进页后再用官方历史刷新一次（主号在手机上看过也能续上）
-    var resumeIdx by remember { mutableStateOf(0) }
-    var actionMsg by remember { mutableStateOf<String?>(null) }
+    var resumeIdx by remember(seriesId) { mutableStateOf(0) }
+    var actionMsg by remember(seriesId) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     /**
@@ -130,11 +133,11 @@ fun DetailScreen(
     // 这时 requestFocus 会抛「FocusRequester is not initialized」，
     // 被 runCatching 吞掉，表现就是「进页面没有焦点」（第一次就踩了这个）。
     val playFocus = remember { FocusRequester() }
-    // 只在本次进入页面的第一次布局时给一次焦点落点
-    var needAutoFocus by remember { mutableStateOf(true) }
+    // 本次进入页面还没补过焦点。**只有补成功了才清**，不是尝试一次就清。
+    var needAutoFocus by remember(seriesId) { mutableStateOf(true) }
     // 本页（含所有子控件）此刻是否已经有焦点。控制条、选集按钮、侧栏之外的地方
     // 拿到焦点都算；只有「完全没有落点」时才去补。
-    var hasAnyFocus by remember { mutableStateOf(false) }
+    var hasAnyFocus by remember(seriesId) { mutableStateOf(false) }
     val anyFocusNow by rememberUpdatedState(hasAnyFocus)
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
     // 进页面的焦点落点：**等主按钮真正上屏那一刻**再给，不是靠 delay 猜。
@@ -146,7 +149,26 @@ fun DetailScreen(
     //    正是反馈的「前一两秒正常，之后被拉回第一项」。
     // ② 改成 delay(80/240) 猜时机也不行：节点没 attach 时 requestFocus 直接抛
     //    「not initialized」被吞掉，页面就没焦点，第一下方向键落到返回箭头上。
-    // onPlaced 是布局完成回调，那一刻节点一定在位，请求一定成功，而且只做一次。
+    // ③ 只靠 onPlaced 一次仍然不够：那一刻旧页面的焦点可能还没释放（anyFocusNow
+    //    还是 true），跳过一次以后就永远不再补 —— TV 进详情页无落点，第一下方向键
+    //    落到左上角返回箭头。所以改成「成功才清标记」+ 首帧后短轮询补焦点。
+    // onPlaced 是布局完成回调，那一刻节点一定在位，请求一定成功；轮询只是兜底。
+    val autoFocusPlay: () -> Unit = {
+        if (isTv && needAutoFocus && !anyFocusNow) {
+            if (runCatching { playFocus.requestFocus() }.isSuccess) needAutoFocus = false
+        }
+    }
+    // 兜底轮询：进页面后旧焦点释放有一次延迟，onPlaced 那一下可能被挡掉。
+    // 每 120ms 试一次，最多 2.4s；本页任何控件拿到焦点、或用户已经开始操作，就停手。
+    LaunchedEffect(seriesId) {
+        if (!isTv) return@LaunchedEffect
+        repeat(20) {
+            if (!needAutoFocus || anyFocusNow) return@LaunchedEffect
+            autoFocusPlay()
+            if (!needAutoFocus || anyFocusNow) return@LaunchedEffect
+            kotlinx.coroutines.delay(120)
+        }
+    }
 
     LaunchedEffect(seriesId) {
         loading = true
@@ -534,12 +556,7 @@ fun DetailScreen(
                                 Modifier
                                     .height(40.dp)
                                     .focusRequester(playFocus)
-                                    .onPlaced {
-                                        if (needAutoFocus) {
-                                            needAutoFocus = false
-                                            if (isTv && !anyFocusNow) runCatching { playFocus.requestFocus() }
-                                        }
-                                    }
+                                    .onPlaced { autoFocusPlay() }
                                     .clickable {
                                         val next = !reserved
                                         reserved = next
@@ -604,12 +621,7 @@ fun DetailScreen(
                                 // 表现就是「进页面没有焦点」。
                                 .focusRequester(playFocus)
                                 // 主按钮第一次真正上屏时给一次焦点（见上方说明）
-                                .onPlaced {
-                                    if (needAutoFocus) {
-                                        needAutoFocus = false
-                                        if (isTv && !anyFocusNow) runCatching { playFocus.requestFocus() }
-                                    }
-                                }
+                                .onPlaced { autoFocusPlay() }
                                 // clickable 在外、clip 在内：焦点框画在 clickable 层，不会被圆角裁掉
                                 .clickable { onPlay(seriesId, resumeIndex) }
                                 .clip(RoundedCornerShape(8.dp))

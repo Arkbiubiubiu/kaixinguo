@@ -1,4 +1,4 @@
-package com.hongguotv.pad
+﻿package com.hongguotv.pad
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -132,21 +132,33 @@ fun HomeScreen(
         // 评分/相关是新请求。LaunchedEffect 在 key 变化时自动取消，
         // 焦点快速移动不会堆积请求（并行版曾因 async 在主线程执行
         // 阻塞调用导致 detail 拿不到值，hero 只剩标题——已改回）。
-        heroDetail = withContext(Dispatchers.IO) {
-            runCatching { Api.ensureDetail(id) }.getOrNull()
-        }
-        val page = withContext(Dispatchers.IO) {
-            runCatching { Api.reviews(id, 1) }.getOrNull()
-        }
-        heroScore = page?.score.orEmpty()
-        heroScoreCount = page?.scoreCount ?: 0
-        heroRelated = withContext(Dispatchers.IO) {
-            runCatching { Api.relatedSeries(id) }.getOrNull()
-                ?.firstOrNull()?.items.orEmpty().take(3)
+        // 焦点防抖 + 三路并行：原来每移一张卡就串行发 3 个请求（快速划 10 张 = 20+ 请求，
+        // 且阻塞 IO 不会被协程取消）。停留 350ms 才查，三路并发（各自在 IO 线程执行）。
+        kotlinx.coroutines.delay(350)
+        kotlinx.coroutines.coroutineScope {
+            launch {
+                heroDetail = withContext(Dispatchers.IO) {
+                    runCatching { Api.ensureDetail(id) }.getOrNull()
+                }
+            }
+            launch {
+                val page = withContext(Dispatchers.IO) {
+                    runCatching { Api.reviews(id, 1) }.getOrNull()
+                }
+                heroScore = page?.score.orEmpty()
+                heroScoreCount = page?.scoreCount ?: 0
+            }
+            launch {
+                heroRelated = withContext(Dispatchers.IO) {
+                    runCatching { Api.relatedSeries(id) }.getOrNull()
+                        ?.firstOrNull()?.items.orEmpty().take(3)
+                }
+            }
         }
     }
 
     LaunchedEffect(tab, refreshNonce) {
+        if (refreshNonce > 0) Api.clearListCache()   // 换一批：作废列表缓存
         val key = "home_${tab.name}"
         val cached = withContext(Dispatchers.IO) { FeedCache.load(key) }
         cards.clear()
