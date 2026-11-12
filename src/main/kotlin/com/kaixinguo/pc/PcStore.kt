@@ -80,23 +80,23 @@ object PcStore : AccountState {
         set(v) = put("account_source", v)
 
     override var signUrl: String
-        // 开源版默认留空：首次启动由用户填写自己的签名服务地址
-        get() = str("sign_url", "")
+        // 自用版由构建参数注入（BuildDefaults），开源版构建为空：首次启动由用户填写自己的签名服务地址
+        get() = str("sign_url").ifBlank { BuildDefaults.SIGN_URL }
         set(v) = put("sign_url", v.trim())
 
-    /** 播放源（逗号分隔，按顺序回退；空 = 只用签名服务返回的地址） */
+    /** 播放源（逗号分隔，按顺序回退；空 = 走随包本机 resolver） */
     var playBases: String
-        get() = str("play_bases", "")
+        get() = str("play_bases").ifBlank { BuildDefaults.PLAY_BASES }
         set(v) = put("play_bases", v.trim())
 
     /** 播放令牌（随播放源下发的校验参数，空 = 不带） */
     var playToken: String
-        get() = str("play_token", "")
+        get() = str("play_token").ifBlank { BuildDefaults.PLAY_TOKEN }
         set(v) = put("play_token", v.trim())
 
     /** 历史/云端接口基址（空 = 与签名服务同源） */
     var historyBase: String
-        get() = str("history_base", "")
+        get() = str("history_base").ifBlank { BuildDefaults.HISTORY_BASE }
         set(v) = put("history_base", v.trim())
 
     /** 设备身份（空 = 用占位默认值；公开版不内置真实指纹） */

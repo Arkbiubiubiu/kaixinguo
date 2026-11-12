@@ -20,13 +20,47 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
 }
 
+// 自用版构建参数（公开仓库/GitHub 构建不传 → 三个值都是空，源码和安装包里不含任何地址）：
+//   -PplayBases=http://...,https://...   -PplayToken=...   -PsignUrl=http://...   -PhistoryBase=https://...
+val buildPlayBases = (findProperty("playBases") as String?)?.trim().orEmpty()
+val buildPlayToken = (findProperty("playToken") as String?)?.trim().orEmpty()
+val buildSignUrl = (findProperty("signUrl") as String?)?.trim().orEmpty()
+val buildHistoryBase = (findProperty("historyBase") as String?)?.trim().orEmpty()
+
+val generateBuildDefaults = tasks.register("generateBuildDefaults") {
+    val outDir = layout.buildDirectory.dir("generated/defaults")
+    outputs.dir(outDir)
+    val pb = buildPlayBases
+    val pt = buildPlayToken
+    val su = buildSignUrl
+    val hb = buildHistoryBase
+    doLast {
+        val f = outDir.get().asFile.resolve("com/kaixinguo/pc/BuildDefaults.kt")
+        f.parentFile.mkdirs()
+        f.writeText(
+            """
+            |// 由 build.gradle.kts generateBuildDefaults 生成，不要手改（见仓库规则：私有参数不入库）
+            |package com.kaixinguo.pc
+            |
+            |object BuildDefaults {
+            |    const val PLAY_BASES = "$pb"
+            |    const val PLAY_TOKEN = "$pt"
+            |    const val SIGN_URL = "$su"
+            |    const val HISTORY_BASE = "$hb"
+            |}
+            |""".trimMargin(),
+        )
+    }
+}
+kotlin.sourceSets["main"].kotlin.srcDir(generateBuildDefaults)
+
 compose.desktop {
     application {
         mainClass = "com.kaixinguo.pc.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "开心果"
-            packageVersion = "1.2.27"
+            packageVersion = "1.2.28"
             // 安装包 / 快捷方式 / 任务栏图标（与安卓启动图标同一张）
             windows {
                 iconFile.set(project.layout.projectDirectory.file("brand.ico"))
