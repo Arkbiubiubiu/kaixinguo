@@ -66,12 +66,18 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
         cards = emptyList()
         cursor = 0
         page = null
+        FeedPreload.clear()
         val p = withContext(Dispatchers.IO) {
             runCatching { Api.firstPage(feedTypes[tab]) }.getOrNull()
         }
         cards = p?.cards.orEmpty()
         page = p
         loading = false
+    }
+
+    // 预载后面 5 部：换剧时直接用准备好的解密代理，起播几乎无感
+    LaunchedEffect(cursor, cards) {
+        if (cards.isNotEmpty()) FeedPreload.request(cards, cursor + 1)
     }
 
     // 位置随变随记：进详情时这一页会离开组合，这些状态只能存在单例里

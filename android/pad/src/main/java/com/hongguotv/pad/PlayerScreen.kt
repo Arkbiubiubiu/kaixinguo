@@ -716,13 +716,18 @@ fun PlayerScreen(
                 ?: playableTiers.firstOrNull { it.height <= cap }
                 ?: playableTiers.firstOrNull()
             // 表拿不到（或全是不支持的编码）才退回「让服务器挑一档」
-            val info = picked?.toPlayInfo()
+            // 刷剧：后面几部已经预载过（详情 + 档位 + 解密代理头部），直接接管
+            val pre = if (feed) FeedPreload.take(seriesId) else null
+            val info = pre?.info ?: picked?.toPlayInfo()
                 ?: withContext(Dispatchers.IO) { Api.play(ep.vid, 1004, defWant) }
             curDef = info.height
             // 已知解不了的分集：不要再为它下载一遍头部（刷剧里每换一部都要等 1~2 秒）
-            if (Store.isUnsupported(ep.vid)) throw UnsupportedCodecException("bytevc2/AV1")
-            val rv = RemoteVideo(info)
-            withContext(Dispatchers.IO) { rv.prepare() }
+            if (Store.isUnsupported(ep.vid)) {
+                pre?.let { runCatching { it.remote.close() } }
+                throw UnsupportedCodecException("bytevc2/AV1")
+            }
+            val rv = pre?.remote ?: RemoteVideo(info)
+            if (pre == null) withContext(Dispatchers.IO) { rv.prepare() }
             val px = StreamProxy(rv)
             px.start()
             created = rv to px
