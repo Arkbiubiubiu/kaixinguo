@@ -86,15 +86,16 @@ import org.json.JSONObject
 /** 原版同款红描边胶囊（继续播放 / 刷新云端用）。 */
 @Composable
 private fun OutlinePill(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Box(
         Modifier
             .clip(RoundedCornerShape(50))
             .border(1.dp, Color(0x80FF4D4F), RoundedCornerShape(50))
             .background(Color(0x14FF4D4F))
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 16.dp, vertical = 9.dp),
+            .padding(horizontal = if (isTv) 22.dp else 16.dp, vertical = if (isTv) 11.dp else 9.dp),
     ) {
-        Text(text, color = Red, fontSize = 13.sp)
+        Text(text, color = Red, fontSize = if (isTv) 15.sp else 13.sp)
     }
 }
 
@@ -1076,6 +1077,7 @@ private fun RankSheet(
 /** 演员榜的一行：排名 + 圆头像 + 名字 + 人气 + 作品数。点进去是演员主页。 */
 @Composable
 private fun ActorRankRow(person: RankPerson, index: Int, onClick: () -> Unit) {
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Row(
         Modifier
             .fillMaxWidth()
@@ -1085,11 +1087,11 @@ private fun ActorRankRow(person: RankPerson, index: Int, onClick: () -> Unit) {
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(if (isTv) 54.dp else 40.dp), contentAlignment = Alignment.Center) {
             Text(
                 index.toString(),
                 color = if (index <= 3) Red else TextDim,
-                fontSize = 26.sp,
+                fontSize = if (isTv) 36.sp else 26.sp,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -1098,31 +1100,31 @@ private fun ActorRankRow(person: RankPerson, index: Int, onClick: () -> Unit) {
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(76.dp)
+                .size(if (isTv) 104.dp else 76.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
                 .background(PanelHi),
         )
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(person.name, color = TextMain, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(person.name, color = TextMain, fontSize = if (isTv) 24.sp else 18.sp, fontWeight = FontWeight.Bold)
                 if (person.score.isNotBlank()) {
                     Spacer(Modifier.width(12.dp))
-                    Text(person.score, color = Red, fontSize = 13.sp)
+                    Text(person.score, color = Red, fontSize = if (isTv) 17.sp else 13.sp)
                 }
             }
             if (person.details.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     person.details.joinToString(" · "),
-                    color = TextDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = TextDim, fontSize = if (isTv) 15.sp else 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
             if (person.intro.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     person.intro,
-                    color = TextDim, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = TextDim, fontSize = if (isTv) 15.sp else 12.sp, maxLines = if (isTv) 3 else 2, overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -1692,6 +1694,7 @@ private fun CalendarRow(
     onPlay: () -> Unit,
     onReserve: () -> Unit,
 ) {
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Row(
         Modifier
             .fillMaxWidth()
@@ -1708,7 +1711,7 @@ private fun CalendarRow(
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(width = 88.dp, height = 117.dp)
+                .size(width = if (isTv) 120.dp else 88.dp, height = if (isTv) 160.dp else 117.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CoverPlaceholder),
         )
@@ -1717,7 +1720,7 @@ private fun CalendarRow(
                 Text(
                     item.title,
                     color = TextMain,
-                    fontSize = 14.sp,
+                    fontSize = if (isTv) 21.sp else 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1727,26 +1730,26 @@ private fun CalendarRow(
                 Text(
                     if (item.online) "已上线" else "待上线",
                     color = if (item.online) Success else TextDim,
-                    fontSize = 10.sp,
+                    fontSize = if (isTv) 13.sp else 10.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .background(
                             if (item.online) Success.copy(alpha = 0.12f) else Color(0x14FFFFFF),
                             RoundedCornerShape(4.dp),
                         )
-                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                        .padding(horizontal = if (isTv) 8.dp else 5.dp, vertical = if (isTv) 3.dp else 1.dp),
                 )
             }
             // 热度 / 分类 / 评分 / 集数
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 item.score.takeIf { it.isNotBlank() && (it.toFloatOrNull() ?: 0f) > 0f }?.let {
-                    Text("★", color = Star, fontSize = 12.sp)
-                    Text(it, color = Star, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("★", color = Star, fontSize = if (isTv) 15.sp else 12.sp)
+                    Text(it, color = Star, fontSize = if (isTv) 15.sp else 12.sp, fontWeight = FontWeight.Medium)
                 }
                 item.heat.takeIf { it.isNotBlank() }?.let {
                     FlameIcon()
                     Spacer(Modifier.width(3.dp))
-                    Text(it, color = Warm, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                    Text(it, color = Warm, fontSize = if (isTv) 15.sp else 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                 }
             }
             val meta = listOfNotNull(
@@ -1755,23 +1758,23 @@ private fun CalendarRow(
             ).joinToString(" · ").takeIf { it.isNotBlank() }
             meta?.let {
                 Spacer(Modifier.height(2.dp))
-                Text(it, color = TextDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(it, color = TextDim, fontSize = if (isTv) 15.sp else 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (item.desc.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     item.desc,
                     color = TextDim.copy(alpha = 0.8f),
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    maxLines = 2,
+                    fontSize = if (isTv) 15.sp else 12.sp,
+                    lineHeight = if (isTv) 22.sp else 18.sp,
+                    maxLines = if (isTv) 3 else 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         Column(horizontalAlignment = Alignment.End) {
             if (stamp.isNotEmpty()) {
-                Text(stamp, color = TextDim, fontSize = 10.sp)
+                Text(stamp, color = TextDim, fontSize = if (isTv) 13.sp else 10.sp)
                 Spacer(Modifier.height(8.dp))
             }
             if (item.online) {
@@ -1784,15 +1787,15 @@ private fun CalendarRow(
                             .clip(RoundedCornerShape(50))
                             .background(Red)
                             .clickable { onPlay() }
-                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                            .padding(horizontal = if (isTv) 20.dp else 12.dp, vertical = if (isTv) 9.dp else 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("播放", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("播放", color = Color.White, fontSize = if (isTv) 15.sp else 11.sp, fontWeight = FontWeight.Medium)
                     }
                     Text(
                         "详情",
                         color = TextDim,
-                        fontSize = 11.sp,
+                        fontSize = if (isTv) 15.sp else 11.sp,
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
                             .clickable { onOpen() }
@@ -1806,13 +1809,13 @@ private fun CalendarRow(
                         .clip(RoundedCornerShape(50))
                         .background(if (done) Color(0x14FFFFFF) else Red)
                         .clickable(enabled = !done) { onReserve() }
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
+                        .padding(horizontal = if (isTv) 20.dp else 12.dp, vertical = if (isTv) 9.dp else 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         if (done) "已预约" else "预约",
                         color = if (done) TextDim else Color.White,
-                        fontSize = 11.sp,
+                        fontSize = if (isTv) 15.sp else 11.sp,
                         fontWeight = FontWeight.Medium,
                     )
                 }
@@ -2062,6 +2065,7 @@ private fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, I
 
 @Composable
 private fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Row(
         Modifier
             .fillMaxWidth()
@@ -2073,7 +2077,7 @@ private fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
     ) {
         Box(
             Modifier
-                .width(88.dp)
+                .width(if (isTv) 120.dp else 88.dp)
                 .aspectRatio(3f / 4f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CoverPlaceholder),
@@ -2090,7 +2094,7 @@ private fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
             Text(
                 card.title,
                 color = TextMain,
-                fontSize = 16.sp,
+                fontSize = if (isTv) 21.sp else 16.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -2103,13 +2107,13 @@ private fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
                 Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .background(Red.copy(alpha = 0.10f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                    .padding(horizontal = if (isTv) 10.dp else 6.dp, vertical = if (isTv) 4.dp else 2.dp),
             ) {
                 Text(
                     if (total > 0) "看到第 ${row.optInt("episode", 1)} 集 / 共 $total 集"
                     else "看到第 ${row.optInt("episode", 1)} 集",
                     color = Red,
-                    fontSize = 12.sp,
+                    fontSize = if (isTv) 15.sp else 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
             }
@@ -2519,6 +2523,7 @@ private fun LibraryRow(
     onPlay: () -> Unit,
     onDetail: () -> Unit,
 ) {
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Row(
         Modifier
             .fillMaxWidth()
@@ -2529,7 +2534,7 @@ private fun LibraryRow(
     ) {
         Box(
             Modifier
-                .width(88.dp)
+                .width(if (isTv) 120.dp else 88.dp)
                 .aspectRatio(0.72f)
                 .clip(RoundedCornerShape(6.dp))
                 .background(CoverPlaceholder),
@@ -2546,18 +2551,18 @@ private fun LibraryRow(
             Text(
                 card.title,
                 color = TextMain,
-                fontSize = 15.sp,
+                fontSize = if (isTv) 21.sp else 15.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (!line1.isNullOrBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Text(line1, color = TextDim, fontSize = 12.sp, maxLines = 1)
+                Text(line1, color = TextDim, fontSize = if (isTv) 15.sp else 12.sp, maxLines = 1)
             }
             if (!line2.isNullOrBlank()) {
                 Spacer(Modifier.height(2.dp))
-                Text(line2, color = TextDim, fontSize = 12.sp, maxLines = 1)
+                Text(line2, color = TextDim, fontSize = if (isTv) 15.sp else 12.sp, maxLines = 1)
             }
         }
         Spacer(Modifier.width(10.dp))
@@ -2565,27 +2570,27 @@ private fun LibraryRow(
             if (playable) {
                 Box(
                     Modifier
-                        .height(32.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .height(if (isTv) 42.dp else 32.dp)
+                        .clip(RoundedCornerShape(if (isTv) 21.dp else 16.dp))
                         .background(Red)
                         .clickable { onPlay() }
-                        .padding(horizontal = 18.dp),
+                        .padding(horizontal = if (isTv) 24.dp else 18.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("播放", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("播放", color = Color.White, fontSize = if (isTv) 15.sp else 13.sp, fontWeight = FontWeight.Medium)
                 }
             }
             Box(
                 Modifier
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .height(if (isTv) 42.dp else 32.dp)
+                    .clip(RoundedCornerShape(if (isTv) 21.dp else 16.dp))
                     .background(Color(0x14FFFFFF))
-                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(if (isTv) 21.dp else 16.dp))
                     .clickable { onDetail() }
-                    .padding(horizontal = 18.dp),
+                    .padding(horizontal = if (isTv) 24.dp else 18.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("详情", color = Color(0xE6FFFFFF), fontSize = 13.sp)
+                Text("详情", color = Color(0xE6FFFFFF), fontSize = if (isTv) 15.sp else 13.sp)
             }
         }
     }
