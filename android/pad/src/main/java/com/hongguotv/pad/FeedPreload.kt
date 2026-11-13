@@ -53,19 +53,22 @@ object FeedPreload {
             job = scope.launch {
                 // 先等起播那一波过去（首屏、档位、索引），再开始预载
                 delay(1_500)
-                for (id in ids) {
+                ids.forEachIndexed { index, id ->
                     if (!isActive) return@launch
-                    if (synchronized(lock) { ready.containsKey(id) || id in dead }) continue
-                    runCatching { build(id) }
-                    // 每部之间留 900ms：预载不能把正在播的这一路挤卡
+                    if (synchronized(lock) { ready.containsKey(id) || id in dead }) return@forEachIndexed
+                    // 只给最近 2 部做「完整预载」（档位 + 解密头部）；其余只拉详情。
+                    // 每部 playinfo 都要让 oroplay 现场注册匿名设备（慢且偶发 502），
+                    // 5 部全都拉档位会跟正在播的那一路抢串行锁，反而拖慢首屏。
+                    runCatching { build(id, full = index < 2) }
                     delay(900)
                 }
             }
         }
     }
 
-    private fun build(seriesId: String) {
+    private fun build(seriesId: String, full: Boolean = true) {
         val d = Api.ensureDetail(seriesId) ?: return
+        if (!full) return   // 详情已进 DetailCache，切过去时只剩档位+索引
         val ep = d.episodes.firstOrNull() ?: return
         if (Store.isUnsupported(ep.vid)) {
             synchronized(lock) { dead.add(seriesId) }

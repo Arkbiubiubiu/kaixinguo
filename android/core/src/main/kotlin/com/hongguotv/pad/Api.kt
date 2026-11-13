@@ -599,9 +599,10 @@ object Api {
             return null
         }
         val body = JSONObject().put("vid", vid).put("want", want).toString()
-        // 取流服务偶发 502（匿名设备轮换/上游抖动）：一次失败就放弃的话，用户看到的
-        // 就是「没有可用的取流通道」，而同一集隔 0.5 秒重试一次往往就好了。
-        for (attempt in 0 until 3) {
+        // 取流服务偶发 502（匿名设备轮换/上游抖动）：重试一次就够。
+        // 以前重试 3 次、每次可能耗 6 秒以上，一次坏片源能把刷剧首屏拖成 20~40 秒；
+        // 快速失败后交给上层「跳下一部」反而体感更好。
+        for (attempt in 0 until 2) {
             for (base in serverBases()) {
                 val data = requestPlayInfo(base, body)
                 if (data != null) {
@@ -609,7 +610,7 @@ object Api {
                     return data
                 }
             }
-            if (attempt < 2) Thread.sleep(250L * (attempt + 1))
+            if (attempt == 0) Thread.sleep(300)
         }
         return null
     }
