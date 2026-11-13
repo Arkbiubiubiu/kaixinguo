@@ -391,6 +391,7 @@ fun PlayerScreen(
             player.setMediaItem(MediaItem.fromUri(stream.second.url))
             player.setPlaybackSpeed(speed)
             player.prepare()
+            UiMemo.feedFailStreak = 0
             if (decodeSeekTo > 0) player.seekTo(decodeSeekTo)
             player.play()
         }
@@ -718,6 +719,8 @@ fun PlayerScreen(
             val info = picked?.toPlayInfo()
                 ?: withContext(Dispatchers.IO) { Api.play(ep.vid, 1004, defWant) }
             curDef = info.height
+            // 已知解不了的分集：不要再为它下载一遍头部（刷剧里每换一部都要等 1~2 秒）
+            if (Store.isUnsupported(ep.vid)) throw UnsupportedCodecException("bytevc2/AV1")
             val rv = RemoteVideo(info)
             withContext(Dispatchers.IO) { rv.prepare() }
             val px = StreamProxy(rv)
@@ -775,23 +778,54 @@ fun PlayerScreen(
             throw e
         } catch (e: UnsupportedCodecException) {
             // 这一集的片源是私有编码（bytevc2/AV1 封装），平台解码器解不了。
-            // 以前的表现是「有声音、画面永远黑」；现在直接说明并跳到下一集。
+            // 刷剧里以前会卡在错误页，用户还得手动换一部；现在直接在列表里跳过这一部。
             preparing = false
             failed = null
-            if (!feed && index < episodes.size) {
+            episodes.getOrNull(index - 1)?.let { Store.markUnsupported(it.vid) }
+            if (feed) {
                 runCatching {
                     android.widget.Toast.makeText(
-                        context,
-                        "第 $index 集片源编码不支持（AV1），已跳到下一集",
-                        android.widget.Toast.LENGTH_LONG,
+                        context, "这部是 AV1 片源（本机解不了），已跳过",
+                        android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
-                index += 1
+                if (onFeedStep != null) {
+                    onFeedStep.invoke(1)
+                } else {
+                    failed = "这部是 AV1 片源（本机解不了），按 ↓ 换下一部"
+                }
             } else {
-                failed = "这一集的片源编码本机解不了（AV1 私有封装），请换一集看"
+                // 往后找第一个没被标记过的集，别一集一集地慢慢试
+                var next = index + 1
+                while (next <= episodes.size && Store.isUnsupported(episodes[next - 1].vid)) next += 1
+                if (next <= episodes.size) {
+                    runCatching {
+                        android.widget.Toast.makeText(
+                            context, "片源编码不支持（AV1），已跳到第 $next 集",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    index = next
+                } else {
+                    failed = "这部剧的片源编码本机解不了（AV1 私有封装），换一部看吧"
+                }
             }
         } catch (e: Exception) {
-            failed = e.message ?: "起播失败"
+            val msg = e.message ?: "起播失败"
+            // 刷剧：取流服务偶发失败（隧道抖动/上游 502）不要停在这一部上，
+            // 自动跳到下一部；连续失败 3 次才认为真的没网，停下来给提示。
+            if (feed && msg.contains("取流") && onFeedStep != null && UiMemo.feedFailStreak < 2) {
+                UiMemo.feedFailStreak += 1
+                failed = null
+                runCatching {
+                    android.widget.Toast.makeText(
+                        context, "取流失败，已跳到下一部", android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                onFeedStep.invoke(1)
+            } else {
+                failed = msg
+            }
             preparing = false
         } finally {
             // 被下一集打断（或起播失败）时，本协程自己建的资源在这里关掉

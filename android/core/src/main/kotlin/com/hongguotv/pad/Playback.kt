@@ -53,7 +53,9 @@ class RemoteVideo(private val info: PlayInfo) {
      * 现在 1MB 起、不够再翻倍（正常一次就够），而且首跳正好对齐一个缓存块。
      */
     fun prepare(warmLastBlock: Boolean = true) {
-        var want = 1024 * 1024
+        // 先按 512KB 取索引：短剧 moov 一般几十~几百 KB，少下一半就少等半秒；
+        // 不够再翻倍（最多 8MB），只是多一次请求，不会失败。
+        var want = 512 * 1024
         while (true) {
             val (first, known) = fetchHead(want)
             if (first.isEmpty()) error("读取视频头部失败")

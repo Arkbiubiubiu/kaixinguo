@@ -599,39 +599,46 @@ object Api {
             return null
         }
         val body = JSONObject().put("vid", vid).put("want", want).toString()
-        for (base in serverBases()) {
-            val data = runCatching {
-                val conn = URL(base.trimEnd('/') + "/api/playinfo").open()
-                try {
-                    conn.requestMethod = "POST"
-                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    conn.setRequestProperty("X-Token", PLAY_TOKEN)
-                    conn.setRequestProperty("Accept-Encoding", "gzip")
-                    conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
-                    conn.readTimeout = 25_000
-                    conn.doOutput = true
-                    conn.outputStream.use { it.write(body.toByteArray()) }
-                    val code = conn.responseCode
-                    if (code !in 200..299) return@runCatching null
-                    val raw = conn.inputStream
-                    // 服务器统一 gzip：要了 gzip 就必须解压，否则 JSON 解析必然失败
-                    val decoded = if ((conn.contentEncoding ?: "").contains("gzip", true)) {
-                        GZIPInputStream(raw)
-                    } else {
-                        raw
-                    }
-                    JSONObject(decoded.bufferedReader().use { it.readText() }).optJSONObject("data")
-                } finally {
-                    conn.disconnect()
+        // 取流服务偶发 502（匿名设备轮换/上游抖动）：一次失败就放弃的话，用户看到的
+        // 就是「没有可用的取流通道」，而同一集隔 0.5 秒重试一次往往就好了。
+        for (attempt in 0 until 3) {
+            for (base in serverBases()) {
+                val data = requestPlayInfo(base, body)
+                if (data != null) {
+                    preferredBase = base
+                    return data
                 }
-            }.getOrNull()
-            if (data != null) {
-                preferredBase = base
-                return data
             }
+            if (attempt < 2) Thread.sleep(250L * (attempt + 1))
         }
         return null
     }
+
+    private fun requestPlayInfo(base: String, body: String): JSONObject? = runCatching {
+        val conn = URL(base.trimEnd('/') + "/api/playinfo").open()
+        try {
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setRequestProperty("X-Token", PLAY_TOKEN)
+            conn.setRequestProperty("Accept-Encoding", "gzip")
+            conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
+            conn.readTimeout = 25_000
+            conn.doOutput = true
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            if (code !in 200..299) return@runCatching null
+            val raw = conn.inputStream
+            // 服务器统一 gzip：要了 gzip 就必须解压，否则 JSON 解析必然失败
+            val decoded = if ((conn.contentEncoding ?: "").contains("gzip", true)) {
+                GZIPInputStream(raw)
+            } else {
+                raw
+            }
+            JSONObject(decoded.bufferedReader().use { it.readText() }).optJSONObject("data")
+        } finally {
+            conn.disconnect()
+        }
+    }.getOrNull()
 
     /** 服务器代取播放地址（服务器签名 + 固定设备身份）。 */
     private fun playFromServer(vid: String, want: Int = 0): PlayInfo? {

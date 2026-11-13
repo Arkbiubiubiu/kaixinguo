@@ -18,6 +18,8 @@ object UiMemo {
     var feedCursor: Int = 0
     var feedCards: List<SeriesCard> = emptyList()
     var feedPage: FeedPage? = null
+    /** 刷剧里连续「取流失败」跳过的部数：超过 2 部就停在错误页，避免网络断了还一路狂跳 */
+    var feedFailStreak: Int = 0
 
     /** 推荐页当前 tab（只在切 tab 时把列表滚回顶部） */
     var homeTab: String? = null

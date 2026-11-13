@@ -225,6 +225,20 @@ object Store : AccountState {
         p().edit().putString(key, set.joinToString(SEP)).apply()
     }
 
+    // ---------------- 解不了的片源（bytevc2/AV1 私有封装） ----------------
+    // 记住这些分集，下次直接跳过：否则每进一次刷剧都要为同一集白下载一遍头部
+    // （隧道 1MB/s 左右，一集就要一两秒，看起来就是「加载特别慢」）。
+    private const val KEY_UNSUPPORTED = "unsupported_vids"
+
+    fun isUnsupported(vid: String): Boolean =
+        vid.isNotBlank() && readSet(KEY_UNSUPPORTED).contains(vid)
+
+    fun markUnsupported(vid: String) {
+        if (vid.isBlank()) return
+        val set = readSet(KEY_UNSUPPORTED)
+        if (set.add(vid)) writeSet(KEY_UNSUPPORTED, set)
+    }
+
     /** 切换某个 id 在集合里的状态，返回切换后是否在集合中。 */
     fun toggle(key: String, seriesId: String): Boolean {
         val set = readSet(key)
