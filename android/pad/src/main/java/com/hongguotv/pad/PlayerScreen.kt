@@ -763,6 +763,23 @@ fun PlayerScreen(
             preparing = false
         } catch (e: CancellationException) {
             throw e
+        } catch (e: UnsupportedCodecException) {
+            // 这一集的片源是私有编码（bytevc2/AV1 封装），平台解码器解不了。
+            // 以前的表现是「有声音、画面永远黑」；现在直接说明并跳到下一集。
+            preparing = false
+            failed = null
+            if (!feed && index < episodes.size) {
+                runCatching {
+                    android.widget.Toast.makeText(
+                        context,
+                        "第 $index 集片源编码不支持（AV1），已跳到下一集",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+                index += 1
+            } else {
+                failed = "这一集的片源编码本机解不了（AV1 私有封装），请换一集看"
+            }
         } catch (e: Exception) {
             failed = e.message ?: "起播失败"
             preparing = false

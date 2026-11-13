@@ -170,8 +170,10 @@ fun DetailScreen(
         }
     }
 
-    LaunchedEffect(seriesId) {
+    var detailRetry by remember(seriesId) { mutableStateOf(0) }
+    LaunchedEffect(seriesId, detailRetry) {
         loading = true
+        error = null
         val d = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(seriesId) }.getOrNull() }
         detail = d
 
@@ -181,7 +183,7 @@ fun DetailScreen(
         // 而「详情已经到了却还不显示」正是焦点被抢那件事的土壤。
         resumeIdx = Store.progress(seriesId)
         d?.let { if (it.onlineSubscribed && !reserved) reserved = true }
-        error = if (d == null) "详情加载失败，返回后再进来重试" else null
+        error = if (d == null) "详情没加载出来（网络问题）" else null
         loading = false
 
         // ---- 以下是页面已经显示之后才补的数据，全部后台跑 ----
@@ -273,7 +275,9 @@ fun DetailScreen(
         )
     }
     if (d == null) {
-        Box(Modifier.fillMaxSize()) { StatusBox(loading = loading, error = error) }
+        Box(Modifier.fillMaxSize()) {
+            StatusBox(loading = loading, error = error, onRetry = { loading = true; detailRetry++ })
+        }
         return
     }
     if (loading && detail == null) {

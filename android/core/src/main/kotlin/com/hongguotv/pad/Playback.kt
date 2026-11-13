@@ -62,6 +62,21 @@ class RemoteVideo(private val info: PlayInfo) {
             val end = runCatching { MediaCrypto.headerEnd(first, total) }.getOrNull()
             if (end != null && end <= first.size) {
                 val ready = MediaCrypto.prepare(first.copyOf(end), info.key)
+                // bytevc2：码流是字节跳动的私有封装，平台 AV1 解码器也只能建起来、
+                // 一帧都出不来（实测：有声音、画面全黑）。这种情况直接抛明确的
+                // 「编码不支持」，由播放页提示并跳到下一集，绝不黑屏装死。
+                if (ready.videoCodec.equals("bvc2", true)) throw UnsupportedCodecException("bytevc2/AV1")
+                // AV1（bytevc2）：把首帧里的序列头写进 av1C。只靠容器里的私有 bv2C
+                // 配置盒，解码器建得起来但一帧都不出（有声音、画面全黑）。
+                if (MediaCrypto.hasAv1(ready.header) && ready.videoSampleAt >= 0L && ready.videoSampleSize > 0) {
+                    runCatching {
+                        val raw = fetchRange(ready.videoSampleAt, ready.videoSampleSize)
+                        if (raw.isNotEmpty()) {
+                            val plain = MediaCrypto.decrypt(raw, ready.videoSampleAt, info.key, ready)
+                            MediaCrypto.av1ConfigObus(plain)?.let { MediaCrypto.applyAv1Config(ready.header, it) }
+                        }
+                    }
+                }
                 prepared = ready
                 if (first.size >= BLOCK) {
                     runCatching {
@@ -75,6 +90,18 @@ class RemoteVideo(private val info: PlayInfo) {
             }
             if (want >= 8 * 1024 * 1024) error("视频索引过大，无法播放")
             want = minOf(want * 2, 8 * 1024 * 1024)
+        }
+    }
+
+    /** 拉指定区间（AV1 取首帧序列头用）。 */
+    private fun fetchRange(at: Long, len: Int): ByteArray {
+        val req = Request.Builder().url(info.url)
+            .header("Range", "bytes=$at-${at + len - 1}")
+            .header("User-Agent", USER_AGENT)
+            .header("Accept-Encoding", "identity")
+            .build()
+        return http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) ByteArray(0) else (resp.body?.bytes() ?: ByteArray(0))
         }
     }
 

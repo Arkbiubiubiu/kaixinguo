@@ -134,9 +134,9 @@ fun App() {
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
     }
 
-    BackHandler(enabled = stack.size > 1) { back() }
-
     if (current is Screen.Play) {
+        // 播放页自己没有 BackHandler（只靠焦点键处理），这里兜住系统返回
+        BackHandler(enabled = true) { back() }
         PlayerScreen(
             seriesId = current.seriesId,
             startIndex = current.index,
@@ -181,6 +181,38 @@ fun App() {
     // 这条看不见的细条上（用户看到的就是「光标消失了」）。压栈页不渲染跳板，
     // 所以详情页左键按不动，正是这个原因。
     var enteringContent by remember { mutableStateOf(false) }
+
+    // 返回键统一兜底（以前只有「栈深 > 1」才接管，顶层按返回直接退 App；
+    // 侧栏锁定时如果焦点不在内容区，那条 onKeyEvent 也收不到，同样会直接退出）：
+    //   压栈页 → 出栈；进入板块 → 回导航层；顶层 → 再按一次才退出
+    var backArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(backArmed) {
+        if (backArmed) {
+            kotlinx.coroutines.delay(2_000)
+            backArmed = false
+        }
+    }
+    BackHandler(enabled = true) {
+        when {
+            stack.size > 1 -> back()
+            railLocked -> {
+                railLocked = false
+                bridgeScope.launch {
+                    androidx.compose.runtime.withFrameNanos { }
+                    runCatching { railEntry.requestFocus() }
+                }
+            }
+            backArmed -> (Store.appContext as? android.app.Activity)?.finish()
+            else -> {
+                backArmed = true
+                runCatching {
+                    android.widget.Toast.makeText(
+                        Store.appContext, "再按一次返回退出", android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+    }
 
     /**
      * 把焦点送进内容区第一个可聚焦控件（带重试：页面刚组合出来时控件可能还没上）。
@@ -316,7 +348,10 @@ fun App() {
             // 侧栏可聚焦的两个条件：①顶层页面（详情/播放这类压栈页期间锁掉）；
             // ②没有进入板块（进了板块也锁，按返回才解开）。两把锁任意一把关上，
             // 焦点都不可能从内容区左侧漏到侧栏。
-            enabled = stack.size <= 1 && !railLocked,
+            // 平板（触屏）：侧栏任何时候都能点 —— 点了就清掉详情/播放、切到目标板块。
+            // 以前这里跟 TV 一样锁死，用户在详情页点侧栏毫无反应（只是变暗），
+            // 触屏第一反应被无视，只能去按系统返回。
+            enabled = if (railLockable) stack.size <= 1 && !railLocked else true,
             entryFocus = railEntry,
             onFocused = { railFocused = it },
             // 侧栏上按确定 = 进这个板块（切换分类 + 焦点进内容区 + 锁侧栏）。
@@ -474,11 +509,13 @@ fun App() {
                     0,
                     onOpen = { push(Screen.Detail(it)) },
                     onPlay = { id -> push(Screen.Play(id, (Store.progress(id) + 1).coerceAtLeast(1))) },
+                    onLogin = { push(Screen.Login) },
                 )
                 is Screen.Reserve -> FollowReserveScreen(
                     1,
                     onOpen = { push(Screen.Detail(it)) },
                     onPlay = { id -> push(Screen.Play(id, (Store.progress(id) + 1).coerceAtLeast(1))) },
+                    onLogin = { push(Screen.Login) },
                 )
                 is Screen.Account -> AccountScreen(
                     onOpen = { push(Screen.Detail(it)) },

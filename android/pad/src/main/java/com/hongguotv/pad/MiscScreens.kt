@@ -117,6 +117,9 @@ object FindMemo {
     var searchId: String = ""
     var offset: Int = 0
     var hasMore: Boolean = false
+    // 筛选条件也要记住：只记结果不记条件，从详情返回会看到「列表还是上次的、
+    // 条件却清空了」的错位状态。
+    var selected: List<Pair<String, String>> = emptyList()
 }
 
 /**
@@ -151,7 +154,7 @@ fun FindScreen(
     onSearchFocus: (Boolean) -> Unit = {},
 ) {
     val rows = remember { mutableStateListOf<FilterRow>() }
-    val selected = remember { mutableStateListOf<Pair<String, String>>() } // (key, id)
+    val selected = remember { mutableStateListOf<Pair<String, String>>().apply { addAll(FindMemo.selected) } } // (key, id)
     val cards = remember {
         mutableStateListOf<SeriesCard>().apply {
             // 从详情返回时先把上次的结果顶上，避免闪一下空白
@@ -161,6 +164,8 @@ fun FindScreen(
     var loading by remember { mutableStateOf(true) }
     var listLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 「重试」自增一次就重跑加载
+    var retryTick by remember { mutableStateOf(0) }
     var session by remember { mutableStateOf("") }
     var offset by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(true) }
@@ -228,8 +233,15 @@ fun FindScreen(
     }
 
     // 筛选或体裁变化 → 重拉列表
-    LaunchedEffect(selectedMap) {
+    // 筛选条件写回记忆（离开页面后从详情返回还能对得上）
+    LaunchedEffect(selectedMap) { FindMemo.selected = selected.toList() }
+
+    // 从详情返回：条件 + 结果都还在，就不要再拉一次（否则会清空列表、跳回顶部）
+    var restoredOnce by remember { mutableStateOf(FindMemo.cards.isNotEmpty()) }
+
+    LaunchedEffect(selectedMap, retryTick) {
         if (searchQuery != null) return@LaunchedEffect
+        if (restoredOnce) { restoredOnce = false; return@LaunchedEffect }
         listLoading = true
         error = null
         val page = withContext(Dispatchers.IO) {
@@ -252,8 +264,9 @@ fun FindScreen(
 
     // 搜索模式
     // 搜索结果首屏（提交搜索 / 换关键词时）
-    LaunchedEffect(searchQuery) {
+    LaunchedEffect(searchQuery, retryTick) {
         val q = searchQuery ?: return@LaunchedEffect
+        if (restoredOnce) { restoredOnce = false; return@LaunchedEffect }
         listLoading = true
         error = null
         suggest.clear()
@@ -630,7 +643,13 @@ fun FindScreen(
                 } else if (cards.isEmpty()) {
                     item(span = { GridItemSpan(6) }, key = "find_empty") {
                         Box(Modifier.fillMaxWidth().height(rowH), contentAlignment = Alignment.Center) {
-                            Text(error ?: "没有匹配的剧", color = TextDim, fontSize = 14.sp)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(error ?: "没有匹配的剧", color = TextDim, fontSize = 14.sp)
+                                if (error != null) {
+                                    Spacer(Modifier.height(10.dp))
+                                    OutlinePill("重试") { retryTick++ }
+                                }
+                            }
                         }
                     }
                 }
@@ -802,7 +821,8 @@ fun RankScreen(
     // key 里必须带 tabs.size：分类表是异步填的，首帧还是空。
     // 但**空分类时直接不发请求** —— 否则会先用空分类画一版「全站榜」，
     // 等分类到位再整页清空重来，列表闪一下、焦点也被打散。
-    LaunchedEffect(tabIdx, subIdx, tabs.size, panelSel, monthSel) {
+    var rankRetry by remember { mutableStateOf(0) }
+    LaunchedEffect(tabIdx, subIdx, tabs.size, panelSel, monthSel, rankRetry) {
         if (tabs.isEmpty()) return@LaunchedEffect
         // 挂着过夜再切榜：元数据超过 1 分钟就重拉一次，描述行别停在昨天
         if (System.currentTimeMillis() - metaAt > 60_000) {
@@ -959,7 +979,10 @@ fun RankScreen(
                 onClose = { sheet = ""; runCatching { monthFocus.requestFocus() } },
             )
             loading -> StatusBox(loading = true, error = null)
-            error != null && cards.isEmpty() && persons.isEmpty() -> StatusBox(loading = false, error = error)
+            error != null && cards.isEmpty() && persons.isEmpty() -> StatusBox(
+                loading = false, error = error,
+                onRetry = { loading = true; error = null; rankRetry++ },
+            )
             persons.isNotEmpty() -> LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = rankList,
@@ -1408,6 +1431,11 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
     var selected by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var dayLoading by remember { mutableStateOf(false) }
+    // 日历首屏/单日失败要能重试：以前失败被当成「这天暂无上新」，用户以为真没内容
+    var calFailed by remember { mutableStateOf(false) }
+    var calRetry by remember { mutableStateOf(0) }
+    var dayRetry by remember { mutableStateOf(0) }
+    val dayError = remember { mutableStateMapOf<String, Boolean>() }
     val more = remember { mutableStateMapOf<String, Pair<Int, String>>() }
     val scope = rememberCoroutineScope()
 
@@ -1464,7 +1492,8 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
         return out
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(calRetry) {
+        calFailed = false
         val j = withContext(Dispatchers.IO) { runCatching { Api.calendar() }.getOrNull() }
         val data = j?.optJSONObject("data")
         val schema = data?.optJSONObject("calendar_schema")
@@ -1496,11 +1525,12 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
                 else -> days.first()
             }
         }
+        calFailed = days.isEmpty() && items.isEmpty()
         loading = false
     }
 
     // 选中没加载过的日期：带 target_date 重新请求（官方切日期的方式）
-    LaunchedEffect(selected) {
+    LaunchedEffect(selected, dayRetry) {
         if (selected.isEmpty() || byDay.containsKey(selected)) return@LaunchedEffect
         dayLoading = true
         val j = withContext(Dispatchers.IO) {
@@ -1508,6 +1538,7 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
         }
         val list = parseDay(j)
         byDay[selected] = list.toMutableList()
+        dayError[selected] = j == null
         j?.optJSONObject("data")?.let { d ->
             if (d.optBoolean("has_more", false)) {
                 more[selected] = d.optInt("next_offset", list.size) to d.optString("session_id")
@@ -1544,6 +1575,10 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
 
     if (loading) {
         StatusBox(loading = true, error = null)
+        return
+    }
+    if (calFailed && days.isEmpty()) {
+        StatusBox(loading = false, error = "日历没加载出来（网络问题）", onRetry = { loading = true; calRetry++ })
         return
     }
 
@@ -1592,6 +1627,10 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
             ) {
                 LoadingBlock()
             }
+            dayItems.isEmpty() && dayError[selected] == true -> StatusBox(
+                loading = false, error = "这天的上新没加载出来（网络问题）",
+                onRetry = { dayError[selected] = false; byDay.remove(selected); dayRetry++ },
+            )
             dayItems.isEmpty() -> StatusBox(
                 loading = false, error = null, empty = true,
                 emptyText = if (selected.isEmpty()) "在详情页点「预约」，上线时间会显示在这里" else "这天暂无上新",
@@ -2217,6 +2256,7 @@ fun FollowReserveScreen(
     initialMode: Int,
     onOpen: (String) -> Unit,
     onPlay: (String) -> Unit = {},
+    onLogin: () -> Unit = {},
 ) {
     val mode = initialMode
     val cards = remember { mutableStateListOf<SeriesCard>() }
@@ -2393,6 +2433,29 @@ fun FollowReserveScreen(
 
         when {
             loading -> StatusBox(loading = true, error = null)
+            // 未登录单独一屏：以前只显示「请先去登录」+「重新加载」，点多少次都还是同一句，
+            // 也不给入口 —— 用户以为功能坏了。
+            !Store.loggedIn -> Column(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    if (mode == 0) "登录后才能同步追更" else "登录后才能同步预约",
+                    color = TextMain, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (Store.appContext.packageName.endsWith("nativeapp"))
+                        "在「我的」用手机扫码配对，或直接在这里登录"
+                    else "在「我的」用手机号登录，或直接在这里登录",
+                    color = TextDim, fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinePill("去登录") { onLogin() }
+                }
+            }
             shown.isEmpty() && error != null -> Column(
                 Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.Center,

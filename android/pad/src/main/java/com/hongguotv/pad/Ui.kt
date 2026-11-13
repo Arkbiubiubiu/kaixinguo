@@ -511,13 +511,46 @@ fun StatusBox(
     error: String?,
     empty: Boolean = false,
     emptyText: String = "这里还没有内容",
+    /** 失败时给一个真的会重试的按钮：纯文字「返回后再进来重试」等于没说 */
+    onRetry: (() -> Unit)? = null,
+    retryText: String = "重试",
+    /** 失败/空态下的第二动作（例如「去登录」） */
+    secondaryText: String? = null,
+    onSecondary: (() -> Unit)? = null,
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when {
             loading -> LoadingBlock()
-            error != null -> Text(error, color = TextDim, fontSize = 14.sp)
-            empty -> Text(emptyText, color = TextDim, fontSize = 14.sp)
+            error != null || empty -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (error != null) error else emptyText, color = TextDim, fontSize = 14.sp)
+                if (onRetry != null || onSecondary != null) {
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (onSecondary != null && secondaryText != null) {
+                            StatusPill(secondaryText) { onSecondary() }
+                        }
+                        if (onRetry != null) {
+                            StatusPill(retryText) { onRetry() }
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+/** 状态页上的小按钮（描边胶囊）。 */
+@Composable
+private fun StatusPill(text: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(PanelHi)
+            .clickable { onClick() }
+            .padding(horizontal = 18.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, color = TextMain, fontSize = 14.sp)
     }
 }
 

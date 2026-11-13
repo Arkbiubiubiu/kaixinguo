@@ -56,7 +56,15 @@ object MediaCrypto {
      * @param header 索引区（moov）在**解密后**应有的字节：加密标记已被还原成真实编码
      * @param blocks 所有需要解密的密文段，按文件偏移升序
      */
-    class Prepared(val header: ByteArray, val blocks: List<CipherBlock>)
+    class Prepared(
+        val header: ByteArray,
+        val blocks: List<CipherBlock>,
+        /** 视频轨的真实编码标记（改写成 av01 之前的原始值，例如 hvc1 / bvc2） */
+        val videoCodec: String = "",
+        /** 第一条视频轨第 0 个样本在文件里的位置与长度（AV1 取序列头用；未知 = -1/0） */
+        val videoSampleAt: Long = -1L,
+        val videoSampleSize: Int = 0,
+    )
 
     // ---------------------------------------------------------------- 密钥
 
@@ -137,6 +145,9 @@ object MediaCrypto {
         val header = index.copyOf()
         val blocks = ArrayList<CipherBlock>(1024)
 
+        var videoAt = -1L
+        var videoSize = 0
+        var videoCodec = ""
         for (trak in children(index, moov)) {
             if (trak.type != "trak") continue
             val stbl = descendant(index, trak, "stbl") ?: continue
@@ -151,6 +162,21 @@ object MediaCrypto {
 
             readTrack(index, stsz, stsc, stco, saiz, saio, blocks)
             restoreCodec(index, stbl, header)
+
+            val hdlr = descendant(index, trak, "hdlr")
+            val isVideo = hdlr != null && hdlr.body + 12 <= hdlr.end && fourcc(index, hdlr.body + 8) == "vide"
+            if (isVideo && videoAt < 0) {
+                firstSample(index, stsz, stco)?.let { (at, size) -> videoAt = at; videoSize = size }
+                // 记下改写前的真实编码：bytevc2（bvc2）是字节跳动的私有码流，
+                // 平台解码器解不了，播放器要据此给出明确提示而不是黑屏。
+                runCatching {
+                    val sinf = scanBox(index, "sinf", stbl.body, stbl.end)
+                    val frma = sinf?.let { descendant(index, it, "frma") }
+                    if (frma != null && frma.body + 4 <= frma.end) {
+                        videoCodec = String(index.copyOfRange(frma.body, frma.body + 4), Charsets.US_ASCII)
+                    }
+                }
+            }
         }
 
         if (blocks.isEmpty()) throw IOException("没有可解密的样本")
@@ -160,7 +186,25 @@ object MediaCrypto {
             val prev = blocks[i - 1]
             if (prev.offset + prev.length > blocks[i].offset) throw IOException("样本区间重叠")
         }
-        return Prepared(header, blocks)
+        return Prepared(header, blocks, videoCodec, videoAt, videoSize)
+    }
+
+    /**
+     * 第 0 个样本的绝对偏移与长度（第一块的第一样本）。
+     *
+     * 注意这些表都是 FullBox：stsz = version/flags(4) + uniformSize(4) + count(4) + sizes，
+     * stco = version/flags(4) + count(4) + offsets。少算这 4 字节就会读到 moov 里的
+     * 计数字段本身（之前算出 2553 这种「样本在索引区里」的荒唐偏移）。
+     */
+    private fun firstSample(data: ByteArray, stsz: Box, stco: Box): Pair<Long, Int>? {
+        if (stsz.body + 12 > stsz.end) return null
+        val uniform = u32(data, stsz.body + 4)
+        val size = if (uniform > 0) uniform.toInt() else u32(data, stsz.body + 12).toInt()
+        if (size <= 0) return null
+        val wide = stco.type == "co64"
+        val at = if (wide) u64(data, stco.body + 8) else u32(data, stco.body + 8)
+        if (at <= 0) return null
+        return at to size
     }
 
     /** 读一条轨道的样本表，把所有密文段追加到 [out]。 */
@@ -302,7 +346,17 @@ object MediaCrypto {
             while (at >= stbl.body) {
                 val type = fourcc(data, at)
                 if (type == "encv" || type == "enca") {
-                    codec.copyInto(header, at)
+                    val name = String(codec, Charsets.US_ASCII)
+                    if (name == "bvc2") {
+                        // 字节跳动的 AV1 轨道：容器里用的是私有 sample entry `bvc2` +
+                        // 私有配置盒 `bv2C`，ExoPlayer（Media3）只认 `av01` + `av1C`。
+                        // 不改的话这条轨道整个被当成「未知编码」丢掉 —— 表现就是
+                        // **有声音、永远黑屏，软解也救不了**（连解码器都不会创建）。
+                        "av01".toByteArray(Charsets.US_ASCII).copyInto(header, at)
+                        convertAv1SampleEntry(header, at)
+                    } else {
+                        codec.copyInto(header, at)
+                    }
                     break
                 }
                 at--
@@ -312,6 +366,149 @@ object MediaCrypto {
             "free".toByteArray(Charsets.US_ASCII).copyInto(header, sinf.start + 4)
             header.fill(0, sinf.body, sinf.end)
             from = sinf.end
+        }
+    }
+
+    /**
+     * 把私有 `bv2C` 配置盒改成标准的 `av1C`。
+     *
+     * 只改「盒类型 + 前 4 字节」，并把剩余空间改写成 `free` 盒：
+     * 总长度一点不变，父盒（stsd/stbl/moov）的 size 都不用动，索引区仍然是等长替换。
+     *
+     * av1C 头 4 字节：`81`（marker+version=1）、`08`（profile 0 / level 4.0）、
+     * `0C`（8bit、4:2:0）、`00`（无初始延迟）。真实的序列头在码流里（每个关键帧都带），
+     * 平台 AV1 解码器可以从码流里拿到。
+     */
+    private fun convertAv1SampleEntry(header: ByteArray, codecAt: Int) {
+        val entryStart = codecAt - 4
+        if (entryStart < 0) return
+        val entrySize = u32(header, entryStart).toInt()
+        if (entrySize < 16 || entryStart + entrySize > header.size) return
+        val limit = entryStart + entrySize
+        // 直接在样本描述里找 `bv2C` 四个字节：VisualSampleEntry 前面有 78 字节定长字段，
+        // 从 +8 开始按盒遍历会把定长字段当成盒（size=0）立刻退出。
+        var p = -1
+        for (i in entryStart + 8..limit - 8) {
+            if (header[i] == 'b'.code.toByte() && header[i + 1] == 'v'.code.toByte() &&
+                header[i + 2] == '2'.code.toByte() && header[i + 3] == 'C'.code.toByte()
+            ) {
+                p = i - 4
+                break
+            }
+        }
+        if (p < 0) return
+        while (p + 8 <= limit) {
+            val size = u32(header, p).toInt()
+            if (size < 8 || p + size > limit) break
+            if (fourcc(header, p + 4) == "bv2C") {
+                // av1C：8 字节头 + 4 字节配置
+                putU32(header, p, 12L)
+                "av1C".toByteArray(Charsets.US_ASCII).copyInto(header, p + 4)
+                header[p + 8] = 0x81.toByte()
+                header[p + 9] = 0x08
+                header[p + 10] = 0x0C
+                header[p + 11] = 0x00
+                // 原盒剩下的字节改成 free 盒，长度保持不变
+                val rest = size - 12
+                if (rest >= 8) {
+                    putU32(header, p + 12, rest.toLong())
+                    "free".toByteArray(Charsets.US_ASCII).copyInto(header, p + 16)
+                }
+                return
+            }
+            p += size
+        }
+    }
+
+    private fun putU32(data: ByteArray, at: Int, value: Long) {
+        data[at] = ((value ushr 24) and 0xFF).toByte()
+        data[at + 1] = ((value ushr 16) and 0xFF).toByte()
+        data[at + 2] = ((value ushr 8) and 0xFF).toByte()
+        data[at + 3] = (value and 0xFF).toByte()
+    }
+
+    /**
+     * 从**解密后的**首个视频样本里抽出 AV1 序列头（OBU type 1，附带 metadata type 5），
+     * 作为 `av1C` 的 configOBUs。
+     *
+     * 为什么需要它：字节跳动给的 `bv2C` 是私有配置，Android 的 AV1 解码器只认标准的
+     * `av1C`；只写 4 字节记录头（没有序列头）时解码器建得起来但**一帧都出不来**
+     * （实测：有声音、画面全黑）。序列头本来就在码流里，抽出来即可。
+     */
+    fun av1ConfigObus(plain: ByteArray): ByteArray? {
+        var p = 0
+        val out = java.io.ByteArrayOutputStream()
+        while (p + 2 <= plain.size) {
+            val h = plain[p].toInt() and 0xFF
+            if (h and 0x80 != 0) break                 // forbidden 位必须为 0
+            val type = (h shr 3) and 0x0F
+            var q = p + 1
+            if (h and 0x04 != 0) q++                   // extension header
+            if (h and 0x02 == 0) break                 // 没有 size 字段，走不动
+            var size = 0
+            var shift = 0
+            var done = false
+            while (q < plain.size) {
+                val b = plain[q].toInt() and 0xFF
+                q++
+                size = size or ((b and 0x7F) shl shift)
+                shift += 7
+                if (b and 0x80 == 0) { done = true; break }
+                if (shift > 28) break
+            }
+            if (!done || size <= 0 || q + size > plain.size) break
+            if (type == 1 || type == 5) out.write(plain, p, q - p + size)
+            // 遇到帧头/帧本体就说明 OBU 头信息区结束了
+            if (type == 3 || type == 6) break
+            p = q + size
+        }
+        return out.toByteArray().takeIf { it.isNotEmpty() }
+    }
+
+    /** 索引里是否有 AV1 视频轨（restoreCodec 已把 bvc2 改成 av01）。 */
+    fun hasAv1(header: ByteArray): Boolean {
+        var i = 0
+        while (i + 4 <= header.size) {
+            if (header[i] == 'a'.code.toByte() && header[i + 1] == 'v'.code.toByte() &&
+                header[i + 2] == '0'.code.toByte() && header[i + 3] == '1'.code.toByte()
+            ) return true
+            i++
+        }
+        return false
+    }
+
+    /**
+     * 把真正的 configOBUs 写进 `av1C` 盒。
+     *
+     * 盒总长必须保持不变（父盒 size 一个都不能改），所以 av1C 之后的剩余空间补一个 `free` 盒。
+     */
+    fun applyAv1Config(header: ByteArray, configObus: ByteArray) {
+        var i = 0
+        while (i + 4 <= header.size) {
+            if (header[i] == 'a'.code.toByte() && header[i + 1] == 'v'.code.toByte() &&
+                header[i + 2] == '1'.code.toByte() && header[i + 3] == 'C'.code.toByte()
+            ) {
+                val boxStart = i - 4
+                if (boxStart < 0) return
+                val boxSize = u32(header, boxStart).toInt()
+                val need = 12 + configObus.size
+                if (need > boxSize) return
+                putU32(header, boxStart, need.toLong())
+                val payload = boxStart + 8
+                header[payload] = 0x81.toByte()
+                header[payload + 1] = 0x08
+                header[payload + 2] = 0x0C
+                header[payload + 3] = 0x00
+                configObus.copyInto(header, payload + 4)
+                val restStart = boxStart + need
+                val rest = boxSize - need
+                if (rest >= 8) {
+                    putU32(header, restStart, rest.toLong())
+                    "free".toByteArray(Charsets.US_ASCII).copyInto(header, restStart + 4)
+                }
+                return
+            }
+            i++
         }
     }
 
@@ -485,3 +682,7 @@ object MediaCrypto {
         }
     }
 }
+
+/** 片源是平台解码器不认识的私有编码（bytevc2 / AV1 私有封装）。 */
+class UnsupportedCodecException(val codec: String) :
+    java.io.IOException("本集片源是 $codec 编码，本机播放器解不了")

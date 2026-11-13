@@ -208,7 +208,7 @@ fun HomeScreen(
             attempt++
             if (attempt < 3) delay(2500L * attempt)
         }
-        if (cursor == null && cached.isEmpty()) error = "加载失败，返回后再进来重试"
+        if (cursor == null && cached.isEmpty()) error = "首页没加载出来（网络问题）"
         loading = false
         // hero 默认主角：切 tab 后无条件回到本 tab 第一张（焦点未动时也翻面）
         heroCard = cards.firstOrNull()
@@ -303,7 +303,7 @@ fun HomeScreen(
 
         when {
             loading && cards.isEmpty() -> StatusBox(loading = true, error = null)
-            error != null && cards.isEmpty() -> StatusBox(loading = false, error = error)
+            error != null && cards.isEmpty() -> StatusBox(loading = false, error = error, onRetry = { refreshNonce++ })
             cards.isEmpty() -> StatusBox(loading = false, error = null, empty = true, emptyText = "这个分类暂时没有内容")
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
                 // 卡片用**自然比例**（SeriesCardView 的 aspectRatio(0.755)），
