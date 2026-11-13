@@ -272,7 +272,7 @@ fun VvcPlayerScreen(
                     Spacer(Modifier.height(14.dp))
                     Box(
                         Modifier.clip(RoundedCornerShape(18.dp)).background(Color(0xCCFF4A3D))
-                            .clickable { attempt += 1 },
+                            .clickable { runCatching { MpvCore.stop() }; attempt += 1 },
                     ) { Text("重试", color = Color.White, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 22.dp, vertical = 9.dp)) }
                 } else {
                     LoadingSpinner(size = 54.dp, stroke = 5.dp)
