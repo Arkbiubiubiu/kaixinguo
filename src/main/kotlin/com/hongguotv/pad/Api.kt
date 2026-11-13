@@ -499,7 +499,7 @@ object Api {
         // 服务器没给：本地签名后直连多码率接口（内置公用设备档案，分发版走这条路）
         Log.d("PadPlayer", "playFromServer miss，走本地签名直连")
         localPlay(vid, contentType, want)?.let { return it }
-        error("取流失败：没有可用的取流通道")
+        error("取流失败（${lastPlayError ?: "网络异常"}），请稍后重试")
     }
 
     /** 本地签名 + 直连多码率接口；分发版（没有自建服务器）靠这条路取流。 */
@@ -587,12 +587,20 @@ object Api {
      * 番茄取流网关按 TLS 指纹放行，手机/电视上的 OkHttp 一条也拿不到，
      * 所以取流一律走服务器代做，客户端只拿解密后的直链。
      */
+    /** 最近一次取流失败的真实原因（HTTP 码 / 超时），用于给用户一个可排查的说法 */
+    @Volatile
+    var lastPlayError: String? = null
+        private set
+
     private fun playInfoData(vid: String, want: String): JSONObject? {
+        lastPlayError = null
         if (PLAY_BASES.isEmpty()) {
             Log.e("PadApi", "未配置播放信息服务地址")
             return null
         }
         val body = JSONObject().put("vid", vid).put("want", want).toString()
+        // 网络抖动重试一次（300ms）；取流失败不再被放大成几十秒
+        for (attempt in 0 until 2) {
         for (base in serverBases()) {
             val data = runCatching {
                 val conn = URL(base.trimEnd('/') + "/api/playinfo").open()
@@ -606,7 +614,10 @@ object Api {
                     conn.doOutput = true
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
-                    if (code !in 200..299) return@runCatching null
+                    if (code !in 200..299) {
+                        lastPlayError = "HTTP $code"
+                        return@runCatching null
+                    }
                     val raw = conn.inputStream
                     // 服务器统一 gzip：要了 gzip 就必须解压，否则 JSON 解析必然失败
                     val decoded = if ((conn.contentEncoding ?: "").contains("gzip", true)) {
@@ -618,11 +629,13 @@ object Api {
                 } finally {
                     conn.disconnect()
                 }
-            }.getOrNull()
+            }.onFailure { lastPlayError = it.message?.take(80) }.getOrNull()
             if (data != null) {
                 preferredBase = base
                 return data
             }
+        }
+            if (attempt == 0) Thread.sleep(300)
         }
         return null
     }
