@@ -326,7 +326,10 @@ object Api {
             conn.doOutput = true
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = conn.responseCode
-            if (code !in 200..299) return@runCatching null
+            if (code !in 200..299) {
+                lastPlayError = "HTTP $code"
+                return@runCatching null
+            }
             val raw = conn.inputStream
             val decoded = if ((conn.contentEncoding ?: "").contains("gzip", true)) {
                 GZIPInputStream(raw)
@@ -515,7 +518,7 @@ object Api {
         // 服务器那边的签名通道已经接管，这里直接快速失败；留开关是为了上游哪天放开能一键恢复。
         if (!LOCAL_DIRECT_PLAY) {
             Log.d("PadPlayer", "playFromServer miss，本机直连已停用")
-            error("取流失败：没有可用的取流通道")
+            error("取流失败（${lastPlayError ?: "网络异常"}），请稍后重试")
         }
         Log.d("PadPlayer", "playFromServer miss，走本机直连")
 
@@ -593,7 +596,13 @@ object Api {
      * 番茄取流网关按 TLS 指纹放行，手机/电视上的 OkHttp 一条也拿不到，
      * 所以取流一律走服务器代做，客户端只拿解密后的直链。
      */
+    /** 最近一次取流失败的真实原因（HTTP 码 / 超时），用于给用户和日志一个可排查的说法 */
+    @Volatile
+    var lastPlayError: String? = null
+        private set
+
     private fun playInfoData(vid: String, want: String): JSONObject? {
+        lastPlayError = null
         if (PLAY_BASES.isEmpty()) {
             Log.e("PadApi", "未配置播放信息服务地址")
             return null
@@ -639,7 +648,7 @@ object Api {
         } finally {
             conn.disconnect()
         }
-    }.getOrNull()
+    }.onFailure { lastPlayError = it.message?.take(80) }.getOrNull()
 
     /** 服务器代取播放地址（服务器签名 + 固定设备身份）。 */
     private fun playFromServer(vid: String, want: Int = 0): PlayInfo? {
