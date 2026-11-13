@@ -787,7 +787,13 @@ fun PlayerScreen(
             // 刷剧里以前会卡在错误页，用户还得手动换一部；现在直接在列表里跳过这一部。
             preparing = false
             failed = null
+            val badVid = episodes.getOrNull(index - 1)?.vid.orEmpty()
             episodes.getOrNull(index - 1)?.let { Store.markUnsupported(it.vid) }
+            // 记进日志（会随日志回传）：以后能统计到底多少集是 VVC、哪些剧
+            Log.e(
+                "Playback",
+                "unsupported codec vid=$badVid series=$seriesId title=$title feed=$feed ep=${index}/${episodes.size}",
+            )
             if (feed) {
                 runCatching {
                     android.widget.Toast.makeText(

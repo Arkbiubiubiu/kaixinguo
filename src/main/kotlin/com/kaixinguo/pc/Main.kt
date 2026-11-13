@@ -178,6 +178,8 @@ fun main() = application {
     // 优先 IPv6；纯 IPv4 网络仍会回退，不影响其他机器。
     System.setProperty("java.net.preferIPv6Addresses", "true")
     boot()
+    // 日志定时回传（每 10 分钟发增量）
+    runCatching { ClientLog.start() }
     val state = rememberWindowState(width = 1440.dp, height = 900.dp)
     // 无边框（旧版 decorations:false 同语义）：系统白条不画，自绘窗口钮+拖拽区
     Window(

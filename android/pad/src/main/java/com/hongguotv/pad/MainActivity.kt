@@ -50,6 +50,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         Store.init(this)
+        // 日志定时回传（每 10 分钟发增量），电视上出问题我们也能主动看到
+        runCatching { LogUploader.start(this) }
         App.state = Store
         App.playToken = BuildConfig.PLAY_TOKEN
         App.playBases = BuildConfig.DEFAULT_PLAY_BASES.split(',').map { it.trim() }.filter { it.isNotEmpty() }
