@@ -96,7 +96,7 @@ fun HomeScreen(
     var loadingMore by remember { mutableStateOf(false) }
     var hasMore by remember { mutableStateOf(true) }
     var cursor by remember { mutableStateOf<FeedPage?>(null) }
-    val grid = rememberLazyGridState()
+    val grid = UiMemo.homeGrid
     val scope = rememberCoroutineScope()
     // hero：焦点跟随（PC 端同款信息的 TV 形态）——焦点在网格哪张卡上，
     // hero 就显示那部剧的详情档案（评分/热度/追剧/集数/标签/简介）。
@@ -167,7 +167,11 @@ fun HomeScreen(
         error = null
         hasMore = true
         cursor = null
-        if (cached.isNotEmpty() && grid.firstVisibleItemIndex > 0) grid.scrollToItem(0)
+        // 只有「切了 tab」才回到顶部；从详情返回时保持原来的滚动位置
+        if (cached.isNotEmpty() && UiMemo.homeTab != tab.name) {
+            runCatching { grid.scrollToItem(0) }
+            UiMemo.homeTab = tab.name
+        }
 
         // 首屏最多试 3 次：服务器忙/上游风控时退避重试。
         // 之前失败一次就把 cursor 留空，下面的翻页 collect 因 cursor==null

@@ -193,7 +193,7 @@ fun FindScreen(
     var searchId by remember { mutableStateOf("") }
     var searchHasMore by remember { mutableStateOf(false) }
     val suggest = remember { mutableStateListOf<String>() }
-    val grid = rememberLazyGridState()
+    val grid = UiMemo.findGrid
 
     val selectedMap = selected.toMap()
 
@@ -745,7 +745,7 @@ fun RankScreen(
     var offset by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(true) }
     var loadingMore by remember { mutableStateOf(false) }
-    val rankList = rememberLazyListState()
+    val rankList = UiMemo.rankList
     // 这一屏榜单数据真正的拉取时刻（0 = 还没拿到）。来自服务端返回的 age：
     // age 是「这份数据离从上游拉下来过去了多久」，所以真实时刻 = 现在 - age。
     var dataAt by remember { mutableStateOf(0L) }
@@ -1236,7 +1236,7 @@ fun NewDramaScreen(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit = {}) 
     var offset by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(true) }
     var loadingMore by remember { mutableStateOf(false) }
-    val grid = rememberLazyGridState()
+    val grid = UiMemo.newGrid
 
     LaunchedEffect(tab, gender) {
         if (tab != 0) return@LaunchedEffect
@@ -1556,6 +1556,7 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
             )
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
+                state = UiMemo.calTabList,
                 contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -1981,6 +1982,7 @@ private fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, I
             visible.isEmpty() -> StatusBox(loading = false, error = null, empty = true, emptyText = if (search.isNotBlank()) "没有匹配的记录" else "看过的剧会出现在这里")
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
+                state = UiMemo.historyList,
                 contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -2139,6 +2141,7 @@ private fun ShelfTab(key: String, onOpen: (String) -> Unit) {
                 val rowH = ((maxHeight - 4.dp - 8.dp - gap) / 2).coerceAtLeast(140.dp)
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(6),
+                    state = UiMemo.shelfGrid,
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(gap),
@@ -2376,6 +2379,7 @@ fun FollowReserveScreen(
             )
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
+                state = UiMemo.followList,
                 contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -2600,6 +2604,7 @@ fun AccountScreen(
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize(),
+            state = UiMemo.settingsList,
             contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

@@ -49,15 +49,20 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
     // 与 PC 一致：漫剧 / 真人剧 / 推荐（默认推荐）
     val feedTypes = listOf("3", "4", "2")
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
-    var tab by remember { mutableStateOf(2) }
-    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
-    var cursor by remember { mutableStateOf(0) }
-    var page by remember { mutableStateOf<FeedPage?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    var tab by remember { mutableStateOf(UiMemo.feedTab) }
+    var cards by remember { mutableStateOf(UiMemo.feedCards) }
+    var cursor by remember { mutableStateOf(UiMemo.feedCursor) }
+    var page by remember { mutableStateOf(UiMemo.feedPage) }
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
+        // 从详情/播放返回：列表和位置都还在，直接接回来，不重新拉、不回到第一部
+        if (cards.isNotEmpty() && tab == UiMemo.feedTab) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         cards = emptyList()
         cursor = 0
@@ -68,6 +73,14 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
         cards = p?.cards.orEmpty()
         page = p
         loading = false
+    }
+
+    // 位置随变随记：进详情时这一页会离开组合，这些状态只能存在单例里
+    LaunchedEffect(tab, cursor, cards, page) {
+        UiMemo.feedTab = tab
+        UiMemo.feedCursor = cursor
+        UiMemo.feedCards = cards
+        UiMemo.feedPage = page
     }
 
     /** 换剧：-1 上一部 / +1 下一部；走到列表尾自动续一页。 */

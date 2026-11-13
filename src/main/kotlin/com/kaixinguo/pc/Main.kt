@@ -111,6 +111,24 @@ private val brandBitmap: ImageBitmap? by lazy {
     }.getOrNull()
 }
 
+/** 跨页面保留的浏览状态：进详情/播放再返回时回到原处（原来一离开页面状态就全丢）。 */
+private object PageMemo {
+    var feedTab = 2
+    var feedCursor = 0
+    var feedCards: List<SeriesCard> = emptyList()
+    var feedPage: FeedPage? = null
+
+    var homeTab = -1
+    var homeRefresh = -1
+
+    val homeWall = androidx.compose.foundation.ScrollState(0)
+    val findScroll = androidx.compose.foundation.ScrollState(0)
+    val rankList = androidx.compose.foundation.lazy.LazyListState(0, 0)
+    val newScroll = androidx.compose.foundation.ScrollState(0)
+    val calList = androidx.compose.foundation.lazy.LazyListState(0, 0)
+    val settingsScroll = androidx.compose.foundation.ScrollState(0)
+}
+
 /** 官网（设置页「关于」右侧：二维码 + 地址，扫码或点击打开）。 */
 private const val OFFICIAL_SITE = "https://kxg.fabao.xin/"
 
@@ -589,11 +607,15 @@ private fun HomePage(
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     /** 推荐墙的滚动状态：滚到靠底就自动续拉，不再放按钮 */
-    val wallScroll = rememberScrollState()
+    val wallScroll = PageMemo.homeWall
 
     val tabTypes = listOf("2", "3", "4")
 
     LaunchedEffect(tab, refresh) {
+        // 只有切 tab / 换一批才回到墙顶；从详情返回时保留原来的滚动位置
+        val resetWall = PageMemo.homeTab != tab || PageMemo.homeRefresh != refresh
+        PageMemo.homeTab = tab
+        PageMemo.homeRefresh = refresh
         loading = true
         val result = withContext(Dispatchers.IO) {
             runCatching { Api.firstPageCached(tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]) }.getOrNull()
@@ -620,7 +642,7 @@ private fun HomePage(
         error = if (cur == null || cur.cards.isEmpty()) "暂时没能加载出来 · 检查网络后重试" else null
         loading = false
         // 换 tab / 换一批回到墙顶（滚动状态是常驻的，不重置会停在上一次的底部）
-        runCatching { wallScroll.scrollTo(0) }
+        if (resetWall) runCatching { wallScroll.scrollTo(0) }
     }
 
     val cards = page?.cards.orEmpty()
@@ -786,16 +808,21 @@ private fun HomePage(
 private fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> Unit, onExit: () -> Unit) {
     // 旧版顶部 Tab 顺序：漫剧 / 真人剧 / 推荐（默认推荐）
     val feedTypes = listOf("3", "4", "2")
-    var tab by remember { mutableStateOf(2) }
-    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
-    var cursor by remember { mutableStateOf(0) }
-    var loading by remember { mutableStateOf(true) }
+    var tab by remember { mutableStateOf(PageMemo.feedTab) }
+    var cards by remember { mutableStateOf(PageMemo.feedCards) }
+    var cursor by remember { mutableStateOf(PageMemo.feedCursor) }
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     /** 翻页游标（cellId/planId/sessionId/offset 都在里面），hasMore=false 后不再翻 */
-    var feedCursor by remember { mutableStateOf<FeedPage?>(null) }
+    var feedCursor by remember { mutableStateOf(PageMemo.feedPage) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
+        // 从详情/播放返回：列表和位置都还在，直接接回来
+        if (cards.isNotEmpty() && tab == PageMemo.feedTab) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         cards = emptyList()
         cursor = 0
@@ -805,6 +832,14 @@ private fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> U
         cards = page?.cards.orEmpty()
         feedCursor = page
         loading = false
+    }
+
+    // 位置随变随记：进详情时这一页会离开组合，状态只能放在单例里
+    LaunchedEffect(tab, cursor, cards, feedCursor) {
+        PageMemo.feedTab = tab
+        PageMemo.feedCursor = cursor
+        PageMemo.feedCards = cards
+        PageMemo.feedPage = feedCursor
     }
 
     // 滚轮换剧（旧版 onWheelStep 同语义）：向下=下一部，向上=上一部；
@@ -878,7 +913,7 @@ private fun FindPage(
     var searchTick by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     // 整页一个滚动容器（旧版同款：筛选随内容一起滚走，不是上半屏钉死）
-    val pageScroll = rememberScrollState()
+    val pageScroll = PageMemo.findScroll
 
     // 体裁（大类）一变，主题/设定/背景整块换一套——不同体裁下小类完全不同。
     // 以前这里写死 findRowsCached("landpage")：面板永远是 tab 38（真人剧）那一套，
@@ -1101,7 +1136,7 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var nextOffset by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
-    val rankList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val rankList = PageMemo.rankList
 
     LaunchedEffect(Unit) {
         tabs = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
@@ -1570,7 +1605,7 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var moreLoading by remember { mutableStateOf(false) }
     // 推荐视图滚动容器（滚动近底部自动翻页）
-    val newScroll = rememberScrollState()
+    val newScroll = PageMemo.newScroll
 
     // 日历：日期条 + 当日上新行卡列表。
     // 官方口径（对齐 Android CalendarTab / Windows calendar.rs）：
@@ -1586,7 +1621,7 @@ private fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var calLoading by remember { mutableStateOf(false) }
     var calMoreLoading by remember { mutableStateOf(false) }
     var calInit by remember { mutableStateOf(false) }
-    val calList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val calList = PageMemo.calList
     val dayFmt = remember { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.CHINA) }
 
     LaunchedEffect(view, gender) {
@@ -2721,7 +2756,7 @@ private fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogin
 @Composable
 private fun SettingsPage() {
     val scope = rememberCoroutineScope()
-    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Box(Modifier.fillMaxSize().verticalScroll(PageMemo.settingsScroll)) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
