@@ -501,7 +501,9 @@ fun PlayerScreen(
             eng.setVolume(if (muted) 0f else volume)
             eng.setSpeed(speed)
             // 首次进入这一集：优先用调用方给的位置（历史点进来），其次本地进度
-            val resume = if (index == startIndex && startMs > 0) startMs
+            // 刷剧（embedded）是预览连播：每一部都从第一秒开始，不接上次进度
+            val resume = if (embedded) 0L
+            else if (index == startIndex && startMs > 0) startMs
             else PcStore.posOf(ep.vid).takeIf { it > 3_000 } ?: 0L
             eng.start(resume)
             // 刷剧（预览连播）不计入历史：只有进「观看完整短剧」后的正常播放页才记
