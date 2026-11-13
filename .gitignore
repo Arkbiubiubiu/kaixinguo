@@ -48,3 +48,6 @@ android/pad/src/main/jniLibs/
 
 # 体验审计台账（本地，不入公开仓库）
 UX-REVIEW.md
+
+# libmpv 二进制（本机构建资产，GPL/LGPL 见 NOTICE）
+android/pad/mpvlibs/

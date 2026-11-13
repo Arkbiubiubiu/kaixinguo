@@ -1,6 +1,7 @@
 ﻿package com.hongguotv.pad
 
 import java.io.BufferedInputStream
+import java.io.File
 import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -52,7 +53,7 @@ class RemoteVideo(private val info: PlayInfo) {
      * 一部 16MB 的片子会白下 7MB+，电视上就是好几秒的「切集卡住」。
      * 现在 1MB 起、不够再翻倍（正常一次就够），而且首跳正好对齐一个缓存块。
      */
-    fun prepare(warmLastBlock: Boolean = true) {
+    fun prepare(warmLastBlock: Boolean = true, allowVvc: Boolean = false) {
         // 先按 512KB 取索引：短剧 moov 一般几十~几百 KB，少下一半就少等半秒；
         // 不够再翻倍（最多 8MB），只是多一次请求，不会失败。
         var want = 512 * 1024
@@ -67,7 +68,9 @@ class RemoteVideo(private val info: PlayInfo) {
                 // bytevc2：码流是字节跳动的私有封装，平台 AV1 解码器也只能建起来、
                 // 一帧都出不来（实测：有声音、画面全黑）。这种情况直接抛明确的
                 // 「编码不支持」，由播放页提示并跳到下一集，绝不黑屏装死。
-                if (ready.videoCodec.equals("bvc2", true)) throw UnsupportedCodecException("bytevc2/AV1")
+                if (!allowVvc && ready.videoCodec.equals("bvc2", true)) {
+                    throw UnsupportedCodecException("bytevc2/AV1")
+                }
                 // AV1（bytevc2）：把首帧里的序列头写进 av1C。只靠容器里的私有 bv2C
                 // 配置盒，解码器建得起来但一帧都不出（有声音、画面全黑）。
                 if (MediaCrypto.hasAv1(ready.header) && ready.videoSampleAt >= 0L && ready.videoSampleSize > 0) {
@@ -126,6 +129,22 @@ class RemoteVideo(private val info: PlayInfo) {
     private val cache = object : LinkedHashMap<Long, ByteArray>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray>?): Boolean =
             size > CACHE_BLOCKS
+    }
+
+    /** 把解密后的整份 MP4 落盘（VVC 导出用；只在 VVC 剧集走这条路）。 */
+    fun saveDecrypted(file: File) {
+        if (total <= 0) error("视频长度未知")
+        file.parentFile?.mkdirs()
+        file.outputStream().buffered(1 shl 20).use { out ->
+            var at = 0L
+            while (at < total) {
+                val want = minOf(1L shl 20, total - at).toInt()
+                val chunk = read(at, want)
+                if (chunk.isEmpty()) break
+                out.write(chunk)
+                at += chunk.size
+            }
+        }
     }
 
     fun read(at: Long, want: Int): ByteArray {

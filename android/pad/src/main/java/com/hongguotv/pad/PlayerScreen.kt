@@ -65,6 +65,7 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import `is`.xyz.mpv.MpvCore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -171,6 +172,8 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
     var preparing by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf<String?>(null) }
+    /** 当前这一集是 VVC（bytevc2）：改走 libmpv 本地软解 */
+    var vvcEpisode by remember(seriesId) { mutableStateOf<Episode?>(null) }
     var attempt by remember { mutableStateOf(0) }
     var preparedIndex by remember { mutableStateOf(-1) }
     /** 转圈只在真需要等网络时出现；已经预取好的集切过去不转 */
@@ -783,8 +786,17 @@ fun PlayerScreen(
         } catch (e: CancellationException) {
             throw e
         } catch (e: UnsupportedCodecException) {
-            // 这一集的片源是私有编码（bytevc2/AV1 封装），平台解码器解不了。
-            // 刷剧里以前会卡在错误页，用户还得手动换一部；现在直接在列表里跳过这一部。
+            // 这一集的片源是 VVC（bytevc2）：不当失败处理，转 libmpv 本地软解。
+            val epNow = episodes.getOrNull(index - 1)
+            if (epNow != null && (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) &&
+                MpvCore.nativeSupported()
+            ) {
+                preparing = false
+                failed = null
+                vvcEpisode = epNow
+                return@LaunchedEffect
+            }
+            // 其他未知编码：刷剧里跳过这一部，详情里跳下一集
             preparing = false
             failed = null
             val badVid = episodes.getOrNull(index - 1)?.vid.orEmpty()
@@ -797,14 +809,14 @@ fun PlayerScreen(
             if (feed) {
                 runCatching {
                     android.widget.Toast.makeText(
-                        context, "这部是 AV1 片源（本机解不了），已跳过",
+                        context, "这部片源本机解不了，已跳过",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
                 if (onFeedStep != null) {
                     onFeedStep.invoke(1)
                 } else {
-                    failed = "这部是 AV1 片源（本机解不了），按 ↓ 换下一部"
+                    failed = "这部片源本机解不了，按 ↓ 换下一部"
                 }
             } else {
                 // 往后找第一个没被标记过的集，别一集一集地慢慢试
@@ -1298,6 +1310,20 @@ fun PlayerScreen(
         commentsOpen = false
         focusManager.clearFocus()
         runCatching { focus.requestFocus() }
+    }
+
+    // VVC 剧集：交给 libmpv 本地软解（ExoPlayer 没有 VVC 解码器）
+    vvcEpisode?.let { ep ->
+        VvcPlayerScreen(
+            seriesId = seriesId,
+            episodes = episodes,
+            startIndex = index,
+            title = title,
+            startAtZero = feed,
+            onBack = onBack,
+            onDetail = onDetail,
+        )
+        return
     }
 
     Box(
