@@ -297,6 +297,7 @@ fun HomeScreen(
             showArrows = !isTv,
             onPrev = { stepHero(-1) },
             onNext = { stepHero(1) },
+            onPlay = { c -> onPlay(c) },
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
         )
         }
@@ -350,6 +351,16 @@ fun HomeScreen(
                             )
                         }
                     }
+                    if (!hasMore && !loadingMore && cards.isNotEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                Modifier.fillMaxWidth().height(44.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("没有更多了", color = TextDim, fontSize = 12.sp)
+                            }
+                        }
+                    }
                     if (loadingMore) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             Box(
@@ -395,6 +406,8 @@ private fun HomeHero(
     showArrows: Boolean = false,
     onPrev: () -> Unit = {},
     onNext: () -> Unit = {},
+    /** 电视上没有「继续看」入口：每张卡都要先进详情，侧栏还要按 5 次才到历史 */
+    onPlay: (SeriesCard) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val title = detail?.title?.takeIf { it.isNotEmpty() } ?: card?.title.orEmpty()
@@ -498,6 +511,26 @@ private fun HomeHero(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // 「继续看第 N 集」：电视上少按好几下（历史里点也行，但路径太深）
+                card?.let { c ->
+                    val resume = Store.progress(c.seriesId)
+                    if (resume > 0) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Red)
+                                .clickable { onPlay(c) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                "继续看第 $resume 集",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically,

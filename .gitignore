@@ -45,3 +45,6 @@ run_out.txt
 # gomobile 产物（Apache-2.0，构建方法见 resolver/README.md）
 android/pad/libs/*.jar
 android/pad/src/main/jniLibs/
+
+# 体验审计台账（本地，不入公开仓库）
+UX-REVIEW.md

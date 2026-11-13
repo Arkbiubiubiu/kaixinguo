@@ -672,6 +672,12 @@ fun FindScreen(
                             LoadingSpinner(size = 26.dp, stroke = 3.dp)
                         }
                     }
+                } else if (!hasMore && cards.isNotEmpty() && searchQuery == null) {
+                    item(span = { GridItemSpan(6) }, key = "find_end") {
+                        Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
+                            Text("没有更多了", color = TextDim, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }
@@ -1053,13 +1059,20 @@ private fun RankSheet(
                 }
             },
     ) {
-        Text(
-            title,
-            color = TextMain,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 4.dp),
-        )
+        // 面板整屏铺开，必须有一个看得见的「关闭」：以前只能按返回键
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                color = TextMain,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.weight(1f))
+            TvChip("关闭", selected = false) { onClose() }
+        }
         Column(
             Modifier
                 .weight(1f)
@@ -1870,7 +1883,8 @@ fun RecordsScreen(
     onOpen: (String) -> Unit,
     onPlay: (seriesId: String, index: Int, startMs: Long) -> Unit,
 ) {
-    var tab by remember { mutableStateOf(initialTab) }  // 0 历史 1 收藏 2 点赞
+    // 从详情/播放返回时保持原来的页签：以前回收藏列表就跳回「历史」
+    var tab by remember { mutableStateOf(UiMemo.recordsTab.takeIf { it >= 0 } ?: initialTab) }  // 0 历史 1 收藏 2 点赞
     var filter by remember { mutableStateOf(0) }        // 0 全部 1 未看完 2 已看完
 
     Column(Modifier.fillMaxSize()) {
@@ -1882,7 +1896,7 @@ fun RecordsScreen(
         ) {
             // 与 PC 一致不显示页面大标题，只留三 tab
             listOf("历史", "收藏", "点赞").forEachIndexed { i, label ->
-                TvChip(label, selected = tab == i) { tab = i }
+                TvChip(label, selected = tab == i) { tab = i; UiMemo.recordsTab = i }
             }
         }
         when (tab) {
@@ -2676,8 +2690,8 @@ private fun GroupTitle(text: String, color: Color) {
 fun AccountScreen(
     onOpen: (String) -> Unit,
     onLogin: () -> Unit,
-    /** 跳到「历史」页（PC 的我的页里收藏/点赞是 tab，TV 收敛为入口跳转到历史页三 tab） */
-    onGoHistory: () -> Unit = {},
+    /** 跳到「历史」页并落到指定 tab（0 历史 / 1 收藏 / 2 点赞） */
+    onGoHistory: (Int) -> Unit = {},
 ) {
     var syncMsg by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -2763,8 +2777,8 @@ fun AccountScreen(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    TvChip("收藏", selected = false) { onGoHistory() }
-                    TvChip("点赞", selected = false) { onGoHistory() }
+                    TvChip("收藏", selected = false) { onGoHistory(1) }
+                    TvChip("点赞", selected = false) { onGoHistory(2) }
                 }
             }
             // 状态卡（原版：绿字登录态 + 来源/uid + 退出）
@@ -2799,9 +2813,22 @@ fun AccountScreen(
                                     runAsync("同步") { Api.syncAccount(force = true); "已重新同步" }
                                 }
                                 Spacer(Modifier.width(10.dp))
-                                TvChip("退出", selected = false) {
-                                    Store.clearAccount()
-                                    refreshMsg("已退出登录")
+                                var confirmExit by remember { mutableStateOf(false) }
+                                LaunchedEffect(confirmExit) {
+                                    if (confirmExit) {
+                                        kotlinx.coroutines.delay(3_000)
+                                        confirmExit = false
+                                    }
+                                }
+                                TvChip(if (confirmExit) "确认退出？" else "退出", selected = false) {
+                                    if (confirmExit) {
+                                        Store.clearAccount()
+                                        refreshMsg("已退出登录")
+                                        confirmExit = false
+                                    } else {
+                                        confirmExit = true
+                                        refreshMsg("再点一次确认退出（本机收藏列表会清空）")
+                                    }
                                 }
                             }
                         } else {
@@ -3043,6 +3070,28 @@ fun LoginScreen(onDone: () -> Unit) {
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // 电视上打字很痛苦：先把「用手机配对」这条路摆在最前面
+            if (Store.appContext.packageName.endsWith("nativeapp")) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Star.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
+                        .border(1.dp, Star.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                        .padding(16.dp),
+                ) {
+                    Column {
+                        Text("电视上建议用手机配对登录", color = Star, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "回到「我的」页，用手机扫那里的二维码或输入 6 位匹配码即可，不用在电视上打手机号和验证码。",
+                            color = TextDim, fontSize = 12.sp, lineHeight = 18.sp,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        TvChip("回「我的」用配对码", selected = true) { onDone() }
+                    }
+                }
+            }
+
             // 说明：为什么要单独登录、登录后能做什么
             Box(
                 Modifier
@@ -3529,12 +3578,17 @@ fun SettingsScreen() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("清除缓存", color = TextMain, fontSize = 15.sp)
-                        Text("视频分块缓存、首屏缓存与详情缓存", color = TextDim, fontSize = 12.sp)
+                        Text("清除图片与列表缓存", color = TextMain, fontSize = 15.sp)
+                        Text("封面图、首页/详情缓存；观看记录和登录不受影响", color = TextDim, fontSize = 12.sp)
                     }
                     TvChip("清除", selected = false) {
                         FeedCache.clear()
                         DetailCache.clear()
+                        runCatching {
+                            android.widget.Toast.makeText(
+                                Store.appContext, "已清理图片与列表缓存", android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }
                 }
             }

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,9 +56,18 @@ fun LoginScreen(onBack: () -> Unit) {
     var mfa by remember { mutableStateOf<PcLogin.NeedMfa?>(null) }
     var mfaPolling by remember { mutableStateOf(false) }
     var mfaNote by remember { mutableStateOf<String?>(null) }
+    // 验证码冷却：以前点完「获取验证码」立刻又能点，可以连点轰炸。
+    var codeCountdown by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
-    fun run(label: String, block: () -> String) {
+    LaunchedEffect(codeCountdown) {
+        if (codeCountdown > 0) {
+            kotlinx.coroutines.delay(1_000)
+            codeCountdown -= 1
+        }
+    }
+
+    fun run(label: String, block: () -> String, afterOk: (() -> Unit)? = null) {
         if (busy) return
         busy = true
         message = null
@@ -68,6 +78,7 @@ fun LoginScreen(onBack: () -> Unit) {
                 result.onSuccess { text ->
                     messageIsError = false
                     message = text
+                    afterOk?.invoke()
                 }.onFailure { t ->
                     if (t is PcLogin.NeedMfa) {
                         // 不是错误：展示「发短信给指定号码」，然后轮询放行
@@ -110,8 +121,17 @@ fun LoginScreen(onBack: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Field(mobile, "11 位手机号", Modifier.weight(1f)) { mobile = it.filter { c -> c.isDigit() }.take(11) }
                 Spacer(Modifier.width(10.dp))
-                PrimaryButton(if (busy) "请稍候" else "获取验证码", null) {
-                    run("发送验证码") { PcLogin.sendCode(mobile) }
+                PrimaryButton(
+                    when {
+                        busy -> "请稍候"
+                        codeCountdown > 0 -> "${codeCountdown}s 后重发"
+                        else -> "获取验证码"
+                    },
+                    null,
+                ) {
+                    if (codeCountdown == 0 && !busy) {
+                        run("发送验证码", { PcLogin.sendCode(mobile) }, afterOk = { codeCountdown = 60 })
+                    }
                 }
             }
 
@@ -122,10 +142,16 @@ fun LoginScreen(onBack: () -> Unit) {
                 Field(code, "短信里的 4~6 位数字", Modifier.weight(1f)) { code = it.filter { c -> c.isDigit() }.take(6) }
                 Spacer(Modifier.width(10.dp))
                 PrimaryButton(if (busy) "请稍候" else "登录", null) {
-                    run("登录") {
+                    run("登录", {
                         val name = PcLogin.login(mobile, code)
                         "登录成功：$name"
-                    }
+                    }, afterOk = {
+                        // 登录成功后别把人留在登录页：稍等一下让「登录成功」visible，再回上一页
+                        scope.launch {
+                            kotlinx.coroutines.delay(800)
+                            onBack()
+                        }
+                    })
                 }
             }
 

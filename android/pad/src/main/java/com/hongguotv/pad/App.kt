@@ -520,7 +520,7 @@ fun App() {
                 is Screen.Account -> AccountScreen(
                     onOpen = { push(Screen.Detail(it)) },
                     onLogin = { push(Screen.Login) },
-                    onGoHistory = { push(Screen.History) },
+                    onGoHistory = { t -> UiMemo.recordsTab = t; push(Screen.History) },
                 )
                 is Screen.Login -> LoginScreen(onDone = { back() })
                 is Screen.Settings -> SettingsScreen()

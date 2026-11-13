@@ -330,7 +330,6 @@ fun EpisodeCommentsPanel(
                             .background(if (text.isBlank() || sending) PanelHi else Red)
                             .clickable(enabled = text.isNotBlank() && !sending) {
                                 val body = text.trim()
-                                text = ""
                                 sending = true
                                 scope.launch {
                                     val sent = withContext(Dispatchers.IO) {
@@ -339,8 +338,20 @@ fun EpisodeCommentsPanel(
                                     }
                                     sending = false
                                     if (sent != null) {
+                                        text = ""
                                         items = listOf(sent) + items
                                         total += 1
+                                    } else {
+                                        // 发失败时保留输入内容并说明原因（以前清空 + 无提示）
+                                        withContext(Dispatchers.Main) {
+                                            runCatching {
+                                                android.widget.Toast.makeText(
+                                                    Store.appContext,
+                                                    if (Store.loggedIn) "评论没发出去，检查网络后重试" else "登录后才能发评论",
+                                                    android.widget.Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }
+                                        }
                                     }
                                 }
                             }

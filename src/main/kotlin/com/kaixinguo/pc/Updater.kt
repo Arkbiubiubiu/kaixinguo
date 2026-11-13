@@ -31,8 +31,8 @@ import java.security.MessageDigest
 
 /** 版本号唯一来源：发版时只改这里（与 build.gradle.kts 的 packageVersion 对齐）。 */
 object BuildInfo {
-    const val VERSION = "1.2.39"
-    const val CODE = 10239
+    const val VERSION = "1.2.40"
+    const val CODE = 10240
 }
 
 data class PcUpdate(

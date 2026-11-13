@@ -35,4 +35,12 @@ object UiMemo {
     val settingsList = LazyListState(0, 0)
     val calTabList = LazyListState(0, 0)
     val settingsScroll = ScrollState(0)
+
+    /** 历史页当前页签（0 历史 / 1 收藏 / 2 点赞）：从详情返回时别再跳回历史 */
+    var recordsTab: Int = -1
+
+    /** 详情页的滚动位置与页签：从播放返回时回到第 80 集那一段 */
+    val detailScroll = ScrollState(0)
+    var detailTabSeries: String = ""
+    var detailTab: Int = 0
 }

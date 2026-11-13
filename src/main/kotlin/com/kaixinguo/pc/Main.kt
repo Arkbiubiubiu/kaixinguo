@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -120,6 +121,12 @@ private object PageMemo {
 
     var homeTab = -1
     var homeRefresh = -1
+
+    // 找剧：筛选条件 + 已加载结果一起存。只存滚动位置的话，用户从详情返回会
+    // 看到「筛选被清空、列表回到第一页，但页面停在原来那段」的错位内容。
+    var findSelected: Map<String, String> = emptyMap()
+    var findPage: FeedPage? = null
+    var findRows: List<FilterRow> = emptyList()
 
     val homeWall = androidx.compose.foundation.ScrollState(0)
     val findScroll = androidx.compose.foundation.ScrollState(0)
@@ -364,9 +371,9 @@ private fun AppShell(onExit: () -> Unit) {
         }
         // 首次启动引导（开源版不含内置服务器地址）
         var setupDismissed by androidx.compose.runtime.remember {
-            androidx.compose.runtime.mutableStateOf(PcStore.configured)
+            androidx.compose.runtime.mutableStateOf(PcStore.setupTipSeen)
         }
-        if (!setupDismissed && !PcStore.configured) {
+        if (!setupDismissed) {
             Box(
                 Modifier.fillMaxSize().background(Color(0xCC000000))
                     .clickable { },
@@ -386,11 +393,12 @@ private fun AppShell(onExit: () -> Unit) {
                     )
                     Spacer(Modifier.height(18.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        SecondaryButton("知道了") { setupDismissed = true }
+                        SecondaryButton("知道了") { setupDismissed = true; PcStore.setupTipSeen = true }
                         Spacer(Modifier.width(8.dp))
                         PrimaryButton("打开设置", Icons.Filled.Settings) {
                             RouteHolder.select("设置")
                             setupDismissed = true
+                            PcStore.setupTipSeen = true
                         }
                     }
                 }
@@ -486,6 +494,29 @@ private fun AppRoot() {
     var tab by remember { mutableStateOf(0) }
     var refresh by remember { mutableStateOf(0) }
     var route by remember { mutableStateOf<Route?>(null) }
+    // 二级页返回栈：详情 → 播放 → 返回应该回详情，而不是直接掉回首页。
+    // 以前 route 是单值，Player 的返回一律 route=null，用户想换集/看简介得重新找剧。
+    val navStack = remember { mutableStateListOf<Route>() }
+    fun nav(next: Route) {
+        route?.let { if (it != next) navStack.add(it) }
+        route = next
+    }
+    fun navBack() {
+        route = if (navStack.isNotEmpty()) navStack.removeAt(navStack.lastIndex) else null
+    }
+    fun navReset() {
+        navStack.clear()
+        route = null
+    }
+    // 从任意入口点「播放」都接着上次看的地方：以前只有历史页/详情页会续播，
+    // 首页、排行榜、新剧、追更、预约一点就回第 1 集。
+    fun playSeries(id: String) {
+        val ep = runCatching {
+            com.kaixinguo.pc.PcStore.history().firstOrNull { it.optString("seriesId") == id }
+                ?.optInt("episode", 0) ?: 0
+        }.getOrDefault(0)
+        nav(Route.Player(id, if (ep > 0) ep else 1))
+    }
     // 打赏浮层：侧栏「打赏」入口，纯展示不接支付
     var donateOpen by remember { mutableStateOf(false) }
     // 追更未读角标（旧版侧栏 badge）：启动查一次，之后每 20 分钟一轮
@@ -514,7 +545,7 @@ private fun AppRoot() {
                 if (route is Route.Player) "刷剧" else page,
                 collapsed,
                 onSelect = {
-                    if (it == "打赏") donateOpen = true else { RouteHolder.select(it); route = null }
+                    if (it == "打赏") donateOpen = true else { RouteHolder.select(it); navReset() }
                 },
                 onToggle = { RouteHolder.toggle() },
                 badge = unreadNotices,
@@ -522,52 +553,53 @@ private fun AppRoot() {
         }
         Column(Modifier.weight(1f)) {
             when (val r = route) {
-                Route.Login -> LoginScreen(onBack = { route = null })
+                Route.Login -> LoginScreen(onBack = { navBack() })
                 is Route.Creator -> CreatorScreen(
                     r.userId,
-                    onBack = { route = null },
-                    onPlaySeries = { id -> route = Route.Player(id) },
+                    onBack = { navBack() },
+                    onPlaySeries = { id -> nav(Route.Player(id)) },
                 )
-                is Route.Detail -> DetailScreen(r.seriesId, initialTab = r.tab, onBack = { route = null }, onPlay = { ep -> route = Route.Player(r.seriesId, ep) }, onOpenSeason = { route = Route.Detail(it) }, onCreator = { route = Route.Creator(it) })
-                is Route.Player -> PlayerScreen(r.seriesId, r.index, r.startMs, onBack = { UiMode.exitAll(); route = null }, onDetail = { route = Route.Detail(r.seriesId) }, onComments = { route = Route.Detail(r.seriesId, tab = 1) }, onSwitchSeries = { id -> route = Route.Player(id, 1) })
+                is Route.Detail -> DetailScreen(r.seriesId, initialTab = r.tab, onBack = { navBack() }, onPlay = { ep -> nav(Route.Player(r.seriesId, ep)) }, onOpenSeason = { nav(Route.Detail(it)) }, onCreator = { nav(Route.Creator(it)) })
+                is Route.Player -> PlayerScreen(r.seriesId, r.index, r.startMs, onBack = { UiMode.exitAll(); navBack() }, onDetail = { nav(Route.Detail(r.seriesId)) }, onComments = { nav(Route.Detail(r.seriesId, tab = 1)) }, onSwitchSeries = { id -> route = Route.Player(id, 1) })
                 null -> {
                     when (page) {
                         "刷剧" -> FeedPlayerPage(
-                            onDetail = { route = Route.Detail(it) },
-                            onComments = { route = Route.Detail(it, tab = 1) },
+                            onDetail = { nav(Route.Detail(it)) },
+                            onComments = { nav(Route.Detail(it, tab = 1)) },
                             onExit = { RouteHolder.select("推荐") },
                         )
                         "找剧" -> FindPage(
                             search,
                             onSearch = { SearchHolder.query.value = it },
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { id -> route = Route.Player(id) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { id -> playSeries(id) },
                         )
                         "排行榜" -> RankPage(
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { route = Route.Player(it) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { playSeries(it) },
                         )
                         "新剧" -> NewPage(
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { id -> route = Route.Player(id) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { id -> playSeries(id) },
                         )
                         "历史" -> HistoryPage(
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { id, ep, pos -> route = Route.Player(id, ep, pos) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { id, ep, pos -> nav(Route.Player(id, ep, pos)) },
                         )
                         "追更" -> FollowsPage(
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { id -> route = Route.Player(id) },
-                            onPlayEp = { id, ep -> route = Route.Player(id, ep) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { id -> playSeries(id) },
+                            onPlayEp = { id, ep -> nav(Route.Player(id, ep)) },
+                            onLogin = { nav(Route.Login) },
                         )
                         "预约" -> ReservePage(
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { route = Route.Player(it) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { playSeries(it) },
                         )
                         "我的" -> MinePage(
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { id -> route = Route.Player(id) },
-                            onLogin = { route = Route.Login },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { id -> playSeries(id) },
+                            onLogin = { nav(Route.Login) },
                         )
                         "设置" -> SettingsPage()
                         else -> HomePage(
@@ -575,8 +607,8 @@ private fun AppRoot() {
                             refresh = refresh,
                             onTab = { tab = it },
                             onRefresh = { refresh++ },
-                            onOpen = { route = Route.Detail(it) },
-                            onPlay = { id -> route = Route.Player(id) },
+                            onOpen = { nav(Route.Detail(it)) },
+                            onPlay = { id -> playSeries(id) },
                         )
                     }
                 }
@@ -737,7 +769,7 @@ private fun HomePage(
                 when {
                     // 首屏骨架（旧版 WallSkeleton：墙形灰砖比转圈更像成品）
                     loading && page == null -> Box(Modifier.fillMaxSize().padding(top = 8.dp)) { SkeletonWall() }
-                    error != null && (page?.cards.isNullOrEmpty()) -> CenterMessage(error!!)
+                    error != null && (page?.cards.isNullOrEmpty()) -> CenterRetry(error!!) { onRefresh() }
                     else -> Column(Modifier.fillMaxSize().verticalScroll(wallScroll)) {
                         if (hero != null) {
                             HeroCard(
@@ -903,10 +935,13 @@ private fun FindPage(
     onOpen: (String) -> Unit,
     onPlay: (String) -> Unit,
 ) {
-    var rows by remember { mutableStateOf<List<FilterRow>>(emptyList()) }
-    var rowsLoading by remember { mutableStateOf(true) }
-    var selected by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var page by remember { mutableStateOf<FeedPage?>(null) }
+    // 首次进入用 PageMemo 里的上次状态（从详情/播放返回时原样恢复）
+    var rows by remember { mutableStateOf(PageMemo.findRows) }
+    var rowsLoading by remember { mutableStateOf(PageMemo.findRows.isEmpty()) }
+    var selected by remember { mutableStateOf(PageMemo.findSelected) }
+    var page by remember { mutableStateOf(PageMemo.findPage) }
+    var restoredRows by remember { mutableStateOf(PageMemo.findRows.isNotEmpty()) }
+    var restoredList by remember { mutableStateOf(PageMemo.findPage != null) }
     var loading by remember { mutableStateOf(false) }
     var moreLoading by remember { mutableStateOf(false) }
     /** 「搜索」按钮的重搜信号：输入是即时的，按钮只是手动再来一次 */
@@ -920,6 +955,10 @@ private fun FindPage(
     // 选「漫剧 + 悬疑」时把真人剧的悬疑 id 发给漫剧频道，结果必然是空。
     val genreSel = selected["genre"].orEmpty()
     LaunchedEffect(genreSel) {
+        if (restoredRows) {
+            restoredRows = false
+            return@LaunchedEffect
+        }
         rowsLoading = true
         val r = withContext(Dispatchers.IO) {
             runCatching { Api.findRowsCached(genreSel) }.getOrDefault(emptyList())
@@ -932,6 +971,10 @@ private fun FindPage(
     }
 
     LaunchedEffect(selected, search, searchTick) {
+        if (restoredList) {
+            restoredList = false
+            return@LaunchedEffect
+        }
         loading = true
         val result = withContext(Dispatchers.IO) {
             runCatching {
@@ -944,6 +987,13 @@ private fun FindPage(
         }
         page = result
         loading = false
+    }
+
+    // 写回 PageMemo：离开页面后这些状态还在，返回时列表和筛选对得上
+    LaunchedEffect(rows) { PageMemo.findRows = rows }
+    LaunchedEffect(selected, page) {
+        PageMemo.findSelected = selected
+        PageMemo.findPage = page
     }
 
     // 滚动加载：滚到离底部 500px 内自动翻页（旧版哨兵同语义，去掉按钮）
@@ -1009,7 +1059,7 @@ private fun FindPage(
             Spacer(Modifier.width(10.dp))
             PrimaryButton("搜索", null) { searchTick++ }
             Spacer(Modifier.width(14.dp))
-            Text("共 ${page?.cards?.size ?: 0} 部", color = Palette.dim, fontSize = 12.sp)
+            Text("已加载 ${page?.cards?.size ?: 0} 部", color = Palette.dim, fontSize = 12.sp)
         }
         // 筛选项：每个维度一行，横向滚动，和旧 PC 版一致（不再是一整面标签墙）
         if (rowsLoading && rows.isEmpty()) {
@@ -1099,7 +1149,7 @@ private fun FindPage(
                     Text(
                         when {
                             moreLoading -> "加载中…"
-                            search.isNotBlank() -> "搜索结果共 ${cardsNow.size} 部"
+                            search.isNotBlank() -> "搜索结果已加载 ${cardsNow.size} 部"
                             hasMoreNow -> "下滑加载更多"
                             else -> "已经到底了"
                         },
@@ -1138,9 +1188,20 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var loadingMore by remember { mutableStateOf(false) }
     val rankList = PageMemo.rankList
 
-    LaunchedEffect(Unit) {
-        tabs = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
-        metaAt = System.currentTimeMillis()
+    // 榜单元数据拉不到时，以前 tab 为 null、下面的 effect 直接 return，
+    // loading 永远 true → 页面无限转圈。现在落成可重试的失败态。
+    var metaError by remember { mutableStateOf(false) }
+    var metaAttempt by remember { mutableStateOf(0) }
+    LaunchedEffect(metaAttempt) {
+        val list = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
+        if (list.isEmpty()) {
+            metaError = true
+            loading = false
+        } else {
+            tabs = list
+            metaError = false
+            metaAt = System.currentTimeMillis()
+        }
     }
 
     val tab = tabs.getOrNull(tabIndex)
@@ -1338,7 +1399,9 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         }
         // 子榜筛选已收进上方「筛选」按钮弹层（旧版 FilterPanelButton 同构），
         // 不再整面平铺——面板只在子榜自带选项时出现，且不占版面。
-        if (loading) {
+        if (tab == null && metaError) {
+            CenterRetry("榜单没加载出来（网络问题）") { metaError = false; loading = true; metaAttempt += 1 }
+        } else if (loading) {
             CenterLoading()
         } else {
             val list = cards
@@ -2355,7 +2418,12 @@ private fun HistoryRow(
 // ---------------------------------------------------------------- 追更（追更的剧 / 更新提醒）
 
 @Composable
-private fun FollowsPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onPlayEp: (String, Int) -> Unit = { id, _ -> onPlay(id) }) {
+private fun FollowsPage(
+    onOpen: (String) -> Unit,
+    onPlay: (String) -> Unit,
+    onPlayEp: (String, Int) -> Unit = { id, _ -> onPlay(id) },
+    onLogin: () -> Unit = {},
+) {
     var tab by remember { mutableStateOf(0) }
     var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -2417,6 +2485,13 @@ private fun FollowsPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onPl
                 )
                 loading -> CenterLoading()
                 cards.isEmpty() && error != null -> CenterMessage("加载失败：$error")
+                !PcStore.loggedIn -> EmptyState(
+                    title = "登录后才能同步追更",
+                    hint = "追更跟着账号走：登录后在这里看更新，也可以在任意设备用匹配码同步",
+                    icon = FollowsEmptyIcon,
+                    actionLabel = "手机号登录",
+                    onAction = onLogin,
+                )
                 cards.isEmpty() -> EmptyState(
                     title = "还没有追更的剧",
                     hint = "在详情页点「追更」，有新集时会出现在这里",
@@ -3219,6 +3294,18 @@ fun SkeletonWall(columns: Int = 8, rows: Int = 2) {
 fun CenterMessage(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, color = Palette.dim, fontSize = 14.sp)
+    }
+}
+
+/** 失败态：一句话 + 一个真的会重试的按钮（纯文字的「检查网络后重试」等于没说）。 */
+@Composable
+fun CenterRetry(text: String, action: String = "重试", onAction: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(text, color = Palette.dim, fontSize = 14.sp)
+            Spacer(Modifier.height(14.dp))
+            PrimaryButton(action, null, onAction)
+        }
     }
 }
 

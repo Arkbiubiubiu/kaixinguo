@@ -84,6 +84,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -173,9 +174,31 @@ fun PlayerScreen(
     var quality by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf<String?>(null) }
+    // 详情/分集拉取的重试计数：以前详情失败时 episodes 永远是空的，起播 effect 直接 return，
+    // loading 就永远停在 true（界面无限转圈、没有任何文字和重试）。
+    var detailAttempt by remember(seriesId) { mutableStateOf(0) }
+    var detailFailed by remember(seriesId) { mutableStateOf(false) }
+    // 取流重试计数：失败卡片上的「重试」把它 +1，起播 effect 会重跑
+    var playAttempt by remember(seriesId) { mutableStateOf(0) }
+    // 播放中断（不是自然播完）：断流时解码进程退出，以前被当成「播完」自动跳下一集
+    var interrupted by remember(seriesId) { mutableStateOf(false) }
+    // 每一集只自动重试一次：按 (seriesId, index) 记住，切集自动重置
+    var retryUsed by remember(seriesId, index) { mutableStateOf(false) }
+    // 输入框正在打字：此时空格/方向键必须交给输入框，不能当播放快捷键
+    var dmTyping by remember { mutableStateOf(false) }
+    var cmTyping by remember { mutableStateOf(false) }
+    // 播放页内的轻提示（发送失败、已加入下载等），2.5 秒自动消失
+    var toast by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(toast) {
+        if (toast != null) {
+            kotlinx.coroutines.delay(2_500)
+            toast = null
+        }
+    }
     var volume by remember { mutableStateOf(PcStore.volumePref) }
     var muted by remember { mutableStateOf(PcStore.mutedPref) }
-    var speed by remember { mutableStateOf(PcStore.playbackRate) }
+    // 老版本可能把 3.0 写进了设置，读出来先夹到引擎真正支持的区间
+    var speed by remember { mutableStateOf(PcStore.playbackRate.coerceIn(0.75f, 2f)) }
     var tick by remember { mutableStateOf(0L) }
     var danmakuOn by remember { mutableStateOf(PcStore.danmakuEnabled) }
     var danmaku by remember { mutableStateOf<List<DmItem>>(emptyList()) }
@@ -298,6 +321,8 @@ fun PlayerScreen(
                     )
                     commentText = ""
                     replyTo = null
+                } else {
+                    toast = if (PcStore.loggedIn) "回复没发出去，检查网络后重试" else "登录后才能回复"
                 }
             } else {
                 val added = withContext(Dispatchers.IO) {
@@ -307,6 +332,8 @@ fun PlayerScreen(
                     commentItems = listOf(added) + commentItems
                     commentTotal += 1
                     commentText = ""
+                } else {
+                    toast = if (PcStore.loggedIn) "评论没发出去，检查网络后重试" else "登录后才能发评论"
                 }
             }
             commentSending = false
@@ -365,14 +392,27 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(seriesId) {
-        val d = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(seriesId) }.getOrNull() }
-        if (d != null) {
-            title = d.title
-            episodes = d.episodes
-            detail = d
-            followed = d.followed
+    LaunchedEffect(seriesId, detailAttempt) {
+        if (detailAttempt > 0) {
+            loading = true
+            failed = null
+            detailFailed = false
         }
+        val d = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(seriesId) }.getOrNull() }
+        if (d == null || d.episodes.isEmpty()) {
+            // 以前这里只是「什么都不做」，起播 effect 因为 episodes 为空直接返回，
+            // 界面永远转圈。现在落成可重试的失败态。
+            detailFailed = true
+            loading = false
+            failed = "剧集信息没加载出来（网络或片源问题），点「重试」再试一次"
+            return@LaunchedEffect
+        }
+        detailFailed = false
+        failed = null
+        title = d.title
+        episodes = d.episodes
+        detail = d
+        followed = d.followed
         reviewTotal = withContext(Dispatchers.IO) {
             runCatching { Api.reviews(seriesId, 1) }.getOrNull()?.total ?: 0
         }
@@ -380,7 +420,7 @@ fun PlayerScreen(
     }
 
     // 起播 / 切集 / 换清晰度
-    LaunchedEffect(index, episodes.size, quality) {
+    LaunchedEffect(index, episodes.size, quality, playAttempt) {
         val ep = episodes.getOrNull(index - 1) ?: return@LaunchedEffect
         // 末帧定格：此处旧引擎还在（下面才 release），先把它的末帧钉住
         if (engine?.frame != null) {
@@ -389,6 +429,7 @@ fun PlayerScreen(
         }
         loading = true
         failed = null
+        interrupted = false
         engine?.release()
         engine = null
         runCatching { proxy?.stop() }
@@ -441,7 +482,9 @@ fun PlayerScreen(
         if (built == null) {
             warm?.release()
             loading = false
-            failed = "本版不内置取流服务：请在「设置 → 服务配置 → 取流服务」填写地址"
+            // 不再甩给用户「本版不内置取流服务」——这句话只有在真的没配地址时才对，
+            // 而绝大多数失败是网络波动/片源。真实原因已经打在日志里，界面只给可行动的说法。
+            failed = "这一集暂时取不到（网络波动或片源问题），点「重试」再试一次"
             return@LaunchedEffect
         }
         remote = built.first
@@ -468,11 +511,30 @@ fun PlayerScreen(
             // 自然播完到下一集之间也有一个极短的「旧引擎已停、新引擎未建」窗口，
             // 把启动宽限从这里就开始算，避免 500ms 轮询刚好落进去把控制栏点亮
             engineReadyAt = System.currentTimeMillis()
-            if (index < episodes.size) {
-                if (PcStore.autoNextEpisode) index += 1
-            } else if (PcStore.deleteAfterFinish) {
-                // 旧版「看完自动删除」：最后一集播完把这条历史抹掉
-                PcStore.removeHistory(seriesId)
+            // 关键：引擎进程退出**不等于**这一集播完了 —— 断网/片源断流/解码进程被杀
+            // 都会走到这里。以前一律当播完自动跳下一集，连续断就一路跳到最后一集，
+            // 历史被写坏。现在只有位置到片尾（≥95%）才算播完。
+            val dur = runCatching { eng.info?.durationMs ?: 0L }.getOrDefault(0L)
+            val pos = runCatching { eng.positionMs }.getOrDefault(0L)
+            val finished = dur <= 0L || pos >= dur * 95 / 100
+            when {
+                !finished && !retryUsed -> {
+                    // 每集自动重试一次（用户不用动，网络抖一下就自愈）
+                    retryUsed = true
+                    loading = true
+                    playAttempt += 1
+                }
+                !finished -> {
+                    interrupted = true
+                    loading = false
+                }
+                index < episodes.size -> {
+                    if (PcStore.autoNextEpisode) index += 1
+                }
+                PcStore.deleteAfterFinish -> {
+                    // 旧版「看完自动删除」：最后一集播完把这条历史抹掉
+                    PcStore.removeHistory(seriesId)
+                }
             }
         }
         loading = false
@@ -631,6 +693,9 @@ fun PlayerScreen(
             .focusRequester(focus)
             .focusable()
             .onPreviewKeyEvent { ev ->
+                // 正在弹幕/评论输入框里打字：空格、方向键、回车全部还给输入框，
+                // 否则「空格=暂停、←→=快进、↑↓=切集」会把字吃掉。只保留 Esc。
+                if ((dmTyping || cmTyping) && ev.key != Key.Escape) return@onPreviewKeyEvent false
                 // 空格单独处理：按住会触发系统级按键重复（只有 KeyDown），
                 // 所以必须等 KeyUp 之后的下一次 KeyDown 才算「新的一次按键」，
                 // 再叠加 500ms 时间防抖（某些键盘会发 down/up/down 抖动）。
@@ -773,7 +838,46 @@ fun PlayerScreen(
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(msg, color = Color.White, fontSize = 14.sp)
                 Spacer(Modifier.height(12.dp))
-                SecondaryButton("返回", onClick = onBack)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SecondaryButton("重试") {
+                        failed = null
+                        loading = true
+                        if (detailFailed) detailAttempt += 1 else playAttempt += 1
+                    }
+                    SecondaryButton("返回", onClick = onBack)
+                }
+            }
+        }
+        if (interrupted) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("播放中断了（网络波动或片源断流）", color = Color.White, fontSize = 14.sp)
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SecondaryButton("重试") {
+                        interrupted = false
+                        loading = true
+                        playAttempt += 1
+                    }
+                    if (index < episodes.size) {
+                        SecondaryButton("下一集") {
+                            interrupted = false
+                            index += 1
+                        }
+                    }
+                    SecondaryButton("返回", onClick = onBack)
+                }
+            }
+        }
+
+        toast?.let { msg ->
+            Box(
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = 84.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color(0xCC000000))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text(msg, color = Color.White, fontSize = 13.sp)
             }
         }
 
@@ -979,7 +1083,7 @@ fun PlayerScreen(
                                 textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
                                 cursorBrush = SolidColor(Color.White),
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().onFocusChanged { dmTyping = it.isFocused },
                             )
                         }
                         Box(
@@ -995,8 +1099,21 @@ fun PlayerScreen(
                                     val ep = episodes.getOrNull(index - 1)
                                     val text = dmText.trim()
                                     if (ep != null && text.isNotEmpty()) {
-                                        dmText = ""
-                                        scope.launch(Dispatchers.IO) { runCatching { Api.sendDanmaku(ep.vid, seriesId, text, tick) } }
+                                        // 发成功了再清空：以前先清空，未登录/失败时用户打的字直接没了，
+                                        // 还以为发出去了。
+                                        scope.launch(Dispatchers.IO) {
+                                            val ok = runCatching {
+                                                Api.sendDanmaku(ep.vid, seriesId, text, tick)
+                                            }.getOrDefault(false)
+                                            withContext(Dispatchers.Main) {
+                                                if (ok) {
+                                                    dmText = ""
+                                                } else {
+                                                    toast = if (PcStore.loggedIn) "弹幕没发出去，检查网络后重试"
+                                                    else "登录后才能发弹幕"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 .padding(horizontal = 10.dp),
@@ -1109,7 +1226,8 @@ fun PlayerScreen(
                 OverlayAt(anchor("speed"), w = 132, h = 244, centered = true) {
                     UpMenuCard {
                         MenuTitle("倍速")
-                        listOf(0.75f, 1f, 1.25f, 1.5f, 2f, 3f).forEach { s ->
+                        // 引擎最多 2x（ffmpeg atempo 上限），菜单里不要再给 3x 这种点了没用的档
+                        listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s ->
                             MenuRow(speedLabel(s), speed == s) { popup = null; speed = s; PcStore.playbackRate = s; engine?.setSpeed(s) }
                         }
                     }
@@ -1251,7 +1369,7 @@ fun PlayerScreen(
                                     textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
                                     cursorBrush = SolidColor(Color.White),
                                     singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth().onFocusChanged { cmTyping = it.isFocused },
                                 )
                             }
                             Box(Modifier.clip(RoundedCornerShape(50)).clickable { emojiFor = if (emojiFor == "comment") null else "comment" }.padding(horizontal = 6.dp, vertical = 4.dp)) {
@@ -1759,7 +1877,11 @@ private fun BackPill(text: String, onClick: () -> Unit) {
 @Composable
 private fun ScrubBar(currentMs: Long, durationMs: Long, onSeek: (Float) -> Unit) {
     var hovered by remember { mutableStateOf(false) }
-    val ratio = if (durationMs > 0) (currentMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    // 拖动期间只在本地记比例，松手才真正 seek 一次。
+    // 以前每移动一像素就回调 onSeek → 每次都杀解码进程重开，拖动全程黑屏、CPU 飙升。
+    var dragRatio by remember { mutableStateOf<Float?>(null) }
+    val baseRatio = if (durationMs > 0) (currentMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val ratio = dragRatio ?: baseRatio
     Canvas(
         Modifier.fillMaxWidth().height(16.dp)
             .onPointerEvent(PointerEventType.Enter) { hovered = true }
@@ -1770,16 +1892,25 @@ private fun ScrubBar(currentMs: Long, durationMs: Long, onSeek: (Float) -> Unit)
                 }
             }
             .pointerInput(durationMs) {
-                detectDragGestures { change, _ ->
-                    if (durationMs > 0 && size.width > 0) onSeek((change.position.x / size.width).coerceIn(0f, 1f))
+                detectDragGestures(
+                    onDragStart = { off ->
+                        if (durationMs > 0 && size.width > 0) dragRatio = (off.x / size.width).coerceIn(0f, 1f)
+                    },
+                    onDragEnd = {
+                        dragRatio?.let { if (durationMs > 0) onSeek(it) }
+                        dragRatio = null
+                    },
+                    onDragCancel = { dragRatio = null },
+                ) { change, _ ->
+                    if (durationMs > 0 && size.width > 0) dragRatio = (change.position.x / size.width).coerceIn(0f, 1f)
                 }
             },
     ) {
         val cy = size.height / 2f
-        val h = if (hovered) 4.dp.toPx() else 2.dp.toPx()
+        val h = if (hovered || dragRatio != null) 4.dp.toPx() else 2.dp.toPx()
         drawRoundRect(Color(0x33FFFFFF), Offset(0f, cy - h / 2f), Size(size.width, h), CornerRadius(h / 2f))
         drawRoundRect(Color(0x99FFFFFF), Offset(0f, cy - h / 2f), Size(size.width * ratio, h), CornerRadius(h / 2f))
-        if (hovered) drawCircle(Color.White, 6.dp.toPx(), Offset(size.width * ratio, cy))
+        if (hovered || dragRatio != null) drawCircle(Color.White, 6.dp.toPx(), Offset(size.width * ratio, cy))
     }
 }
 

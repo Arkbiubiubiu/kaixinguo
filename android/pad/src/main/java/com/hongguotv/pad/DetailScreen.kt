@@ -89,7 +89,16 @@ fun DetailScreen(
     var reviewScoreCount by remember(seriesId) { mutableStateOf(0) }
     /** 剧评总数（PC 的 tab 上会显示「剧评 2109」） */
     var reviewTotal by remember(seriesId) { mutableStateOf(0) }
-    var tab by remember(seriesId) { mutableStateOf(0) }
+    // 页签与滚动位置跨页面保留：从播放返回时回到「选集」原来那一段
+    var tab by remember(seriesId) {
+        mutableStateOf(
+            if (UiMemo.detailTabSeries == seriesId) UiMemo.detailTab else 0,
+        )
+    }
+    LaunchedEffect(tab) {
+        UiMemo.detailTabSeries = seriesId
+        UiMemo.detailTab = tab
+    }
     var introExpanded by remember(seriesId) { mutableStateOf(false) }
     // 续播集数：初始取本地，进页后再用官方历史刷新一次（主号在手机上看过也能续上）
     var resumeIdx by remember(seriesId) { mutableStateOf(0) }
@@ -363,7 +372,7 @@ fun DetailScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(UiMemo.detailScroll)
                 .padding(horizontal = 24.dp),
         ) {
             // ---------- 头部：封面 + 元信息 + 按钮 ----------

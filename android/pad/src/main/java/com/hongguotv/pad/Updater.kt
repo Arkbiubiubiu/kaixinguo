@@ -595,11 +595,11 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                                 error = null
                                 if (!Updater.canInstall(context)) {
                                     needPerm = true
-                                    error = "电视还没允许本应用安装软件，点右边「去设置」打开开关后重试"
+                                    error = "本机还没允许本应用安装软件，点右边「去设置」打开开关后重试"
                                 } else if (!Updater.install(context, cached)) {
                                     error = "无法拉起安装器，请检查「安装未知应用」权限"
                                 } else {
-                                    error = "已调起安装器。如果电视上没有出现安装界面，点右边「重新安装」再试"
+                                    error = "已调起安装器。如果屏幕上没有出现安装界面，点右边「重新安装」再试"
                                 }
                                 return@clickable
                             }
@@ -619,7 +619,7 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                                         // 系统静默拒绝，安装界面根本不会弹 —— 直接说明白并给入口
                                         progress = -1
                                         needPerm = true
-                                        error = "电视还没允许本应用安装软件，点右边「去设置」打开开关后重试"
+                                        error = "本机还没允许本应用安装软件，点右边「去设置」打开开关后重试"
                                     } else if (!Updater.install(context, file)) {
                                         progress = -1
                                         error = "无法拉起安装器，请检查「安装未知应用」权限"
@@ -628,7 +628,7 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                                         // 关掉之后用户既看不到安装界面、也没有重试入口，
                                         // 只能重新下载一遍（这就是「第一次点安装没用」的由来）
                                         progress = -1
-                                        error = "已调起安装器。如果电视上没有出现安装界面，点右边「重新安装」再试"
+                                        error = "已调起安装器。如果屏幕上没有出现安装界面，点右边「重新安装」再试"
                                     }
                                 }
                             }

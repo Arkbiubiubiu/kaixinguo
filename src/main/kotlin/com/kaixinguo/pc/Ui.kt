@@ -354,6 +354,18 @@ fun ListSearchBox(value: String, onChange: (String) -> Unit, hint: String) {
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        // 一键清空：以前只能一个字一个字退
+        if (value.isNotEmpty()) {
+            Text(
+                "✕",
+                color = Palette.faint,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable { onChange("") }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+        }
     }
 }
 

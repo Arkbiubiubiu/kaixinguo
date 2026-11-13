@@ -248,6 +248,11 @@ object PcStore : AccountState {
         saveNotices()
     }
 
+    /** 「开箱即用」新手提示是否已经看过（只弹一次，别每次冷启动都挡首屏） */
+    var setupTipSeen: Boolean
+        get() = str("setup_tip_seen", if (configured) "1" else "0") == "1"
+        set(v) = put("setup_tip_seen", if (v) "1" else "0")
+
     // ---------------- PC 端本地设置（弹幕显示，旧版 playback-prefs 同款） ----------------
 
     /** 倍速 0.25–4，默认 1（旧版 hongguo.playbackRate） */
@@ -272,25 +277,47 @@ object PcStore : AccountState {
 
     // ---------------- PC 端本地设置（弹幕显示，旧版 playback-prefs 同款） ----------------
 
+    // 四项和上面的开关一样用可观察镜像：直接读文件的话滑杆拖不动、数值也不刷新
+    private val dmOpacityState = mutableStateOf(str("dm_opacity", "0.9").toFloatOrNull()?.coerceIn(0.1f, 1f) ?: 0.9f)
+    private val dmFontState = mutableStateOf(str("dm_font", "1").toFloatOrNull()?.coerceIn(0.5f, 2f) ?: 1f)
+    private val dmDensityState = mutableStateOf(str("dm_density", "1").toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f)
+    private val dmAreaState = mutableStateOf(str("dm_area", "1").toFloatOrNull()?.coerceIn(0.25f, 1f) ?: 1f)
+
     /** 文字不透明度 0.1–1，默认 0.9 */
     var danmakuOpacity: Float
-        get() = str("dm_opacity", "0.9").toFloatOrNull()?.coerceIn(0.1f, 1f) ?: 0.9f
-        set(v) = put("dm_opacity", v.coerceIn(0.1f, 1f).toString())
+        get() = dmOpacityState.value
+        set(v) {
+            val c = v.coerceIn(0.1f, 1f)
+            dmOpacityState.value = c
+            put("dm_opacity", c.toString())
+        }
 
     /** 字号缩放 0.5–2（1 = 画面高度自适应基准字号） */
     var danmakuFontScale: Float
-        get() = str("dm_font", "1").toFloatOrNull()?.coerceIn(0.5f, 2f) ?: 1f
-        set(v) = put("dm_font", v.coerceIn(0.5f, 2f).toString())
+        get() = dmFontState.value
+        set(v) {
+            val c = v.coerceIn(0.5f, 2f)
+            dmFontState.value = c
+            put("dm_font", c.toString())
+        }
 
     /** 密度 0–1（1 = 全部显示，入场按比例丢弃） */
     var danmakuDensity: Float
-        get() = str("dm_density", "1").toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f
-        set(v) = put("dm_density", v.coerceIn(0f, 1f).toString())
+        get() = dmDensityState.value
+        set(v) {
+            val c = v.coerceIn(0f, 1f)
+            dmDensityState.value = c
+            put("dm_density", c.toString())
+        }
 
     /** 显示区域 0.25–1（弹幕占画面顶部的高度比例） */
     var danmakuArea: Float
-        get() = str("dm_area", "1").toFloatOrNull()?.coerceIn(0.25f, 1f) ?: 1f
-        set(v) = put("dm_area", v.coerceIn(0.25f, 1f).toString())
+        get() = dmAreaState.value
+        set(v) {
+            val c = v.coerceIn(0.25f, 1f)
+            dmAreaState.value = c
+            put("dm_area", c.toString())
+        }
 
     override fun contains(key: String, seriesId: String): Boolean = readSet(key).contains(seriesId)
 

@@ -121,6 +121,16 @@ fun PlayerScreen(
     onFeedStep: ((Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    // 播放中保持屏幕常亮：平板按系统熄屏时间黑屏暂停，用户以为播放器坏了
+    DisposableEffect(Unit) {
+        val window = (context as? android.app.Activity)?.window
+        window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            runCatching {
+                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
 
     var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
     /** 这一季的详情是否已经拉回来了：用来区分「还在加载」和「这一季确实没内容」 */
@@ -1530,6 +1540,18 @@ fun PlayerScreen(
             }
         }
 
+        // 刷剧模式：暂停时给一个明显的暂停图标，否则「按了确定没反应」分不清是暂停还是卡了
+        if (feed && !player.isPlaying) {
+            Box(Modifier.align(Alignment.Center)) {
+                Box(
+                    Modifier.size(76.dp)
+                        .background(Color(0x66000000), RoundedCornerShape(38.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("‖", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
         // 刷剧模式：控制台不出现，只留底部一行标题/集数 + 细进度条（纯展示，不参与焦点）
         if (feed) {
             Column(
