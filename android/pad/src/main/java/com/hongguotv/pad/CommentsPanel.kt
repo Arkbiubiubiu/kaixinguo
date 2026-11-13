@@ -158,7 +158,11 @@ fun EpisodeCommentsPanel(
 
             when {
                 loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("加载中…", color = TextDim, fontSize = 13.sp)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        LoadingSpinner(size = 26.dp, stroke = 2.5.dp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("加载中…", color = TextDim, fontSize = 13.sp)
+                    }
                 }
                 error != null -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text(error!!, color = TextDim, fontSize = 13.sp)

@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -120,10 +119,12 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
     val current = cards.getOrNull(cursor)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
-            loading -> CircularProgressIndicator(
-                color = Red,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            // 统一用 LoadingSpinner（withFrameNanos 自转），不要 material3 的圈：
+            // 电视普遍把「动画时长缩放」关成 0，material3 的无限动画在这种情况下
+            // 完全不派帧，圈会冻在第一帧，看着就是一个红点/一个卡住的圈。
+            loading -> Box(Modifier.align(Alignment.Center)) {
+                LoadingBlock("正在加载…")
+            }
             current == null -> Text(
                 "没有拿到推荐，检查网络后重试",
                 color = Color.White.copy(alpha = 0.7f),

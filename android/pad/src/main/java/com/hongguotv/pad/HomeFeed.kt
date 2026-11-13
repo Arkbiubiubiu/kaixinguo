@@ -48,7 +48,6 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -163,6 +162,11 @@ fun HomeScreen(
         val cached = withContext(Dispatchers.IO) { FeedCache.load(key) }
         cards.clear()
         cards.addAll(cached)
+        // hero 也要跟着缓存立刻出来：原来只有网络首屏回来后才赋 heroCard，
+        // 而卡片墙是先用缓存画的 —— 于是开 App 那几秒上面是 300dp 的一块空板
+        // （用户看到的就是「加载中但什么都不动」）。缓存里的第一张先顶上，
+        // 详情/评分随后到；网络首屏回来后再按新列表重设。
+        if (cached.isNotEmpty()) heroCard = cached.firstOrNull()
         loading = cached.isEmpty()
         error = null
         hasMore = true
@@ -440,15 +444,38 @@ private fun HomeHero(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (cover.isNotEmpty()) {
-                AsyncImage(
-                    model = cover,
-                    contentDescription = title,
-                    modifier = Modifier
+                // 海报要等图片下载完才有内容，之前留一块纯色，看着像「页面卡住」。
+                // 底下垫一个转动的小圈，图到了自然盖住（AsyncImage 未完成时是透明的）。
+                Box(
+                    Modifier
                         .fillMaxHeight()
                         .aspectRatio(3f / 4f)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop,
-                )
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Panel),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(size = 26.dp, stroke = 2.5.dp)
+                    AsyncImage(
+                        model = cover,
+                        contentDescription = title,
+                        modifier = Modifier.matchParentSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+            }
+            if (cover.isEmpty()) {
+                // 连封面地址都还没有（首屏还没回来）：占住同样大小的位置并转圈，
+                // 不要留一块空板子让人以为卡死。
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .aspectRatio(3f / 4f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Panel),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(size = 26.dp, stroke = 2.5.dp)
+                }
             }
             Column(
                 Modifier
