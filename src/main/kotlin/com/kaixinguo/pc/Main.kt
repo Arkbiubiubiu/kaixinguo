@@ -147,7 +147,30 @@ private val officialQrBitmap: ImageBitmap? by lazy {
     }.getOrNull()
 }
 
+/** 单实例锁：必须常驻引用，局部变量被回收 = 锁被释放，双实例又会出现。 */
+private object SingleInstance {
+    var channel: java.nio.channels.FileChannel? = null
+    var lock: java.nio.channels.FileLock? = null
+}
+
 fun main() = application {
+    // 单实例：再双击一次图标不该开第二个窗口（两个实例的登录态/设置会互相覆盖）
+    runCatching {
+        val dir = java.io.File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "KaixinguoPC")
+        dir.mkdirs()
+        val ch = java.nio.channels.FileChannel.open(
+            java.io.File(dir, "app.lock").toPath(),
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.WRITE,
+        )
+        val lk = runCatching { ch.tryLock() }.getOrNull()
+        if (lk == null) {
+            ch.close()
+            kotlin.system.exitProcess(0)
+        }
+        SingleInstance.channel = ch
+        SingleInstance.lock = lk
+    }
     // 本机到更新源的 IPv4 连接会被本地代理链路直接重置（curl -4 返回 000，IPv6 正常），
     // 而 Java 默认先走 IPv4 → 「检查更新」永远失败（旧版还把它显示成「已是最新」）。
     // 优先 IPv6；纯 IPv4 网络仍会回退，不影响其他机器。
@@ -330,8 +353,8 @@ private fun AppShell(onExit: () -> Unit) {
     }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(Palette.bg)) {
-            // 小窗模式：顶栏整条藏掉，整窗只剩画面（旧版 miniScreen 同语义）
-            if (!UiMode.mini.value) {
+            // 小窗 / 全屏播放：顶栏整条藏掉，整窗只剩画面
+            if (!UiMode.mini.value && !UiMode.fullscreen.value) {
             // 顶栏：44px 薄行（左：logo + 应用名 + 日期；右：窗口钮）
             Row(
                 Modifier.fillMaxWidth().height(44.dp).background(Palette.panel),
@@ -413,9 +436,11 @@ object UiMode {
     val portrait = androidx.compose.runtime.mutableStateOf(false)
     /** 小窗：整窗 520×300 + 侧栏顶栏全藏，只剩画面（旧版 miniScreen） */
     val mini = androidx.compose.runtime.mutableStateOf(false)
+    /** 全屏播放：侧栏和顶栏一起藏掉，真正铺满（以前只是把窗口最大化，侧栏还占 72px） */
+    val fullscreen = androidx.compose.runtime.mutableStateOf(false)
     var prevBounds: java.awt.Rectangle = java.awt.Rectangle(0, 0, 1440, 900)
     var saved = false
-    fun exitAll() { portrait.value = false; mini.value = false }
+    fun exitAll() { portrait.value = false; mini.value = false; fullscreen.value = false }
 }
 
 private object RouteHolder {
@@ -540,7 +565,9 @@ private fun AppRoot() {
     Row(Modifier.fillMaxSize().background(Palette.bg)) {
         // 播放页也保留侧栏（旧版刷剧就是带侧栏的）；
         // 小窗/竖屏里侧栏没有余地，整条藏掉（旧版同语义）
-        if ((route == null || route is Route.Player) && !UiMode.mini.value && !UiMode.portrait.value) {
+        if ((route == null || route is Route.Player) && !UiMode.mini.value &&
+            !UiMode.portrait.value && !UiMode.fullscreen.value
+        ) {
             Sidebar(
                 if (route is Route.Player) "刷剧" else page,
                 collapsed,

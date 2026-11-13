@@ -44,7 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -710,6 +712,8 @@ private fun EpisodePanel(
     onPick: (Int) -> Unit,
 ) {
     val grid = rememberLazyGridState()
+    val fm = LocalFocusManager.current
+    var gotFocus by remember(index) { mutableStateOf(false) }
     LaunchedEffect(index) {
         val row = (index - 1) / 8
         grid.scrollToItem((row - 3).coerceAtLeast(0) * 8)
@@ -718,6 +722,10 @@ private fun EpisodePanel(
             withFrameNanos { }
             withFrameNanos { }
             runCatching { focusFirst.requestFocus() }
+            // 兜底：当前集那一格还没被组合出来时 requestFocus 会静默失败，
+            // 遥控器就像失灵。等 250ms 还没拿到焦点，就把焦点推进网格里。
+            kotlinx.coroutines.delay(250)
+            if (!gotFocus) runCatching { fm.moveFocus(FocusDirection.Down) }
         }
     }
     Column(
@@ -748,7 +756,11 @@ private fun EpisodePanel(
                 Box(
                     Modifier
                         .then(
-                            if (active && focusFirst != null) Modifier.focusRequester(focusFirst) else Modifier,
+                            if (active && focusFirst != null) {
+                                Modifier
+                                    .focusRequester(focusFirst)
+                                    .onFocusChanged { if (it.isFocused) gotFocus = true }
+                            } else Modifier,
                         )
                         .height(if (tv) 46.dp else 42.dp)
                         .clickable { onPick(i + 1) }

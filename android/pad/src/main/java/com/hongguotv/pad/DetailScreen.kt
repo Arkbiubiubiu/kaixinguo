@@ -550,7 +550,7 @@ fun DetailScreen(
                                         Text(
                                             if (c.role.isNotBlank()) c.role else "出品方",
                                             color = TextDim,
-                                            fontSize = 9.sp,
+                                            fontSize = 11.sp,
                                             maxLines = 1,
                                         )
                                     }
@@ -682,7 +682,7 @@ fun DetailScreen(
             // ---------- 备案号（PC 同款位置：按钮行下方、tab 上方） ----------
             if (d.recordNumber.isNotBlank()) {
                 Spacer(Modifier.height(14.dp))
-                Text(d.recordNumber, color = RecordDim, fontSize = 10.sp)
+                Text(d.recordNumber, color = RecordDim, fontSize = 12.sp)
             }
 
             // ---------- 三 tab：选集 N / 剧评 N / 相关推荐 N ----------
@@ -859,8 +859,11 @@ private fun MetaChip(
  *  原来 TV 是纯数字一行 17 个（原版口径），信息只有序号，与 PC 差异明显。 */
 @Composable
 private fun EpisodeGrid(episodes: List<Episode>, activeIndex: Int, onPick: (Int) -> Unit) {
+    // 500 多集一次性组合会明显卡一下：先只排前 60 集，其余点「展开全部」再排
+    var expanded by remember { mutableStateOf(false) }
+    val shown = if (expanded) episodes.size else minOf(episodes.size, 60)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        episodes.indices.chunked(5).forEach { row ->
+        episodes.indices.take(shown).chunked(5).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { i ->
                     val ep = episodes[i]
@@ -905,6 +908,17 @@ private fun EpisodeGrid(episodes: List<Episode>, activeIndex: Int, onPick: (Int)
                 }
                 // 末行补齐空位，保持格子等宽
                 repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        if (!expanded && episodes.size > shown) {
+            Box(
+                Modifier.fillMaxWidth().height(44.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(PanelHi)
+                    .clickable { expanded = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("展开全部（${episodes.size} 集）", color = TextDim, fontSize = 14.sp)
             }
         }
     }

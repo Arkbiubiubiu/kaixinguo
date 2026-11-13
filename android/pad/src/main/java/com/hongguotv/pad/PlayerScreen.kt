@@ -920,10 +920,14 @@ fun PlayerScreen(
                     heldFrame = null
                 }
                 // 顺手记下这一集看到哪儿：播放页被销毁（比如跳详情页）后回来能接着看
-                episodes.getOrNull(index - 1)?.let { ep -> Store.markPos(ep.vid, position) }
+                // 写盘挪到 IO 线程：以前每 400ms 在主线程解析并回写整份历史 JSON，
+                // 条目越多越顿；同时把历史行回写从 4 秒放宽到 10 秒（暂停/切集/退出都会补写）
+                withContext(Dispatchers.IO) {
+                    episodes.getOrNull(index - 1)?.let { ep -> Store.markPos(ep.vid, position) }
+                }
                 // 10 拍≈4 秒：写一次本地历史（退出播放页、切集、杀进程后能续上）
                 if (reportTick % 10 == 0) {
-                    Store.touchHistoryPos(seriesId, index, position)
+                    withContext(Dispatchers.IO) { Store.touchHistoryPos(seriesId, index, position) }
                 }
                 // 50 拍≈20 秒：把秒级位置报给官方（互通的关键，手机端能看到看到第几秒）。
                 // 开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）；

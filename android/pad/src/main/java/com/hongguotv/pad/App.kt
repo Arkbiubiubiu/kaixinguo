@@ -652,7 +652,7 @@ private fun NavRail(
                             Text(
                                 if (followBadge > 99) "99+" else "$followBadge",
                                 color = Color.White,
-                                fontSize = 9.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                             )
                         }
@@ -662,7 +662,7 @@ private fun NavRail(
                 Text(
                     item.label,
                     color = tint,
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                 )
             }

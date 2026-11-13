@@ -219,7 +219,7 @@ fun SeriesCardView(
                 Text(
                     statusLabel,
                     color = Color.White,
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     maxLines = 1,
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -298,7 +298,7 @@ fun SeriesCardView(
                     Text(
                         tag,
                         color = TextDim,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         lineHeight = 12.sp,
                         modifier = Modifier
                             .align(Alignment.CenterVertically)

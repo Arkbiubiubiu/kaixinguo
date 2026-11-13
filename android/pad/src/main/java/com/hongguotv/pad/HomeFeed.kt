@@ -625,7 +625,7 @@ private fun HomeHero(
                                 Text(
                                     r.title,
                                     color = TextDim,
-                                    fontSize = 10.sp,
+                                    fontSize = 12.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )

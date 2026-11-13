@@ -1626,7 +1626,7 @@ private fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) 
                     Text(
                         if (list != null && list.isNotEmpty()) "${weekdayOf(day)} · ${list.size}" else weekdayOf(day),
                         color = if (sel) Color(0xCCFFFFFF) else TextDim,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                     )
                 }
             }
@@ -1752,7 +1752,9 @@ private fun CalendarRow(
             .clip(RoundedCornerShape(12.dp))
             .background(Panel)
             .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(12.dp))
-            .clickable { onOpen() }
+            // 电视上整行不再可点：行内已经有「播放/详情/预约」三个按钮，整行再吃一次点击
+            // 会让遥控器永远选不中里面那颗「预约」（嵌套 clickable 的焦点被父级吃掉）
+            .clickable(enabled = !isTv) { onOpen() }
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

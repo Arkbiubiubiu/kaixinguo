@@ -728,7 +728,14 @@ fun PlayerScreen(
                         true
                     }
                     Key.Escape -> {
-                        if (popup != null || volOpen) { popup = null; volOpen = false } else onBack()
+                        when {
+                            popup != null || volOpen -> { popup = null; volOpen = false }
+                            UiMode.fullscreen.value -> {
+                                UiMode.fullscreen.value = false
+                                toggleWindowFullscreen()
+                            }
+                            else -> onBack()
+                        }
                         true
                     }
                     else -> false
@@ -1185,7 +1192,11 @@ fun PlayerScreen(
                     UiMode.portrait.value = false
                     UiMode.mini.value = !UiMode.mini.value
                 }
-                CtrlIcon(Icons.Filled.Fullscreen) { toggleWindowFullscreen() }
+                CtrlIcon(Icons.Filled.Fullscreen) {
+                    // 真全屏：窗口最大化 + 把侧栏/顶栏一起藏掉
+                    UiMode.fullscreen.value = !UiMode.fullscreen.value
+                    toggleWindowFullscreen()
+                }
             }
         }
 
