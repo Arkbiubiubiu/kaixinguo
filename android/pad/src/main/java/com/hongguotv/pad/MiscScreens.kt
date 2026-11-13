@@ -996,16 +996,19 @@ fun RankScreen(
             // 一个「确定」就能选、一个「返回」就能收，比弹窗稳。
             sub != null && sheet == "filter" -> RankSheet(
                 title = "筛选 · ${sub.label}",
-                rows = sub.panels.map { p -> p.name to p.items },
+                // 每组都补一个「全部」：以前选了就取消不掉，只能退出去重进
+                rows = sub.panels.map { p -> p.name to (listOf(RankOption("", "全部")) + p.items) },
                 selected = panelSel,
                 onPick = { id -> panelSel = id; sheet = ""; runCatching { filterFocus.requestFocus() } },
+                onReset = { panelSel = ""; sheet = ""; runCatching { filterFocus.requestFocus() } },
                 onClose = { sheet = ""; runCatching { filterFocus.requestFocus() } },
             )
             sub != null && sheet == "month" -> RankSheet(
                 title = "月榜 · ${sub.label}",
-                rows = listOf("选择月份" to sub.months),
+                rows = listOf("选择月份" to (listOf(RankOption("", "当前榜")) + sub.months)),
                 selected = monthSel,
                 onPick = { id -> monthSel = id; sheet = ""; runCatching { monthFocus.requestFocus() } },
+                onReset = { monthSel = ""; sheet = ""; runCatching { monthFocus.requestFocus() } },
                 onClose = { sheet = ""; runCatching { monthFocus.requestFocus() } },
             )
             loading -> StatusBox(loading = true, error = null)
@@ -1064,6 +1067,8 @@ private fun RankSheet(
     selected: String,
     onPick: (String) -> Unit,
     onClose: () -> Unit,
+    /** 有选中时在标题栏给一个「重置」；没有选中就不显示 */
+    onReset: (() -> Unit)? = null,
 ) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -1095,6 +1100,10 @@ private fun RankSheet(
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.weight(1f))
+            if (selected.isNotEmpty() && onReset != null) {
+                TvChip("重置", selected = false) { onReset() }
+                Spacer(Modifier.width(8.dp))
+            }
             TvChip("关闭", selected = false) { onClose() }
         }
         Column(
