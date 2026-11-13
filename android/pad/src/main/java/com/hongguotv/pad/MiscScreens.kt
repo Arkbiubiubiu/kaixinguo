@@ -1132,27 +1132,43 @@ private fun ActorRankRow(person: RankPerson, index: Int, onClick: () -> Unit) {
 /** 原版同款榜单大条目：排名 + 封面 + 标题 + 标签 + 简介 + 热度行 + 播放/详情按钮。 */
 @Composable
 private fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: () -> Unit) {
+    // 电视：远看要清楚 —— 封面更大、字更大、简介三行、热度贴着标签放同一行。
+    // 平板保持原来的紧凑规格（同一组件，按设备分开）。
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
+    val rankW = if (isTv) 50.dp else 32.dp
+    val rankFont = if (isTv) 33.sp else 24.sp
+    val coverW = if (isTv) 132.dp else 88.dp
+    val titleFont = if (isTv) 22.sp else 14.sp
+    val scoreFont = if (isTv) 17.sp else 12.sp
+    val metaFont = if (isTv) 15.sp else 12.sp
+    val introLine = if (isTv) 22.sp else 18.sp
+    val introMax = if (isTv) 3 else 2
+    val btnFont = if (isTv) 16.sp else 13.sp
+    val btnPadH = if (isTv) 22.dp else 18.dp
+    val btnPadV = if (isTv) 10.dp else 8.dp
+    val colGap = if (isTv) 7.dp else 4.dp
+
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Panel)
             .clickable { onOpen() }
-            .padding(14.dp),
+            .padding(if (isTv) 16.dp else 14.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.width(32.dp), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.width(rankW), contentAlignment = Alignment.TopCenter) {
             Text(
                 index.toString(),
                 // PC 同款：前三名金色（star），其余半透明灰
                 color = if (index <= 3) Star else TextDim.copy(alpha = 0.5f),
-                fontSize = 24.sp,
+                fontSize = rankFont,
                 fontWeight = FontWeight.SemiBold,
             )
         }
         Box(
             Modifier
-                .width(88.dp)
+                .width(coverW)
                 .aspectRatio(3f / 4f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CoverPlaceholder),
@@ -1164,53 +1180,78 @@ private fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: (
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(card.title, color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.width(if (isTv) 18.dp else 16.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(colGap)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (isTv) 10.dp else 6.dp)) {
+                Text(
+                    card.title, color = TextMain, fontSize = titleFont, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                )
                 // 评分：星形 + 金字（与 PC 行卡同语言）
                 card.score.takeIf { it.isNotBlank() }?.let {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("★", color = Star, fontSize = 12.sp)
-                        Text(it, color = Star, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text("★", color = Star, fontSize = scoreFont)
+                        Text(it, color = Star, fontSize = scoreFont, fontWeight = FontWeight.Medium)
                     }
                 }
             }
             val meta = card.tags.take(3).joinToString(" · ").takeIf { it.isNotBlank() }
-            meta?.let {
-                Text(it, color = TextDim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            card.desc?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = TextDim.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            // 热度行：火焰图形 + 暖橙数字（PC HeatBadge 同语言，不再用 emoji）
             val heatLabel = card.recText?.takeIf { it.isNotBlank() }
                 ?: card.playText.takeIf { it.isNotBlank() }
-            heatLabel?.let { heat ->
-                if (heat.isNotBlank()) {
+            if (isTv) {
+                // 标签 + 热度同一行（热度紧跟在标签右边）
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    meta?.let {
+                        Text(
+                            it, color = TextDim, fontSize = metaFont, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    heatLabel?.takeIf { it.isNotBlank() }?.let { heat ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlameIcon()
+                            Spacer(Modifier.width(4.dp))
+                            Text(heat, color = Warm, fontSize = metaFont, fontWeight = FontWeight.Medium, maxLines = 1)
+                        }
+                    }
+                }
+            } else {
+                meta?.let {
+                    Text(it, color = TextDim, fontSize = metaFont, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            card.desc?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it, color = TextDim.copy(alpha = 0.8f), fontSize = metaFont, lineHeight = introLine,
+                    maxLines = introMax, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (!isTv) {
+                // 平板：热度单独一行（原来的紧凑布局）
+                heatLabel?.takeIf { it.isNotBlank() }?.let { heat ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         FlameIcon()
                         Spacer(Modifier.width(4.dp))
-                        Text(heat, color = Warm, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(heat, color = Warm, fontSize = metaFont, fontWeight = FontWeight.Medium, maxLines = 1)
                     }
                 }
             }
-            Spacer(Modifier.height(2.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(if (isTv) 4.dp else 2.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp)) {
                 Box(
                     Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(Red)
                         .clickable { onPlay() }
-                        .padding(horizontal = 18.dp, vertical = 8.dp),
-                ) { Text("播放", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+                        .padding(horizontal = btnPadH, vertical = btnPadV),
+                ) { Text("播放", color = Color.White, fontSize = btnFont, fontWeight = FontWeight.Medium) }
                 Box(
                     Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(8.dp))
                         .clickable { onOpen() }
-                        .padding(horizontal = 18.dp, vertical = 8.dp),
-                ) { Text("详情", color = Color.White, fontSize = 13.sp) }
+                        .padding(horizontal = btnPadH, vertical = btnPadV),
+                ) { Text("详情", color = Color.White, fontSize = btnFont) }
             }
         }
     }
