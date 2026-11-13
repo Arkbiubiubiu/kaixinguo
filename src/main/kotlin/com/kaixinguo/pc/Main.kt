@@ -114,7 +114,7 @@ private val brandBitmap: ImageBitmap? by lazy {
 
 /** 跨页面保留的浏览状态：进详情/播放再返回时回到原处（原来一离开页面状态就全丢）。 */
 private object PageMemo {
-    var feedTab = 2
+    var feedTab = 0   // 0=漫剧（三端默认）
     var feedCursor = 0
     var feedCards: List<SeriesCard> = emptyList()
     var feedPage: FeedPage? = null
@@ -125,6 +125,8 @@ private object PageMemo {
     // 找剧：筛选条件 + 已加载结果一起存。只存滚动位置的话，用户从详情返回会
     // 看到「筛选被清空、列表回到第一页，但页面停在原来那段」的错位内容。
     var findSelected: Map<String, String> = emptyMap()
+    /** 是否已套用过默认体裁（漫剧） */
+    var findDefaulted: Boolean = false
     var findPage: FeedPage? = null
     var findRows: List<FilterRow> = emptyList()
 
@@ -516,7 +518,7 @@ private fun AppRoot() {
     val page = RouteHolder.page.value
     val collapsed = RouteHolder.collapsed.value
     val search = SearchHolder.query.value
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(1) }   // 0=推荐 1=漫剧 2=真人剧；三端默认漫剧
     var refresh by remember { mutableStateOf(0) }
     var route by remember { mutableStateOf<Route?>(null) }
     // 二级页返回栈：详情 → 播放 → 返回应该回详情，而不是直接掉回首页。
@@ -965,7 +967,17 @@ private fun FindPage(
     // 首次进入用 PageMemo 里的上次状态（从详情/播放返回时原样恢复）
     var rows by remember { mutableStateOf(PageMemo.findRows) }
     var rowsLoading by remember { mutableStateOf(PageMemo.findRows.isEmpty()) }
-    var selected by remember { mutableStateOf(PageMemo.findSelected) }
+    var selected by remember {
+        mutableStateOf(
+            PageMemo.findSelected.ifEmpty {
+                if (PageMemo.findDefaulted) emptyMap()
+                else {
+                    PageMemo.findDefaulted = true
+                    mapOf("genre" to "comic_series")   // 三端默认漫剧
+                }
+            },
+        )
+    }
     var page by remember { mutableStateOf(PageMemo.findPage) }
     var restoredRows by remember { mutableStateOf(PageMemo.findRows.isNotEmpty()) }
     var restoredList by remember { mutableStateOf(PageMemo.findPage != null) }

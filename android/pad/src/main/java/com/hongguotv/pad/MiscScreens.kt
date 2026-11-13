@@ -120,6 +120,9 @@ object FindMemo {
     // 筛选条件也要记住：只记结果不记条件，从详情返回会看到「列表还是上次的、
     // 条件却清空了」的错位状态。
     var selected: List<Pair<String, String>> = emptyList()
+
+    /** 是否已经套用过默认体裁（漫剧）；只在本次进程第一次进找剧时加一次 */
+    var defaultGenreApplied: Boolean = false
 }
 
 /**
@@ -154,7 +157,17 @@ fun FindScreen(
     onSearchFocus: (Boolean) -> Unit = {},
 ) {
     val rows = remember { mutableStateListOf<FilterRow>() }
-    val selected = remember { mutableStateListOf<Pair<String, String>>().apply { addAll(FindMemo.selected) } } // (key, id)
+    val selected = remember {
+        val initial = when {
+            FindMemo.selected.isNotEmpty() -> FindMemo.selected
+            FindMemo.defaultGenreApplied -> emptyList()
+            else -> {
+                FindMemo.defaultGenreApplied = true
+                listOf("genre" to "comic_series")   // 三端默认漫剧
+            }
+        }
+        mutableStateListOf<Pair<String, String>>().apply { addAll(initial) }
+    } // (key, id)
     val cards = remember {
         mutableStateListOf<SeriesCard>().apply {
             // 从详情返回时先把上次的结果顶上，避免闪一下空白

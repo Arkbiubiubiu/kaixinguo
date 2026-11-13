@@ -88,7 +88,7 @@ fun HomeScreen(
     onOpen: (SeriesCard) -> Unit,
     onPlay: (SeriesCard) -> Unit,
 ) {
-    var tab by remember { mutableStateOf(HomeTab.Recommend) }
+    var tab by remember { mutableStateOf(HomeTab.Comic) }   // 三端默认漫剧
     val cards = remember { mutableStateListOf<SeriesCard>() }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }

@@ -14,7 +14,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
  */
 object UiMemo {
     // ---- 刷剧（整屏连播） ----
-    var feedTab: Int = 2
+    var feedTab: Int = 0   // 0=漫剧（三端默认）
     var feedCursor: Int = 0
     var feedCards: List<SeriesCard> = emptyList()
     var feedPage: FeedPage? = null
