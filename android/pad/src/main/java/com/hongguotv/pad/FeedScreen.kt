@@ -62,16 +62,29 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
             loading = false
             return@LaunchedEffect
         }
-        loading = true
-        cards = emptyList()
-        cursor = 0
+        // 先用上次的列表秒开，再去网络换新的（冷启动不用干等服务器往返）
+        val cacheKey = "feed_${feedTypes[tab]}"
+        val cached = withContext(Dispatchers.IO) { runCatching { FeedCache.load(cacheKey) }.getOrDefault(emptyList()) }
+        if (cached.isNotEmpty()) {
+            cards = cached
+            loading = false
+            cursor = 0
+        } else {
+            loading = true
+            cards = emptyList()
+            cursor = 0
+        }
         page = null
         FeedPreload.clear()
+        if (cached.isNotEmpty()) FeedPreload.request(cards, 0)
         val p = withContext(Dispatchers.IO) {
             runCatching { Api.firstPage(feedTypes[tab]) }.getOrNull()
         }
-        cards = p?.cards.orEmpty()
-        page = p
+        if (p?.cards?.isNotEmpty() == true) {
+            cards = p.cards
+            page = p
+            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, p.cards) } }
+        }
         loading = false
     }
 

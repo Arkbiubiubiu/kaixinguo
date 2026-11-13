@@ -107,6 +107,14 @@ fun App() {
         update = runCatching { Updater.check(Store.appContext) }.getOrNull()
     }
     update?.let { info -> UpdateDialog(info) { update = null } }
+    // 启动即预热刷剧第一部：用户进「刷剧」时详情/档位/索引已经就绪
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(2_500)
+        val first = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { FeedCache.load("feed_2") }.getOrDefault(emptyList())
+        }.firstOrNull() ?: return@LaunchedEffect
+        FeedPreload.warm(first.seriesId)
+    }
     // 打赏弹窗：侧栏「打赏」入口，纯展示不接支付，不进路由栈
     var donateOpen by remember { mutableStateOf(false) }
     // 追更未读角标：启动查一次，之后每 20 分钟一轮（与 PC 同周期）；进「追更」页清零

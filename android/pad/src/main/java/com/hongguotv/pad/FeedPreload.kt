@@ -39,7 +39,9 @@ object FeedPreload {
      * 窗口外的已预载项会被关掉（它们的 RemoteVideo 占着内存）。
      */
     fun request(cards: List<SeriesCard>, from: Int) {
-        val ids = cards.drop(from).take(AHEAD).map { it.seriesId }
+        // 窗口要包含「当前这一部」：它可能已经被启动预热好了，不能被窗口清理关掉
+        val keepCurrent = cards.getOrNull(from - 1)?.seriesId?.let { listOf(it) } ?: emptyList()
+        val ids = keepCurrent + cards.drop(from).take(AHEAD).map { it.seriesId }
         synchronized(lock) {
             val it = ready.entries.iterator()
             while (it.hasNext()) {
@@ -88,6 +90,21 @@ object FeedPreload {
         synchronized(lock) {
             val old = ready.put(seriesId, Ready(seriesId, info, rv))
             old?.let { runCatching { it.remote.close() } }
+        }
+    }
+
+    /**
+     * 启动时预热：App 一启动就把刷剧列表第一部准备好（详情+档位+索引），
+     * 用户点「刷剧」时不用再等整条链路。
+     */
+    fun warm(seriesId: String) {
+        synchronized(lock) {
+            if (ready.containsKey(seriesId) || seriesId in dead) return
+            job?.cancel()
+            job = scope.launch {
+                delay(1_200)
+                runCatching { build(seriesId, full = true) }
+            }
         }
     }
 
