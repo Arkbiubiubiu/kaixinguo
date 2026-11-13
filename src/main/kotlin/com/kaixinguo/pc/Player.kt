@@ -126,6 +126,8 @@ import com.hongguotv.pad.Log
 import com.hongguotv.pad.PlayTier
 import com.hongguotv.pad.RemoteVideo
 import com.hongguotv.pad.StreamProxy
+import com.hongguotv.pad.UnsupportedCodecException
+import java.io.File
 import com.hongguotv.pad.formatCount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -173,6 +175,8 @@ fun PlayerScreen(
     var tiers by remember { mutableStateOf<List<PlayTier>>(emptyList()) }
     var quality by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(true) }
+    // 加载中的补充说明（VVC 片源要本机转换十几秒，只转圈会让用户以为卡死）
+    var loadingNote by remember { mutableStateOf("") }
     var failed by remember { mutableStateOf<String?>(null) }
     // 详情/分集拉取的重试计数：以前详情失败时 episodes 永远是空的，起播 effect 直接 return，
     // loading 就永远停在 true（界面无限转圈、没有任何文字和重试）。
@@ -448,7 +452,7 @@ fun PlayerScreen(
             Log.d("Prefetch", "命中第 $index 集预取（直链" + if (warm.proxy != null) " + 头部）" else "）")
         }
 
-        val built = withContext(Dispatchers.IO) {
+        val src = withContext(Dispatchers.IO) {
             runCatching {
                 // 预取命中：直链（和下一集的头部）都是现成的，切集直接接管
                 if (warm != null) {
@@ -456,13 +460,13 @@ fun PlayerScreen(
                     val rv = warm.remote
                     val px = warm.proxy
                     if (rv != null && px != null) {
-                        Triple(rv, px, warm.info)
+                        PlaySource.Stream(rv, px, warm.info)
                     } else {
                         val fresh = RemoteVideo(warm.info)
                         fresh.prepare()
                         val p2 = StreamProxy(fresh)
                         p2.start()
-                        Triple(fresh, p2, warm.info)
+                        PlaySource.Stream(fresh, p2, warm.info)
                     }
                 } else {
                     val list = runCatching { Api.tiers(ep.vid) }.getOrDefault(emptyList())
@@ -472,25 +476,45 @@ fun PlayerScreen(
                         ?: list.maxByOrNull { it.height }
                     val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, PcStore.maxHeight)
                     val rv = RemoteVideo(info)
-                    rv.prepare()
-                    val px = StreamProxy(rv)
-                    px.start()
-                    Triple(rv, px, info)
+                    val vvc = try {
+                        rv.prepare()
+                        null
+                    } catch (e: UnsupportedCodecException) {
+                        // bytevc2（VVC）：媒体框架解不了，PC 走本机转换后交给 ffmpeg
+                        if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
+                            loadingNote = "VVC 片源，正在本机转换…（首次约十几秒）"
+                            PlaySource.Vvc(VvcPrep.prepare(ep.vid, info).playable)
+                        } else {
+                            throw e
+                        }
+                    }
+                    if (vvc != null) {
+                        vvc
+                    } else {
+                        val px = StreamProxy(rv)
+                        px.start()
+                        PlaySource.Stream(rv, px, info)
+                    }
                 }
             }.getOrNull()
         }
-        if (built == null) {
+        if (src == null) {
             warm?.release()
             loading = false
+            loadingNote = ""
             // 不再甩给用户「本版不内置取流服务」——这句话只有在真的没配地址时才对，
             // 而绝大多数失败是网络波动/片源。真实原因已经打在日志里，界面只给可行动的说法。
             failed = "这一集暂时取不到（网络波动或片源问题），点「重试」再试一次"
             return@LaunchedEffect
         }
-        remote = built.first
-        proxy = built.second
+        val vvcFile = (src as? PlaySource.Vvc)?.file
+        if (src is PlaySource.Stream) {
+            remote = src.remote
+            proxy = src.proxy
+        }
+        loadingNote = ""
 
-        val eng = VideoEngine(built.second.url)
+        val eng = VideoEngine(vvcFile?.absolutePath ?: (src as PlaySource.Stream).proxy.url)
         engine = eng
         // 换集/起播：新引擎从 0 开始播，暂停状态和「启动宽限」一起重置
         userPaused = false
@@ -837,10 +861,18 @@ fun PlayerScreen(
         }
 
         if (loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
                 androidx.compose.material3.CircularProgressIndicator(
                     color = Palette.accent, strokeWidth = 3.dp, modifier = Modifier.width(40.dp).height(40.dp),
                 )
+                if (loadingNote.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(loadingNote, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+                }
             }
         }
         failed?.let { msg ->
@@ -2298,4 +2330,8 @@ private fun EmojiPanel(onPick: (String) -> Unit) {
     }
 }
 
-
+/** 一集的播放源：普通加密流（本地代理）或 VVC（本机转换后的干净 MP4）。 */
+private sealed interface PlaySource {
+    class Stream(val remote: RemoteVideo, val proxy: StreamProxy, val info: com.hongguotv.pad.PlayInfo) : PlaySource
+    class Vvc(val file: File) : PlaySource
+}

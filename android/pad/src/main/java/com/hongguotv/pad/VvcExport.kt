@@ -54,9 +54,8 @@ object VvcExport {
             val v = video
             if (v == null) return Result(false, false, 0.0, 0.0)
             // 视频 → Annex-B
+            var written = 0
             videoOut.outputStream().buffered(1 shl 20).use { out ->
-                val sz = 1 shl 20
-                val buf = ByteArray(sz)
                 for (i in v.sizes.indices) {
                     val size = v.sizes[i]
                     if (size <= 0 || size > 8 shl 20) continue
@@ -69,9 +68,14 @@ object VvcExport {
                         if (n <= 0 || p + 4 + n > data.size) break
                         out.write(byteArrayOf(0, 0, 0, 1))
                         out.write(data, p + 4, n)
+                        written++
                         p += 4 + n
                     }
                 }
+            }
+            if (written == 0) {
+                Log.e("VvcExport", "视频轨没有解出任何 NAL（解密 key 不对？）")
+                return Result(false, false, 0.0, 0.0)
             }
             // 音频 → ADTS
             var audioOk = false
@@ -248,7 +252,13 @@ object VvcExport {
                     }
                     n
                 }
-                if (q + len <= limit && len in 2..8) return d.copyOfRange(q, q + len)
+                if (q + len <= limit && len in 2..8) {
+                    val cfg = d.copyOfRange(q, q + len)
+                    val ot = (cfg[0].toInt() ushr 3) and 0x1F
+                    val fi = ((cfg[0].toInt() and 0x07) shl 1) or ((cfg[1].toInt() ushr 7) and 0x01)
+                    val ch = (cfg[1].toInt() ushr 3) and 0x0F
+                    if (ot in 1..5 && fi <= 12 && ch in 1..8) return cfg
+                }
             }
             i++
         }
