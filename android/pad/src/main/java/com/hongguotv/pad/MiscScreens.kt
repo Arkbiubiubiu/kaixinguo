@@ -560,6 +560,7 @@ fun FindScreen(
                                     .background(Red)
                                     .clickable {
                                         if (searchQuery == null || reSearch) {
+                                            if (q.isNotBlank()) Store.pushSearch(q)
                                             searchQuery = q.ifEmpty { null }
                                             // 按钮提交这条路径也要写进记忆，否则从详情返回后
                                             // 关键词还在、结果却没了（回到筛选页）
@@ -581,8 +582,31 @@ fun FindScreen(
                                     fontWeight = FontWeight.Medium,
                                 )
                             }
-                            // 与 PC 同位置：搜索按钮右侧「共 N 部」
-                            Text("共 ${cards.size} 部", color = TextDim, fontSize = 14.sp)
+                            // 与 PC 同位置：搜索按钮右侧。接口不给总数，写「已加载」才不骗人
+                            Text("已加载 ${cards.size} 部", color = TextDim, fontSize = 14.sp)
+                        }
+
+                        // 搜索历史：换过几次关键词后点一下就搜，不用在电视上重打
+                        if (searchQuery == null && query.text.isEmpty() && Store.searchHistory.isNotEmpty()) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 8.dp).androidHorizontalScroll(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    "最近搜索",
+                                    color = TextDim, fontSize = 12.sp,
+                                    modifier = Modifier.align(Alignment.CenterVertically),
+                                )
+                                Store.searchHistory.take(8).forEach { w ->
+                                    OutlinePill(w) {
+                                        query = TextFieldValue(w, TextRange(w.length))
+                                        Store.pushSearch(w)
+                                        searchQuery = w
+                                        FindMemo.searchQuery = w
+                                        FindMemo.query = w
+                                    }
+                                }
+                            }
                         }
 
                         if (showFilter) {

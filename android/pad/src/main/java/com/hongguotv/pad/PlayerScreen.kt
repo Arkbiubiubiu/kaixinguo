@@ -1146,7 +1146,48 @@ fun PlayerScreen(
      * 为什么要这么分：如果确认键永远等于暂停，控制条上的「选集/倍速」就永远按不到；
      * 反过来如果永远交给按钮，控制条一显示就没法暂停。用「有没有进按钮行」区分最直观。
      */
-    fun tvKeys(ev: KeyEvent): Boolean = when (ev.key) {
+    /**
+     * 电视遥控器/外接遥控上的「媒体键、数字键」：
+     * - ⏯/耳机键 = 暂停继续
+     * - 数字 1–9 = 跳到 10%–90%，0 = 回开头（比连按 ←/→ 找位置直观）
+     * - 上一曲/下一曲 = 上一集/下一集
+     * 这些键不会经过 Compose 的 Key 映射（各家遥控 keyCode 不统一），所以直接用 keyCode。
+     */
+    fun tvNativeKeys(ev: KeyEvent): Boolean {
+        if (ev.type != KeyEventType.KeyDown) return false
+        val nk = ev.nativeKeyEvent.keyCode
+        when (nk) {
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            android.view.KeyEvent.KEYCODE_HEADSETHOOK -> {
+                if (player.isPlaying) player.pause() else player.play()
+                mark()
+                return true
+            }
+            android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                if (index < episodes.size) index += 1
+                return true
+            }
+            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                if (index > 1) index -= 1
+                return true
+            }
+            android.view.KeyEvent.KEYCODE_0 -> {
+                player.seekTo(0); mark(); return true
+            }
+        }
+        if (nk in android.view.KeyEvent.KEYCODE_1..android.view.KeyEvent.KEYCODE_9) {
+            val n = nk - android.view.KeyEvent.KEYCODE_1 + 1
+            val d = runCatching { player.duration }.getOrDefault(0L)
+            if (d > 0) {
+                player.seekTo(d * n / 10)
+                mark()
+            }
+            return true
+        }
+        return false
+    }
+
+    fun tvKeys(ev: KeyEvent): Boolean = tvNativeKeys(ev) || when (ev.key) {
         Key.Back -> when {
             menu != PlayerMenu.None -> { menu = PlayerMenu.None; mark(); true }
             chromeFocused -> { leaveChrome(); true }

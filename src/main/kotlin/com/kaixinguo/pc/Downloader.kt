@@ -31,6 +31,9 @@ object Downloader {
 
     val tasks = mutableStateListOf<Task>()
 
+    /** 正在跑的 ffmpeg（取消时按 key 杀掉） */
+    private val procs = java.util.concurrent.ConcurrentHashMap<String, Process>()
+
     private val root: File by lazy {
         File(System.getenv("APPDATA") ?: ".", "KaixinguoPC/downloads").apply { mkdirs() }
     }
@@ -66,6 +69,7 @@ object Downloader {
                     "-progress", "pipe:1", "-nostats", "-loglevel", "error",
                     file.absolutePath,
                 ).redirectErrorStream(true).start()
+                procs[key] = pb
                 task.error = null
                 pb.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
@@ -83,13 +87,27 @@ object Downloader {
                 task.state = if (code == 0 && file.length() > 0) State.DONE else State.FAILED
                 if (task.state == State.FAILED) task.error = "ffmpeg 退出码 $code"
             } catch (e: Exception) {
-                task.state = State.FAILED
-                task.error = e.message
+                if (task.state != State.CANCELED) {
+                    task.state = State.FAILED
+                    task.error = e.message
+                }
+            } finally {
+                procs.remove(key)
             }
         }.apply { isDaemon = true }.start()
     }
 
+    /** 取消进行中的任务：杀掉 ffmpeg、删掉半截文件 */
+    fun cancel(task: Task) {
+        if (task.state !in setOf(State.QUEUED, State.RUNNING)) return
+        task.state = State.CANCELED
+        task.error = null
+        procs.remove(task.key)?.let { runCatching { it.destroyForcibly() } }
+        runCatching { task.file.delete() }
+    }
+
     fun delete(task: Task) {
+        cancel(task)
         runCatching { task.file.delete() }
         tasks.remove(task)
     }

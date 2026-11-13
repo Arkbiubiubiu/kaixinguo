@@ -1156,7 +1156,25 @@ fun PlayerScreen(
                     }
                 }
                 // 弹幕开关：「弹」字按钮，关闭叠反斜杠（B 站同款，旧版 DanmakuSwitchIcon）
-                DanmakuSwitchButton(danmakuOn) { danmakuOn = !danmakuOn; PcStore.danmakuEnabled = !danmakuOn }
+                DanmakuSwitchButton(danmakuOn) {
+                    // 原来先翻转 danmakuOn 再取反写设置，写进去的是**旧值**：
+                    // 打开弹幕后重启又变回关闭。而且打开时当前这一集不会补拉弹幕。
+                    val next = !danmakuOn
+                    danmakuOn = next
+                    PcStore.danmakuEnabled = next
+                    if (next && danmaku.isEmpty()) {
+                        val ep = episodes.getOrNull(index - 1)
+                        if (ep != null) scope.launch(Dispatchers.IO) {
+                            val dur = runCatching { engine?.info?.durationMs ?: 0L }.getOrDefault(0L)
+                            val win = runCatching { Api.danmakuPage(ep.vid, seriesId, 0, dur, "") }.getOrNull()
+                            if (win != null) withContext(Dispatchers.Main) {
+                                danmaku = win.items
+                                dmCursor = win.cursor
+                                dmMore = win.hasMore
+                            }
+                        }
+                    }
+                }
                 // 弹幕设置：「弹」+ 齿轮角标 → 上方面板
                 Box(Modifier.onGloballyPositioned { val p = it.positionInWindow(); btnPos["dmset"] = androidx.compose.ui.unit.IntOffset((p.x + it.size.width).toInt(), p.y.toInt()); btnCenter["dmset"] = androidx.compose.ui.unit.IntOffset((p.x + it.size.width / 2).toInt(), (p.y + it.size.height / 2).toInt()) }) {
                     DanmakuSettingsButton(popup == "dmset") { popup = if (popup == "dmset") null else "dmset" }

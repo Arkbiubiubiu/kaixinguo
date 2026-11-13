@@ -2998,6 +2998,14 @@ private fun SettingsPage() {
                                 }
                             }
                             Spacer(Modifier.width(10.dp))
+                            if (t.state == Downloader.State.RUNNING || t.state == Downloader.State.QUEUED) {
+                                Text(
+                                    "取消",
+                                    color = Palette.faint, fontSize = 11.sp,
+                                    modifier = Modifier.clickable { Downloader.cancel(t) },
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
                             Text(
                                 "删除",
                                 color = Palette.faint, fontSize = 11.sp,
