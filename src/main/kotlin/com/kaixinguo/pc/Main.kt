@@ -730,7 +730,7 @@ private fun HomePage(
         Column(Modifier.fillMaxSize()) {
             // 页头薄行：分类 tab + 右端「换一批」（旧版 home-wall 顶部那一行）
             Row(
-                Modifier.fillMaxWidth().padding(start = 0.dp, end = 24.dp, top = 16.dp, bottom = 12.dp),
+                Modifier.fillMaxWidth().padding(start = 0.dp, end = 24.dp, top = 4.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 listOf("推荐", "漫剧", "真人剧").forEachIndexed { i, label ->
@@ -3367,9 +3367,10 @@ private object DarkTitleBar {
                 com.sun.jna.Native.getWindowPointer(frame),
             )
             fun set(attr: Int, v: Int) {
-                runCatching {
+                val r = runCatching {
                     Dwmapi.I.DwmSetWindowAttribute(hwnd, attr, com.sun.jna.ptr.IntByReference(v), 4)
                 }
+                com.hongguotv.pad.Log.d("DarkTitle", "dwma attr=$attr v=${Integer.toHexString(v)} ret=${r.getOrNull()} err=${r.exceptionOrNull()?.message}")
             }
             set(20, 1)                // 深色
             set(35, colorref)         // 标题栏底色 = 顶条颜色
