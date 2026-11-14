@@ -321,6 +321,7 @@ private fun AppShell(onExit: () -> Unit) {
     val frame = java.awt.Window.getWindows().filterIsInstance<java.awt.Frame>().firstOrNull()
     androidx.compose.runtime.DisposableEffect(frame) {
         if (frame == null) return@DisposableEffect onDispose { }
+        FramelessSnap.enable(frame)
         val drag = object : java.awt.event.MouseAdapter() {
             private var pressScreen: java.awt.Point? = null
             private var pressFrame: java.awt.Point? = null
@@ -331,25 +332,6 @@ private fun AppShell(onExit: () -> Unit) {
                 if ((frame.extendedState and java.awt.Frame.MAXIMIZED_BOTH) != 0) return
                 val onTopBar = e.y in 0 until TOP_BAR_H && e.x < frame.width - WINDOW_BTNS_W
                 if (!onTopBar) return
-                // Windows：把这次按下伪装成「标题栏拖动」交给系统。
-                // 自己 setLocation 的话系统不知道窗口在拖，Aero Snap / Win11 贴靠分区永远不会出现。
-                if (System.getProperty("os.name").lowercase().contains("win")) {
-                    Thread {
-                        runCatching {
-                            val hwnd = com.sun.jna.platform.win32.WinDef.HWND(
-                                com.sun.jna.Native.getWindowPointer(frame),
-                            )
-                            User32Extra.I.ReleaseCapture()
-                            com.sun.jna.platform.win32.User32.INSTANCE.SendMessage(
-                                hwnd,
-                                0x00A1, // WM_NCLBUTTONDOWN
-                                com.sun.jna.platform.win32.WinDef.WPARAM(2L), // HTCAPTION
-                                com.sun.jna.platform.win32.WinDef.LPARAM(0L),
-                            )
-                        }
-                    }.apply { isDaemon = true }.start()
-                    return
-                }
                 pressScreen = e.locationOnScreen
                 pressFrame = frame.location
             }
@@ -3412,11 +3394,140 @@ object DiagLog {
     }
 }
 
-/** JNA 的 User32 没暴露 ReleaseCapture，单独声明一个（原生拖动前必须释放 AWT 的鼠标捕获）。 */
-private interface User32Extra : com.sun.jna.Library {
-    fun ReleaseCapture(): Boolean
+/**
+ * 无边框窗口的「原生标题栏行为」补丁（Windows）。
+ *
+ * 只加 WS_CAPTION 会让系统把标题栏画出来（两层头），所以同时子类化窗口过程：
+ * - WM_NCCALCSIZE 返回 0：客户区铺满整个窗口，系统标题栏不占空间
+ * - WM_NCHITTEST：顶部 44dp 当 HTCAPTION（系统接管拖动 → Aero Snap / Win11 贴靠分区），
+ *   四周 6dp 当缩放边，右侧窗口钮区域还给客户区
+ *
+ * 这样外观和自绘顶栏完全不变，但拖动、双击最大化、贴靠分区全是系统原生行为。
+ */
+private object FramelessSnap {
+    private const val GWL_STYLE = -16
+    private const val GWLP_WNDPROC = -4
+    private const val WS_CAPTION = 0x00C00000
+    private const val WS_THICKFRAME = 0x00040000
+    private const val WS_MAXIMIZEBOX = 0x00010000
+    private const val WS_MINIMIZEBOX = 0x00020000
+    private const val WM_NCCALCSIZE = 0x0083
+    private const val WM_NCHITTEST = 0x0084
+    private const val WM_NCACTIVATE = 0x0086
+    private const val SWP_NOSIZE = 0x0001
+    private const val SWP_NOMOVE = 0x0002
+    private const val SWP_NOZORDER = 0x0004
+    private const val SWP_FRAMECHANGED = 0x0020
+    private const val HTCLIENT = 1
+    private const val HTCAPTION = 2
+    private const val HTLEFT = 10
+    private const val HTRIGHT = 11
+    private const val HTTOP = 12
+    private const val HTTOPLEFT = 13
+    private const val HTTOPRIGHT = 14
+    private const val HTBOTTOM = 15
+    private const val HTBOTTOMLEFT = 16
+    private const val HTBOTTOMRIGHT = 17
 
-    companion object {
-        val I: User32Extra = com.sun.jna.Native.load("user32", User32Extra::class.java)
+    private var proc: com.sun.jna.platform.win32.WinUser.WindowProc? = null
+    private var oldProc: com.sun.jna.Pointer? = null
+    private var scale = 1.0
+    private val done = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private interface User32Proc : com.sun.jna.win32.StdCallLibrary {
+        fun SetWindowLongPtr(
+            hWnd: com.sun.jna.platform.win32.WinDef.HWND,
+            nIndex: Int,
+            newProc: com.sun.jna.platform.win32.WinUser.WindowProc,
+        ): com.sun.jna.Pointer
+
+        fun CallWindowProc(
+            prev: com.sun.jna.Pointer,
+            hWnd: com.sun.jna.platform.win32.WinDef.HWND,
+            msg: Int,
+            wParam: com.sun.jna.platform.win32.WinDef.WPARAM,
+            lParam: com.sun.jna.platform.win32.WinDef.LPARAM,
+        ): com.sun.jna.platform.win32.WinDef.LRESULT
+
+        companion object {
+            val I: User32Proc = com.sun.jna.Native.load(
+                "user32", User32Proc::class.java,
+                com.sun.jna.win32.W32APIOptions.DEFAULT_OPTIONS,
+            )
+        }
+    }
+
+    fun enable(frame: java.awt.Frame) {
+        if (!System.getProperty("os.name").lowercase().contains("win")) return
+        if (!done.compareAndSet(false, true)) return
+        runCatching {
+            scale = frame.graphicsConfiguration?.defaultTransform?.scaleY ?: 1.0
+            val u = com.sun.jna.platform.win32.User32.INSTANCE
+            val hwnd = com.sun.jna.platform.win32.WinDef.HWND(
+                com.sun.jna.Native.getWindowPointer(frame),
+            )
+            val style = u.GetWindowLong(hwnd, GWL_STYLE)
+            u.SetWindowLong(
+                hwnd, GWL_STYLE,
+                style or WS_CAPTION or WS_THICKFRAME or WS_MAXIMIZEBOX or WS_MINIMIZEBOX,
+            )
+            proc = object : com.sun.jna.platform.win32.WinUser.WindowProc {
+                override fun callback(
+                    hWnd: com.sun.jna.platform.win32.WinDef.HWND,
+                    msg: Int,
+                    wParam: com.sun.jna.platform.win32.WinDef.WPARAM,
+                    lParam: com.sun.jna.platform.win32.WinDef.LPARAM,
+                ): com.sun.jna.platform.win32.WinDef.LRESULT {
+                    when (msg) {
+                        WM_NCCALCSIZE -> if (wParam.toLong() != 0L) {
+                            return com.sun.jna.platform.win32.WinDef.LRESULT(0)
+                        }
+                        WM_NCACTIVATE -> return com.sun.jna.platform.win32.WinDef.LRESULT(1)
+                        WM_NCHITTEST -> {
+                            val p = com.sun.jna.platform.win32.WinDef.POINT()
+                            val r = com.sun.jna.platform.win32.WinDef.RECT()
+                            u.GetCursorPos(p)
+                            u.GetWindowRect(hWnd, r)
+                            val border = (6 * scale).toInt()
+                            val topBar = (TOP_BAR_H * scale).toInt()
+                            val btns = (WINDOW_BTNS_W * scale).toInt()
+                            // 顶栏（右侧窗口钮除外）= 系统标题栏：拖动/双击最大化/贴靠分区都由系统处理
+                            if (p.y in r.top until (r.top + topBar) &&
+                                p.x < r.right - btns && p.x >= r.left
+                            ) {
+                                return com.sun.jna.platform.win32.WinDef.LRESULT(HTCAPTION.toLong())
+                            }
+                            val left = p.x < r.left + border
+                            val right = p.x >= r.right - border
+                            val top = p.y < r.top + border
+                            val bottom = p.y >= r.bottom - border
+                            val hit = when {
+                                top && left -> HTTOPLEFT
+                                top && right -> HTTOPRIGHT
+                                bottom && left -> HTBOTTOMLEFT
+                                bottom && right -> HTBOTTOMRIGHT
+                                left -> HTLEFT
+                                right -> HTRIGHT
+                                top -> HTTOP
+                                bottom -> HTBOTTOM
+                                else -> HTCLIENT
+                            }
+                            return com.sun.jna.platform.win32.WinDef.LRESULT(hit.toLong())
+                        }
+                    }
+                    val prev = oldProc
+                    return if (prev != null) {
+                        User32Proc.I.CallWindowProc(prev, hWnd, msg, wParam, lParam)
+                    } else {
+                        com.sun.jna.platform.win32.WinDef.LRESULT(0)
+                    }
+                }
+            }
+            oldProc = User32Proc.I.SetWindowLongPtr(hwnd, GWLP_WNDPROC, proc!!)
+            u.SetWindowPos(
+                hwnd, null, 0, 0, 0, 0,
+                SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER or SWP_FRAMECHANGED,
+            )
+        }
     }
 }
