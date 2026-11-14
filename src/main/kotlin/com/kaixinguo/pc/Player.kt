@@ -453,50 +453,62 @@ fun PlayerScreen(
         }
 
         val src = withContext(Dispatchers.IO) {
-            runCatching {
-                // 预取命中：直链（和下一集的头部）都是现成的，切集直接接管
-                if (warm != null) {
-                    tiers = warm.tiers
-                    val rv = warm.remote
-                    val px = warm.proxy
-                    if (rv != null && px != null) {
-                        PlaySource.Stream(rv, px, warm.info)
+            fun normalSource(): PlaySource {
+                val list = runCatching { Api.tiers(ep.vid) }.getOrDefault(emptyList())
+                tiers = list
+                val picked = if (quality > 0) list.firstOrNull { it.height == quality }
+                else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
+                    ?: list.maxByOrNull { it.height }
+                val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, PcStore.maxHeight)
+                val rv = RemoteVideo(info)
+                val vvc = try {
+                    rv.prepare()
+                    null
+                } catch (e: UnsupportedCodecException) {
+                    if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
+                        loadingNote = "VVC 片源，正在本机转换…（首次约十几秒）"
+                        PlaySource.Vvc(VvcPrep.prepare(ep.vid, info).playable)
                     } else {
-                        val fresh = RemoteVideo(warm.info)
-                        fresh.prepare()
-                        val p2 = StreamProxy(fresh)
-                        p2.start()
-                        PlaySource.Stream(fresh, p2, warm.info)
-                    }
-                } else {
-                    val list = runCatching { Api.tiers(ep.vid) }.getOrDefault(emptyList())
-                    tiers = list
-                    val picked = if (quality > 0) list.firstOrNull { it.height == quality }
-                    else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
-                        ?: list.maxByOrNull { it.height }
-                    val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, PcStore.maxHeight)
-                    val rv = RemoteVideo(info)
-                    val vvc = try {
-                        rv.prepare()
-                        null
-                    } catch (e: UnsupportedCodecException) {
-                        // bytevc2（VVC）：媒体框架解不了，PC 走本机转换后交给 ffmpeg
-                        if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
-                            loadingNote = "VVC 片源，正在本机转换…（首次约十几秒）"
-                            PlaySource.Vvc(VvcPrep.prepare(ep.vid, info).playable)
-                        } else {
-                            throw e
-                        }
-                    }
-                    if (vvc != null) {
-                        vvc
-                    } else {
-                        val px = StreamProxy(rv)
-                        px.start()
-                        PlaySource.Stream(rv, px, info)
+                        throw e
                     }
                 }
-            }.getOrNull()
+                return if (vvc != null) {
+                    vvc
+                } else {
+                    val px = StreamProxy(rv)
+                    px.start()
+                    PlaySource.Stream(rv, px, info)
+                }
+            }
+            try {
+                if (warm != null) {
+                    // 预取接手单独兜底：直链可能已过期/头部失效，失败就丢掉预取重来，
+                    // 不能让一次预取失败把整集判成「取不到」
+                    try {
+                        tiers = warm.tiers
+                        val rv = warm.remote
+                        val px = warm.proxy
+                        if (rv != null && px != null) {
+                            PlaySource.Stream(rv, px, warm.info)
+                        } else {
+                            val fresh = RemoteVideo(warm.info)
+                            fresh.prepare()
+                            val p2 = StreamProxy(fresh)
+                            p2.start()
+                            PlaySource.Stream(fresh, p2, warm.info)
+                        }
+                    } catch (t: Throwable) {
+                        Log.e("Player", "预取接手失败（第 $index 集），回退重新取流: ${t.message}", t)
+                        runCatching { warm.release() }
+                        normalSource()
+                    }
+                } else {
+                    normalSource()
+                }
+            } catch (t: Throwable) {
+                Log.e("Player", "第 $index 集起播取流失败: ${t.message}", t)
+                null
+            }
         }
         if (src == null) {
             warm?.release()
