@@ -331,6 +331,25 @@ private fun AppShell(onExit: () -> Unit) {
                 if ((frame.extendedState and java.awt.Frame.MAXIMIZED_BOTH) != 0) return
                 val onTopBar = e.y in 0 until TOP_BAR_H && e.x < frame.width - WINDOW_BTNS_W
                 if (!onTopBar) return
+                // Windows：把这次按下伪装成「标题栏拖动」交给系统。
+                // 自己 setLocation 的话系统不知道窗口在拖，Aero Snap / Win11 贴靠分区永远不会出现。
+                if (System.getProperty("os.name").lowercase().contains("win")) {
+                    Thread {
+                        runCatching {
+                            val hwnd = com.sun.jna.platform.win32.WinDef.HWND(
+                                com.sun.jna.Native.getWindowPointer(frame),
+                            )
+                            User32Extra.I.ReleaseCapture()
+                            com.sun.jna.platform.win32.User32.INSTANCE.SendMessage(
+                                hwnd,
+                                0x00A1, // WM_NCLBUTTONDOWN
+                                com.sun.jna.platform.win32.WinDef.WPARAM(2L), // HTCAPTION
+                                com.sun.jna.platform.win32.WinDef.LPARAM(0L),
+                            )
+                        }
+                    }.apply { isDaemon = true }.start()
+                    return
+                }
                 pressScreen = e.locationOnScreen
                 pressFrame = frame.location
             }
@@ -3390,5 +3409,14 @@ object DiagLog {
             writer.write(line)
             writer.flush()
         }
+    }
+}
+
+/** JNA 的 User32 没暴露 ReleaseCapture，单独声明一个（原生拖动前必须释放 AWT 的鼠标捕获）。 */
+private interface User32Extra : com.sun.jna.Library {
+    fun ReleaseCapture(): Boolean
+
+    companion object {
+        val I: User32Extra = com.sun.jna.Native.load("user32", User32Extra::class.java)
     }
 }

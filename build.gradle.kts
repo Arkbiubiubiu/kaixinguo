@@ -11,6 +11,9 @@ kotlin {
 }
 
 dependencies {
+    // 无边框窗口的原生拖动（Windows HTCAPTION）：让系统接管拖拽，
+    // 才能触发现有 Aero Snap / Win11 贴靠分区
+    implementation("net.java.dev.jna:jna-platform:5.14.0")
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
@@ -60,7 +63,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "开心果"
-            packageVersion = "1.2.49"
+            packageVersion = "1.2.50"
             // 安装包 / 快捷方式 / 任务栏图标（与安卓启动图标同一张）
             windows {
                 iconFile.set(project.layout.projectDirectory.file("brand.ico"))
