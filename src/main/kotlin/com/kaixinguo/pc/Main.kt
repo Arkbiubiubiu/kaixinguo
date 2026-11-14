@@ -2215,6 +2215,8 @@ private fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) ->
             OutlineButton("管理") { manageOpen = !manageOpen }
         }
         when {
+            // 云端历史还在同步（刚登录/换设备首开）时先转圈，不要先甩一句「还没有观看记录」
+            syncing && source.isEmpty() -> CenterLoading()
             source.isEmpty() -> EmptyState(
                 title = "还没有观看记录",
                 hint = "播放过的剧会出现在这里，进度会自动同步",

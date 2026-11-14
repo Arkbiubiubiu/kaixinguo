@@ -70,7 +70,9 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
     var detail by remember(seriesId) { mutableStateOf<SeriesDetail?>(null) }
     var loadDone by remember(seriesId) { mutableStateOf(false) }
     var reviews by remember { mutableStateOf<ReviewPage?>(null) }
+    var reviewsLoaded by remember(seriesId) { mutableStateOf(false) }
     var related by remember { mutableStateOf<List<RelatedGroup>>(emptyList()) }
+    var relatedLoaded by remember(seriesId) { mutableStateOf(false) }
     var seasons by remember { mutableStateOf<List<com.hongguotv.pad.SeasonRef>>(emptyList()) }
     // key 带 initialTab：从播放器点「评论」进来要直接落在剧评 tab
     // （仅 remember 不带 key 时，同一详情实例复用时不会重读初值）
@@ -106,9 +108,11 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
             }
             launch {
                 reviews = withContext(Dispatchers.IO) { runCatching { Api.reviews(seriesId, 20) }.getOrNull() }
+                reviewsLoaded = true
             }
             launch {
                 related = withContext(Dispatchers.IO) { runCatching { Api.relatedSeries(seriesId) }.getOrDefault(emptyList()) }
+                relatedLoaded = true
             }
             launch {
                 seasons = withContext(Dispatchers.IO) { runCatching { Api.seasons(seriesId) }.getOrDefault(emptyList()) }
@@ -381,7 +385,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
             when (tab) {
                 0 -> EpisodeGrid(d?.episodes.orEmpty(), continueIndex) { ep -> onPlay(ep) }
                 1 -> ReviewsBlock(reviews, seriesId)
-                else -> RelatedBlock(related, onOpenSeries = onOpenSeason)
+                else -> RelatedBlock(related, loading = !relatedLoaded, onOpenSeries = onOpenSeason)
             }
             // 备案号：头部块之下、tab 之上（旧版同位置独立的一行小字）
             d?.recordNumber?.takeIf { it.isNotBlank() }?.let {
@@ -563,8 +567,25 @@ private fun ReviewsBlock(page: ReviewPage?, seriesId: String) {
 }
 
 @Composable
-private fun RelatedBlock(groups: List<RelatedGroup>, onOpenSeries: (String) -> Unit) {
+private fun RelatedBlock(
+    groups: List<RelatedGroup>,
+    loading: Boolean,
+    onOpenSeries: (String) -> Unit,
+) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // 还没回来 ≠ 没有：先给「正在加载」，否则会先闪一句「暂无相关推荐」再被内容顶掉
+    if (loading) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.CircularProgressIndicator(
+                color = Palette.accent,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("正在加载相关推荐…", color = Palette.dim, fontSize = 14.sp)
+        }
+        return
+    }
     if (groups.isEmpty()) {
         Text("暂无相关推荐", color = Palette.dim, fontSize = 14.sp)
         return
