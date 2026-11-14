@@ -430,8 +430,8 @@ private fun HomeHero(
                 contentDescription = null,
                 modifier = Modifier
                     .matchParentSize()
-                    .scale(1.25f)
-                    .blur(32.dp),
+                    // 与 PC 一致：封面直接放大铺底，不做高斯模糊
+                    .scale(1.25f),
                 contentScale = ContentScale.Crop,
             )
         }

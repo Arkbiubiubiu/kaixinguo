@@ -618,7 +618,9 @@ private fun HomePage(
     /** 推荐墙的滚动状态：滚到靠底就自动续拉，不再放按钮 */
     val wallScroll = PageMemo.homeWall
 
-    val tabTypes = listOf("2", "3", "4")
+    // 与安卓/TV 同一套首页 tab_type（推荐 16 / 漫剧 36 / 真人剧 39）；
+    // 旧的 2/3/4 是另一条推荐池，两端内容会对不上
+    val tabTypes = listOf("16", "36", "39")
 
     LaunchedEffect(tab, refresh) {
         // 只有切 tab / 换一批才回到墙顶；从详情返回时保留原来的滚动位置
