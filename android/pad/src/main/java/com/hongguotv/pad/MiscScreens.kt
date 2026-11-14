@@ -950,7 +950,7 @@ fun RankScreen(
         ) {
             tabs.forEachIndexed { i, t ->
                 TvChip(t.label, selected = i == tabIdx) {
-                    tabIdx = i; subIdx = 0; panelSel = ""; monthSel = ""
+                    tabIdx = i; subIdx = 0; panelSel = ""; monthSel = ""; sheet = ""
                 }
             }        }
         Spacer(Modifier.height(8.dp))
@@ -969,7 +969,7 @@ fun RankScreen(
             ) {
                 tab.subs.forEachIndexed { i, s ->
                     TvChip(s.label, selected = i == subIdx) {
-                        subIdx = i; panelSel = ""; monthSel = ""
+                        subIdx = i; panelSel = ""; monthSel = ""; sheet = ""
                     }
                 }
                 if (panels.isNotEmpty()) {
@@ -1008,7 +1008,7 @@ fun RankScreen(
             // 筛选 / 月榜面板直接占掉列表区（不做浮层）：电视上用遥控器，
             // 一个「确定」就能选、一个「返回」就能收，比弹窗稳。
             sub != null && sheet == "filter" -> RankSheet(
-                title = "筛选 · ${sub.label}",
+                title = "筛选 · ${tab?.label ?: ""} · ${sub.label}",
                 // 每组都补一个「全部」：以前选了就取消不掉，只能退出去重进
                 rows = sub.panels.map { p -> p.name to (listOf(RankOption("", "全部")) + p.items) },
                 selected = panelSel,
@@ -1017,7 +1017,7 @@ fun RankScreen(
                 onClose = { sheet = ""; runCatching { filterFocus.requestFocus() } },
             )
             sub != null && sheet == "month" -> RankSheet(
-                title = "月榜 · ${sub.label}",
+                title = "月榜 · ${tab?.label ?: ""} · ${sub.label}",
                 rows = listOf("选择月份" to (listOf(RankOption("", "当前榜")) + sub.months)),
                 selected = monthSel,
                 onPick = { id -> monthSel = id; sheet = ""; runCatching { monthFocus.requestFocus() } },

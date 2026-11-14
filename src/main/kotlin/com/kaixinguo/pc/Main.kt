@@ -1321,7 +1321,10 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             tabs.forEachIndexed { index, t ->
-                TabChip(t.label, index == tabIndex) { tabIndex = index; subIndex = 0; panel = ""; month = "" }
+                TabChip(t.label, index == tabIndex) {
+                    tabIndex = index; subIndex = 0; panel = ""; month = ""
+                    filterOpen = false; monthOpen = false
+                }
             }
         }
         if (tab != null && tab.subs.isNotEmpty()) {
@@ -1331,7 +1334,10 @@ private fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 tab.subs.forEachIndexed { index, s ->
-                    TabChip(s.label, index == subIndex) { subIndex = index; panel = ""; month = "" }
+                    TabChip(s.label, index == subIndex) {
+                        subIndex = index; panel = ""; month = ""
+                        filterOpen = false; monthOpen = false
+                    }
                 }
                 // 筛选按钮（旧版 FilterPanelButton）：仅当前子榜自带面板时出现，
                 // chip 形态——未选中灰、选中红；面板里单选，选中后 chip 显示所选名
