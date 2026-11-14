@@ -630,6 +630,9 @@ internal fun vvcPreferredCap(ctx: android.content.Context): Int =
 /** 同一集只允许一个转换任务（预取和起播撞上时共用同一份结果）。 */
 private val vvcLocks = ConcurrentHashMap<String, Mutex>()
 
+/** 音频解析修复标记：没有它的旧缓存（可能无声）一律重建。 */
+private const val AUDIO_FIX_MARKER = "audio2.ok"
+
 /**
  * 下载+解密+拆容器，返回可直接给 mpv 的文件。
  * null = 这一集不是 VVC（应交给主播放器）；失败直接抛异常，由调用方决定提示。
@@ -671,14 +674,15 @@ private fun prepareVvcLocked(
     val meta = File(dir, "meta.txt")
     var metaDur = 0.0
     var metaFps = 0.0
-    if (v.exists() && v.length() > 0 && meta.exists()) {
+    val fixMarker = File(dir, AUDIO_FIX_MARKER)
+    if (v.exists() && v.length() > 0 && meta.exists() && fixMarker.exists()) {
         runCatching {
             val parts = meta.readText().trim().split(",")
             metaDur = parts[0].toDouble()
             metaFps = parts.getOrNull(1)?.toDouble() ?: 0.0
         }
     }
-    if (!(v.exists() && v.length() > 0 && File(dir, "video.index").exists())) {
+    if (!(v.exists() && v.length() > 0 && File(dir, "video.index").exists() && fixMarker.exists())) {
         onPhase("正在下载并解密…")
         val tiers = Api.tiers(e.vid)
         val playable = tiers.filter { it.playable }
@@ -699,7 +703,10 @@ private fun prepareVvcLocked(
         if (!res.videoOk) error("转换失败")
         metaDur = res.duration
         metaFps = res.fps
-        runCatching { meta.writeText("${res.duration},${res.fps}") }
+        runCatching {
+            meta.writeText("${res.duration},${res.fps}")
+            fixMarker.writeText("ok")
+        }
     }
     val af = a.takeIf { it.exists() && it.length() > 0 }
     return VvcFiles(v, af, metaDur, metaFps)
@@ -717,7 +724,9 @@ internal object VvcWarm {
 
     fun prime(ctx: android.content.Context, e: Episode, cap: Int, keep: Set<String>) {
         val dir = File(File(ctx.cacheDir, "vvc"), "${e.vid}_$cap")
-        if (File(dir, "video.index").exists() && File(dir, "video.266").length() > 0) return
+        if (File(dir, "video.index").exists() && File(dir, "video.266").length() > 0 &&
+            File(dir, AUDIO_FIX_MARKER).exists()
+        ) return
         scope.launch {
             runCatching { prepareVvcFiles(ctx.applicationContext, e, cap, keep) { } }
                 .onFailure { Log.e("VvcWarm", "预取 ${e.vid} 失败: ${it.message}", it) }
@@ -726,7 +735,8 @@ internal object VvcWarm {
 
     fun cached(ctx: android.content.Context, vid: String, cap: Int): Boolean {
         val dir = File(File(ctx.cacheDir, "vvc"), "${vid}_$cap")
-        return File(dir, "video.index").exists() && File(dir, "video.266").length() > 0
+        return File(dir, "video.index").exists() && File(dir, "video.266").length() > 0 &&
+            File(dir, AUDIO_FIX_MARKER).exists()
     }
 }
 

@@ -50,7 +50,7 @@ object VvcPrep {
     fun cached(vid: String): File? {
         val dir = File(baseDir(), vid)
         val clean = File(dir, "clean.mp4")
-        val marker = File(dir, "v2.ok")
+        val marker = File(dir, "v3.ok")
         return clean.takeIf { marker.exists() && it.exists() && it.length() > 0 }
     }
 
@@ -61,8 +61,8 @@ object VvcPrep {
         val audio = File(dir, "audio.aac")
         val clean = File(dir, "clean.mp4")
         val meta = File(dir, "meta.txt")
-        // 缓存版本：1.2.47 的缓存没有音轨（ASC 过滤 bug），必须重建
-        val marker = File(dir, "v2.ok")
+        // 缓存版本：v3 = 修了 esds 误读（码率里的 0x05）和 HE-AACv2 ADTS profile；旧缓存可能无声，必须重建
+        val marker = File(dir, "v3.ok")
 
         var durationMs = 0L
         var fps = 0.0
@@ -233,7 +233,15 @@ object VvcPrep {
     }
 
     private fun adtsHeader(objectType: Int, freqIdx: Int, channels: Int, frameLen: Int): ByteArray {
-        val profile = (objectType - 1).coerceIn(0, 3)
+        // ADTS 只有 Main/LC/SSR/LTP 四种 profile；HE-AAC(5)/HE-AACv2(29) 的核心是 LC，
+        // 必须写 1。原来按 objectType-1 算成 3（LTP），部分解码器直接不出声。
+        val profile = when (objectType) {
+            1 -> 0
+            2 -> 1
+            3 -> 2
+            4 -> 3
+            else -> 1
+        }
         val ch = channels.coerceIn(0, 7)
         return byteArrayOf(
             0xFF.toByte(),
@@ -313,13 +321,20 @@ object VvcPrep {
         return Track(offsets, sizes, parseAudioConfig(d, stbl.first + 8, stbl.first + stbl.second), fps, duration)
     }
 
-    /** 从 stsd 里取 AudioSpecificConfig；enca/mp4a/wave 等嵌套用字节扫描兜底。 */
+    /**
+     * 从 stsd/mp4a/esds 里取 AudioSpecificConfig。
+     *
+     * 必须按描述符树走，不能在整段 esds 里搜 0x05：码率字段也可能出现 0x05
+     * （例如 avgBitrate=0xFA05），扫到就会把后面的字节当成 AAC 配置，
+     * 生成的 ADTS 采样率/声道全错，mpv 能挂上音轨却解不出声音 → 只有画面。
+     */
     private fun parseAudioConfig(d: ByteArray, start: Int, end: Int): ByteArray? {
         val stsd = findBox(d, start, end, "stsd") ?: return null
         var esds: Pair<Int, Int>? = null
         forEachBox(d, stsd.first + 16, stsd.first + stsd.second) { p, sz, t ->
             if (esds == null) {
-                esds = findBox(d, p + 8, p + sz, "esds") ?: findBox(d, p + 86, p + sz, "esds")
+                esds = findBox(d, p + 8, p + sz, "esds")
+                    ?: findBox(d, p + 86, p + sz, "esds")
             }
             if (t == "mp4a") {
                 esds = esds ?: findBox(d, p + 8, p + sz, "esds") ?: findBox(d, p + 86, p + sz, "esds")
@@ -343,22 +358,66 @@ object VvcPrep {
         }
         val es = esds ?: return null
         val limit = es.first + es.second
+
+        fun readLen(q0: Int): Pair<Int, Int> {
+            var q = q0
+            var n = 0
+            var count = 0
+            while (q < limit && count < 4) {
+                val b = d[q].toInt() and 0xFF
+                q++
+                count++
+                n = (n shl 7) or (b and 0x7F)
+                if (b and 0x80 == 0) break
+            }
+            return n to q
+        }
+
+        // ES_Descriptor -> DecoderConfigDescriptor -> DecoderSpecificInfo
+        var p = es.first + 12 // box header 8 + fullbox 4
+        if (p < limit && (d[p].toInt() and 0xFF) == 0x03) {
+            p++
+            val (_, q) = readLen(p)
+            p = q
+            if (p + 3 <= limit) {
+                p += 2 // ES_ID
+                val flags = d[p].toInt() and 0xFF
+                p++
+                if (flags and 0x80 != 0) p += 2
+                if (flags and 0x40 != 0 && p < limit) {
+                    val n = d[p].toInt() and 0xFF
+                    p += 1 + n
+                }
+                if (flags and 0x20 != 0) p += 2
+            }
+            if (p < limit && (d[p].toInt() and 0xFF) == 0x04) {
+                p++
+                val (_, q) = readLen(p)
+                p = q
+                p += 13 // objectTypeIndication + streamType + bufferSize + max/avg bitrate
+                if (p < limit && (d[p].toInt() and 0xFF) == 0x05) {
+                    p++
+                    val (len, dataAt) = readLen(p)
+                    if (len in 2..8 && dataAt + len <= limit) {
+                        return d.copyOfRange(dataAt, dataAt + len)
+                    }
+                }
+            }
+        }
+
+        // 结构不标准时退回扫描，但要求 ASC 字段像样，避免再被码率里的 0x05 骗到
         var i = es.first + 12
         while (i < limit - 4) {
-            val tag = d[i].toInt() and 0xFF
-            if (tag == 0x05) {
-                var j = i + 1
-                var n = 0
-                while (j < limit) {
-                    val b = d[j].toInt() and 0xFF
-                    j++
-                    n = (n shl 7) or (b and 0x7F)
-                    if (b and 0x80 == 0) break
-                }
-                if (j + n <= limit && n in 2..8) {
-                    // 不做字段合理性过滤：番茄的 HE-AAC 会算出 ot=31/ch=0，
-                    // 过滤掉就整集没声音（安卓 2.2.144 同一个坑，PC 1.2.47 没同步）
-                    return d.copyOfRange(j, j + n)
+            if ((d[i].toInt() and 0xFF) == 0x05) {
+                val (len, dataAt) = readLen(i + 1)
+                if (len in 2..8 && dataAt + len <= limit) {
+                    val cfg = d.copyOfRange(dataAt, dataAt + len)
+                    val aot = (cfg[0].toInt() ushr 3) and 0x1F
+                    val freq = ((cfg[0].toInt() and 7) shl 1) or ((cfg[1].toInt() ushr 7) and 1)
+                    val ch = (cfg[1].toInt() ushr 3) and 0x0F
+                    if (freq in 0..12 && ch in 0..7 && (aot in 1..5 || aot == 29 || aot >= 17)) {
+                        return cfg
+                    }
                 }
             }
             i++
