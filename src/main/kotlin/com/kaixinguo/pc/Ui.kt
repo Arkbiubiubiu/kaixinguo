@@ -96,9 +96,9 @@ object Palette {
     private fun c(dark: Long, light: Long): Color =
         Color(if (isDark.value) dark else light)
 
-    val bg get() = c(0xFF0F0D0F, 0xFFF6F5F7)
-    val panel get() = c(0xFF1B161A, 0xFFFFFFFF)
-    val panelHi get() = c(0xFF261F24, 0xFFEDEAEF)
+    val bg get() = c(0xFF1C181E, 0xFFF6F5F7)
+    val panel get() = c(0xFF252027, 0xFFFFFFFF)
+    val panelHi get() = c(0xFF322A32, 0xFFEDEAEF)
     val line get() = if (isDark.value) Color(0x14FFFFFF) else Color(0x14000000)
     val text get() = c(0xFFF2F2F5, 0xFF151216)
     val dim get() = c(0xFF9A9AA2, 0xFF6B6770)
@@ -192,7 +192,7 @@ val FollowsEmptyIcon = Icons.Filled.Tv
 @Composable
 fun Sidebar(selected: String, collapsed: Boolean, onSelect: (String) -> Unit, onToggle: () -> Unit, badge: Int = 0) {
     Column(
-        Modifier.width(96.dp).fillMaxHeight().background(Palette.bg).padding(vertical = 12.dp),
+        Modifier.width(88.dp).fillMaxHeight().background(Palette.bg).padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NAV.forEach { (label, icon) ->
@@ -223,22 +223,24 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, badge: In
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 2.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(
-                    when {
-                        active -> Palette.panelHi
-                        hovered -> Palette.panelHi.copy(alpha = 0.6f)
-                        else -> Color.Transparent
-                    },
-                )
                 .onPointerEvent(PointerEventType.Enter) { hovered = true }
                 .onPointerEvent(PointerEventType.Exit) { hovered = false }
                 .clickable { onClick() }
-                .padding(vertical = 9.dp),
+                .padding(vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box {
+            // 选中/悬停只给图标一个 40dp 的圆角小底，不再整行铺一条浅色长方形
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(
+                    when {
+                        active -> Palette.panelHi
+                        hovered -> Palette.panelHi.copy(alpha = 0.5f)
+                        else -> Color.Transparent
+                    },
+                ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box {
                 Icon(
                     icon,
                     contentDescription = label,
@@ -263,8 +265,9 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, badge: In
                             .padding(horizontal = 4.dp, vertical = 1.dp),
                     )
                 }
+                }
             }
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
                 label,
                 color = if (active) Palette.text else Palette.dim,
