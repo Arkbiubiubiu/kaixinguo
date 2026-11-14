@@ -644,6 +644,14 @@ private fun HomePage(
             cur = next.copy(cards = cur.cards + next.cards)
             rounds++
         }
+        // 列表接口自带的热度是旧值/播放量口径，和详情对不上；
+        // /api/heat 返回的就是详情 hot_score，首屏统一刷一遍再上屏
+        cur = cur?.let { c ->
+            val fixed = withContext(Dispatchers.IO) {
+                runCatching { Api.fillHeat(c.cards) }.getOrDefault(c.cards)
+            }
+            c.copy(cards = fixed)
+        }
         page = cur
         cursor = cur
         error = if (cur == null || cur.cards.isEmpty()) "暂时没能加载出来 · 检查网络后重试" else null
@@ -659,7 +667,22 @@ private fun HomePage(
     val hero = cards.getOrNull(safeHeroIndex)
     LaunchedEffect(hero?.seriesId) {
         val id = hero?.seriesId ?: return@LaunchedEffect
-        heroDetail = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(id) }.getOrNull() }
+        val detail = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(id) }.getOrNull() }
+        heroDetail = detail
+        // 详情里的 hot_score 才是官网同款热度值；列表里的 rec_text 是旧运营文案。
+        // hero 对应的那张卡同步成详情值，保证上下同一个数字。
+        val hotRaw = detail?.hotScore?.takeIf { it.isNotBlank() }
+        // hot_score 是原始数字（46599270），卡片按「4659万」显示，统一下格式
+        val hot = hotRaw?.let { h ->
+            if (h.toLongOrNull() != null) com.hongguotv.pad.formatCount(h) else h
+        }
+        if (hot != null) {
+            page = page?.let { pg ->
+                pg.copy(cards = pg.cards.map { c ->
+                    if (c.seriesId == id && c.playText != hot) c.copy(playText = hot) else c
+                })
+            }
+        }
     }
 
     // 「换一批」：feed 游标前进一页当新首屏（firstPage 每次返回同批，
@@ -677,7 +700,10 @@ private fun HomePage(
                 }.getOrNull()
             } else null
             if (np != null && np.cards.isNotEmpty()) {
-                page = np
+                val fixed = withContext(Dispatchers.IO) {
+                    runCatching { Api.fillHeat(np.cards) }.getOrDefault(np.cards)
+                }
+                page = np.copy(cards = fixed)
                 cursor = np
                 error = null
             } else {
@@ -707,7 +733,10 @@ private fun HomePage(
             val cur = page
             if (next != null && next.cards.isNotEmpty() && cur != null) {
                 val known = cur.cards.map { it.seriesId }.toSet()
-                page = next.copy(cards = cur.cards + next.cards.filter { it.seriesId !in known })
+                val fixed = withContext(Dispatchers.IO) {
+                    runCatching { Api.fillHeat(next.cards) }.getOrDefault(next.cards)
+                }
+                page = next.copy(cards = cur.cards + fixed.filter { it.seriesId !in known })
                 cursor = next
             } else {
                 cursor = c.copy(hasMore = false)

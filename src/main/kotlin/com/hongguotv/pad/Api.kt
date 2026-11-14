@@ -718,8 +718,10 @@ object Api {
         // 用户看到的就是数据错乱。宁可这张卡片没有数字，也不给错的数字。
         val recRaw = v.optString("rec_text").trim()
         val playText = when {
-            recRaw.isNotEmpty() && !recRaw.startsWith("{") -> recRaw
+            // hot_score 才是详情/官网那个「热度值」；rec_text 往往是旧的运营文案
+            // （实测同剧详情 4659万、卡片 392万），所以热度优先，文案只做兜底
             hotNum > 0 -> formatCount(hotNum.toString())
+            recRaw.isNotEmpty() && !recRaw.startsWith("{") -> recRaw
             else -> extractCount(v.optString("rec_text")).ifEmpty { subTitleHeat(v) }
         }
         val statusText = v.optString("series_status").takeIf { it.isNotEmpty() && it != "0" }
