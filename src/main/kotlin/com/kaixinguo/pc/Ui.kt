@@ -534,7 +534,12 @@ fun HeroCard(
     val intro = detail?.intro?.takeIf { it.isNotBlank() }.orEmpty()
     val episodes = detail?.episodeCount ?: card.episodeCount
     val score = detail?.score?.takeIf { it.isNotBlank() } ?: card.score
-    val hot = detail?.hotScore?.takeIf { it.isNotBlank() } ?: card.heat.orEmpty()
+    // 与下方卡片保持同一个数字：优先用列表 card.heat（详情 hot_score 是另一套口径，
+    // 会出现 hero 4659万、同一张卡 392万 的情况）
+    // 与卡片完全同一口径：卡片优先 heat，其次 playText（"392万热度"），最后才用详情
+    val hot = card.heat?.takeIf { it.isNotBlank() }
+        ?: card.playText.takeIf { it.isNotBlank() }
+        ?: detail?.hotScore.orEmpty()
     val followed = detail?.followedCount.orEmpty()
 
     // 旧版 hero 规格（home-wall-page.tsx）：
@@ -874,6 +879,7 @@ fun PosterCard(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
+                minLines = 2,
                 lineHeight = 20.sp,
                 overflow = TextOverflow.Ellipsis,
             )
