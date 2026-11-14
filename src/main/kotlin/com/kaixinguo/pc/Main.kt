@@ -195,9 +195,25 @@ fun main() = application {
     ) {
         val awt = java.awt.Window.getWindows().filterIsInstance<java.awt.Frame>().firstOrNull()
         androidx.compose.runtime.LaunchedEffect(awt, Palette.isDark.value) {
-            // 等窗口真正上屏后再刷 DWM，否则某些机器上颜色不生效
-            kotlinx.coroutines.delay(120)
-            DarkTitleBar.apply(awt, Palette.bg.toArgb())
+            // DWM 在窗口上屏/激活时会重刷标题栏，单次设置可能被盖回黑色；
+            // 启动阶段多刷几次，并在窗口激活/状态变化时补刷
+            repeat(6) {
+                kotlinx.coroutines.delay(if (it == 0) 120 else 400)
+                DarkTitleBar.apply(awt, Palette.bg.toArgb())
+            }
+        }
+        androidx.compose.runtime.DisposableEffect(awt, Palette.isDark.value) {
+            val f = awt ?: return@DisposableEffect onDispose { }
+            val l = object : java.awt.event.WindowAdapter() {
+                override fun windowActivated(e: java.awt.event.WindowEvent?) {
+                    DarkTitleBar.apply(f, Palette.bg.toArgb())
+                }
+                override fun windowStateChanged(e: java.awt.event.WindowEvent?) {
+                    DarkTitleBar.apply(f, Palette.bg.toArgb())
+                }
+            }
+            f.addWindowListener(l)
+            onDispose { f.removeWindowListener(l) }
         }
         // 窗口最小化 → 播放暂停（回到前台不自动续播）
         androidx.compose.runtime.DisposableEffect(awt) {
