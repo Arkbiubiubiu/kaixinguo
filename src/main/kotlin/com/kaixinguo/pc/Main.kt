@@ -612,6 +612,8 @@ private fun HomePage(
     /** 上一页的游标：cellId/planId/sessionId/offset 都在里面，翻页要用 */
     var cursor by remember { mutableStateOf<FeedPage?>(null) }
     var moreLoading by remember { mutableStateOf(false) }
+    // 不跟 page 绑定：数据刷新（热度补齐等）不能把 hero 拉回第一张
+    var heroIndex by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     /** 推荐墙的滚动状态：滚到靠底就自动续拉，不再放按钮 */
     val wallScroll = PageMemo.homeWall
@@ -624,6 +626,7 @@ private fun HomePage(
         PageMemo.homeTab = tab
         PageMemo.homeRefresh = refresh
         loading = true
+        heroIndex = 0
         val result = withContext(Dispatchers.IO) {
             runCatching { Api.firstPageCached(tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]) }.getOrNull()
         }
@@ -662,27 +665,11 @@ private fun HomePage(
 
     val cards = page?.cards.orEmpty()
     // hero 可左右翻（旧版：hero 覆盖整条流，箭头切主角，底部计数 N / 总数）
-    var heroIndex by remember(page) { mutableStateOf(0) }
     val safeHeroIndex = heroIndex.coerceIn(0, (cards.size - 1).coerceAtLeast(0))
     val hero = cards.getOrNull(safeHeroIndex)
     LaunchedEffect(hero?.seriesId) {
         val id = hero?.seriesId ?: return@LaunchedEffect
-        val detail = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(id) }.getOrNull() }
-        heroDetail = detail
-        // 详情里的 hot_score 才是官网同款热度值；列表里的 rec_text 是旧运营文案。
-        // hero 对应的那张卡同步成详情值，保证上下同一个数字。
-        val hotRaw = detail?.hotScore?.takeIf { it.isNotBlank() }
-        // hot_score 是原始数字（46599270），卡片按「4659万」显示，统一下格式
-        val hot = hotRaw?.let { h ->
-            if (h.toLongOrNull() != null) com.hongguotv.pad.formatCount(h) else h
-        }
-        if (hot != null) {
-            page = page?.let { pg ->
-                pg.copy(cards = pg.cards.map { c ->
-                    if (c.seriesId == id && c.playText != hot) c.copy(playText = hot) else c
-                })
-            }
-        }
+        heroDetail = withContext(Dispatchers.IO) { runCatching { Api.ensureDetail(id) }.getOrNull() }
     }
 
     // 「换一批」：feed 游标前进一页当新首屏（firstPage 每次返回同批，
@@ -693,6 +680,7 @@ private fun HomePage(
         if (moreLoading) return
         scope.launch {
             moreLoading = true
+            heroIndex = 0
             val type = tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]
             val np = if (c.hasMore) withContext(Dispatchers.IO) {
                 runCatching {

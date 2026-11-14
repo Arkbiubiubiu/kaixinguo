@@ -138,17 +138,6 @@ fun HomeScreen(
                     runCatching { Api.ensureDetail(id) }.getOrNull()
                 }
                 heroDetail = d
-                // hero 用详情 hot_score（官网同款），对应卡片也同步成这个值，
-                // 避免「上面 4659万、下面 392万」；数字统一 formatCount
-                val hot = d?.hotScore?.takeIf { it.isNotBlank() }?.let { h ->
-                    if (h.toLongOrNull() != null) formatCount(h) else h
-                }
-                if (hot != null) {
-                    val i = cards.indexOfFirst { it.seriesId == id }
-                    if (i >= 0 && cards[i].playText != hot) {
-                        cards[i] = cards[i].copy(playText = hot)
-                    }
-                }
             }
             launch {
                 val page = withContext(Dispatchers.IO) {
@@ -163,7 +152,11 @@ fun HomeScreen(
     LaunchedEffect(tab, refreshNonce) {
         if (refreshNonce > 0) Api.clearListCache()   // 换一批：作废列表缓存
         val key = "home_${tab.name}"
-        val cached = withContext(Dispatchers.IO) { FeedCache.load(key) }
+        val cachedRaw = withContext(Dispatchers.IO) { FeedCache.load(key) }
+        // 缓存里的热度可能是旧口径；先按服务器 heat 补齐再上屏，避免「先错后改」
+        val cached = withContext(Dispatchers.IO) {
+            runCatching { Api.fillHeat(cachedRaw) }.getOrDefault(cachedRaw)
+        }
         cards.clear()
         cards.addAll(cached)
         // hero 也要跟着缓存立刻出来：原来只有网络首屏回来后才赋 heroCard，
@@ -190,6 +183,9 @@ fun HomeScreen(
                 runCatching { Api.firstPage(tab.tabType) }.getOrNull()
             }
             if (page != null && page.cards.isNotEmpty()) {
+                val fixed = withContext(Dispatchers.IO) {
+                    runCatching { Api.fillHeat(page.cards) }.getOrDefault(page.cards)
+                }
                 // 关键：**有缓存时不动屏幕上的列表**。
                 //
                 // 原来这里无条件 cards.clear() + 换新内容，于是「开 App 用缓存先画出来
@@ -201,12 +197,12 @@ fun HomeScreen(
                 // 换一批（refreshNonce>0）也强制用网络结果铺屏——用户明确要「换新的」
                 if (cached.isEmpty() || refreshNonce > 0) {
                     cards.clear()
-                    cards.addAll(page.cards)
+                    cards.addAll(fixed)
                 }
                 // 游标照常更新：继续下滑翻页时用新的 offset，翻页那边会按 seriesId 去重
                 cursor = page
                 hasMore = page.hasMore
-                withContext(Dispatchers.IO) { FeedCache.save(key, page.cards.toList()) }
+                withContext(Dispatchers.IO) { FeedCache.save(key, fixed.toList()) }
                 break
             }
             attempt++
