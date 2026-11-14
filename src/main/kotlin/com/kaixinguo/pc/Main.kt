@@ -730,7 +730,7 @@ private fun HomePage(
         Column(Modifier.fillMaxSize()) {
             // 页头薄行：分类 tab + 右端「换一批」（旧版 home-wall 顶部那一行）
             Row(
-                Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 12.dp),
+                Modifier.fillMaxWidth().padding(start = 0.dp, end = 24.dp, top = 16.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 listOf("推荐", "漫剧", "真人剧").forEachIndexed { i, label ->
@@ -740,7 +740,7 @@ private fun HomePage(
                 Spacer(Modifier.weight(1f))
                 HeaderAction("换一批", onClick = { swapBatch() })
             }
-            Box(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
+            Box(Modifier.fillMaxSize().padding(start = 0.dp, end = 24.dp)) {
                 when {
                     // 首屏骨架（旧版 WallSkeleton：墙形灰砖比转圈更像成品）
                     loading && page == null -> Box(Modifier.fillMaxSize().padding(top = 8.dp)) { SkeletonWall() }

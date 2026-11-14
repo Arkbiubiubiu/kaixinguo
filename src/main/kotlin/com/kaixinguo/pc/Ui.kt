@@ -192,7 +192,7 @@ val FollowsEmptyIcon = Icons.Filled.Tv
 @Composable
 fun Sidebar(selected: String, collapsed: Boolean, onSelect: (String) -> Unit, onToggle: () -> Unit, badge: Int = 0) {
     Column(
-        Modifier.width(88.dp).fillMaxHeight().background(Palette.bg).padding(vertical = 12.dp),
+        Modifier.width(72.dp).fillMaxHeight().background(Palette.bg).padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NAV.forEach { (label, icon) ->
@@ -212,14 +212,8 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, badge: In
     // 选中态从「整块亮红」收成「抬一档的卡面 + 红图标」，红只留一条 2dp 指示条。
     // 侧栏在每个页面都在，整块红会让全站一直有个红色大按钮抢焦点。
     Box(Modifier.fillMaxWidth()) {
-        if (active) {
-            Box(
-                Modifier.align(Alignment.CenterStart).padding(start = 2.dp)
-                    .width(2.dp).height(22.dp)
-                    .clip(RoundedCornerShape(1.dp))
-                    .background(Palette.accent),
-            )
-        }
+        // 不再画最左侧的 2dp 红条：它会把「按钮」的视觉重心拉到左边，
+        // 看起来图标不在侧栏中间；选中态只靠居中的图标底 + 红图标表达
         Column(
             Modifier
                 .fillMaxWidth()
