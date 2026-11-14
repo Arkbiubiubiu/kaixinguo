@@ -86,6 +86,20 @@ fun VvcPlayerScreen(
     var seekIdx by remember { mutableStateOf<SeekIndex?>(null) }
     var seekJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var cutGen by remember { mutableStateOf(0) }
+    // VVC 是纯软解：清晰度就是性能旋钮。默认电视 540p，用户可在播放页里切
+    val qPrefs = remember { context.getSharedPreferences("vvc", android.content.Context.MODE_PRIVATE) }
+    var cap by remember { mutableStateOf(qPrefs.getInt("cap", if (Store.appContext.packageName.endsWith("nativeapp")) 540 else 720)) }
+    var controlsVisible by remember { mutableStateOf(true) }
+    var lastInteract by remember { mutableStateOf(System.currentTimeMillis()) }
+    fun touchUi() {
+        lastInteract = System.currentTimeMillis()
+        controlsVisible = true
+    }
+    LaunchedEffect(controlsVisible, lastInteract, paused) {
+        if (!controlsVisible || paused) return@LaunchedEffect
+        kotlinx.coroutines.delay(5000)
+        if (System.currentTimeMillis() - lastInteract >= 5000) controlsVisible = false
+    }
 
     val ep = episodes.getOrNull(index - 1)
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
@@ -93,6 +107,7 @@ fun VvcPlayerScreen(
     val pauseFocus = remember { FocusRequester() }
     val prevFocus = remember { FocusRequester() }
     val nextFocus = remember { FocusRequester() }
+    val capFocus = remember { FocusRequester() }
     var rootHasFocus by remember { mutableStateOf(true) }
 
     // 电视遥控器：焦点必须先落在根容器上，否则方向键/确定全部收不到（2.2.142 的坑）
@@ -121,6 +136,7 @@ fun VvcPlayerScreen(
                     cover = DetailCache.get(seriesId)?.cover.orEmpty(),
                     episode = index,
                     total = episodes.size,
+                    allowRewind = true,
                 )
             }
             runCatching { Api.historySyncAsync() }
@@ -129,7 +145,7 @@ fun VvcPlayerScreen(
     }
 
     // 每一集：有缓存直接用，没有才下载+解密+拆容器
-    LaunchedEffect(index, ep?.vid, attempt) {
+    LaunchedEffect(index, ep?.vid, attempt, cap) {
         val e = ep ?: return@LaunchedEffect
         Log.d("VvcPlayer", "prepare ep=$index vid=${e.vid} attempt=$attempt")
         error = null
@@ -148,8 +164,9 @@ fun VvcPlayerScreen(
                 val root = File(context.cacheDir, "vvc")
                 // 只留当前这集：短剧集数多，缓存全留会把存储吃满
                 runCatching {
+                    val keep = "${e.vid}_$cap"
                     root.listFiles()?.forEach { d ->
-                        if (d.name != e.vid) d.deleteRecursively()
+                        if (d.name != keep) d.deleteRecursively()
                     }
                 }
                 val dir = File(root, e.vid).apply { mkdirs() }
@@ -170,10 +187,10 @@ fun VvcPlayerScreen(
                     phase = "正在下载并解密…"
                     val tiers = Api.tiers(e.vid)
                     val playable = tiers.filter { it.playable }
-                    // VVC 是纯软解：1080p 在电视 CPU 上必卡，统一选 720p 以内
-                    val cap = minOf(720, Store.maxHeight)
-                    val picked = playable.firstOrNull { it.height == cap }
-                        ?: playable.filter { it.height <= cap }.maxByOrNull { it.height }
+                    // VVC 是纯软解：清晰度直接决定 CPU 占用
+                    val useCap = minOf(cap, Store.maxHeight)
+                    val picked = playable.firstOrNull { it.height == useCap }
+                        ?: playable.filter { it.height <= useCap }.maxByOrNull { it.height }
                         ?: playable.minByOrNull { it.height }
                     val info = picked?.toPlayInfo() ?: Api.play(e.vid, 1004, 0)
                     val rv = RemoteVideo(info)
@@ -208,11 +225,13 @@ fun VvcPlayerScreen(
         }
         prepared ?: return@LaunchedEffect
         Log.d("VvcPlayer", "prepared video=${prepared.first.length()}B audio=${prepared.second?.length() ?: 0}B dur=${prepared.third.first} fps=${prepared.third.second}")
-        videoFile = prepared.first
-        audioFile = prepared.second
+        // 先算完所有指标再改 videoFile：它一变就会触发起播 effect，
+        // 中间如果有挂起点（withContext），起播会拿到 fps=0 的旧值
         seekIdx = withContext(Dispatchers.IO) { SeekIndex.load(prepared.first.parentFile) }
         dur = prepared.third.first
         fps = prepared.third.second
+        audioFile = prepared.second
+        videoFile = prepared.first
         phase = "正在启动解码…"
         if (!withContext(Dispatchers.IO) { MpvCore.ensure(context) }) {
             error = "解码器初始化失败"
@@ -268,6 +287,17 @@ fun VvcPlayerScreen(
             if (now - lastSave > 5000) {
                 lastSave = now
                 saveProgress()
+                // 性能现场（会随日志回传）：实际帧率/丢帧数决定下一步该降多少
+                Log.d(
+                    "VvcStat",
+                    "cap=$cap vfps=%.1f cfps=%.1f drop=%d decDrop=%d pos=%.1f".format(
+                        MpvCore.statD("estimated-vf-fps"),
+                        MpvCore.statD("container-fps"),
+                        MpvCore.statI("frame-drop-count"),
+                        MpvCore.statI("decoder-frame-drop-count"),
+                        pos,
+                    ),
+                )
             }
             if (!ended && dur > 1 && pos >= dur - 1.2) {
                 ended = true
@@ -374,9 +404,13 @@ fun VvcPlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(rootFocus)
+            .pointerInput(Unit) {
+                detectTapGestures { controlsVisible = !controlsVisible; touchUi() }
+            }
             .onFocusChanged { rootHasFocus = it.isFocused }
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                touchUi()
                 // 焦点在按钮上时，方向键/确定交给按钮自己处理
                 if (!rootHasFocus) return@onPreviewKeyEvent false
                 when (ev.key) {
@@ -442,8 +476,8 @@ fun VvcPlayerScreen(
             }
         }
 
-        // 顶部：返回 + 标题 + 详情
-        Row(
+        // 顶部：返回 + 标题 + 详情（5 秒无操作自动隐藏）
+        if (controlsVisible) Row(
             Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -475,7 +509,7 @@ fun VvcPlayerScreen(
         }
 
         // 底部控制条：可拖动进度条 + 播放/暂停 + 上下集（遥控器确定/左右也生效）
-        if (loaded) {
+        if (loaded && controlsVisible) {
             var scrub by remember { mutableStateOf<Float?>(null) }
             val frac = scrub ?: if (dur > 0) (pos / dur).toFloat().coerceIn(0f, 1f) else 0f
             Column(
@@ -520,7 +554,7 @@ fun VvcPlayerScreen(
                         fontSize = 15.sp,
                         focusRequester = pauseFocus,
                         leftReq = null,
-                        rightReq = if (index > 1) prevFocus else if (index < episodes.size) nextFocus else null,
+                        rightReq = if (index > 1) prevFocus else if (index < episodes.size) nextFocus else capFocus,
                         onUp = { runCatching { rootFocus.requestFocus() } },
                     ) {
                         val p = MpvCore.isPaused()
@@ -545,9 +579,24 @@ fun VvcPlayerScreen(
                             fontSize = 14.sp,
                             focusRequester = nextFocus,
                             leftReq = if (index > 1) prevFocus else pauseFocus,
-                            rightReq = null,
+                            rightReq = capFocus,
                             onUp = { runCatching { rootFocus.requestFocus() } },
                         ) { saveProgress(); index += 1 }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    CtrlButton(
+                        label = "${cap}P",
+                        fontSize = 14.sp,
+                        focusRequester = capFocus,
+                        leftReq = if (index < episodes.size) nextFocus else if (index > 1) prevFocus else pauseFocus,
+                        rightReq = null,
+                        onUp = { runCatching { rootFocus.requestFocus() } },
+                    ) {
+                        val opts = listOf(720, 540, 480, 360)
+                        val i = opts.indexOf(cap).let { if (it < 0) 0 else it }
+                        cap = opts[(i + 1) % opts.size]
+                        qPrefs.edit().putInt("cap", cap).apply()
+                        touchUi()
                     }
                     Spacer(Modifier.width(16.dp))
                     Text(

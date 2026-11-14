@@ -56,8 +56,13 @@ object MpvCore {
         current = key
         Log.d(TAG, "load video=$file audio=$audioFile fps=$fps")
         runCatching {
-            // 裸流没有时间戳：用容器里算出来的帧率兜底，否则 mpv 会按 25fps 猜
-            if (fps > 1.0) MPVLib.setOptionString("fps", String.format(java.util.Locale.US, "%.3f", fps))
+            // 裸流没有时间戳：必须用 container-fps-override（--fps 对 lavf 裸流不生效），
+            // 否则 mpv 按 25fps 算时间轴，30fps 的片源会一直音画追赶 → 看起来就是卡
+            if (fps > 1.0) {
+                val f = String.format(java.util.Locale.US, "%.3f", fps)
+                MPVLib.setOptionString("fps", f)
+                MPVLib.setOptionString("container-fps-override", f)
+            }
             MPVLib.command(arrayOf("loadfile", file, "replace"))
             // 独立音轨用 audio-add 挂，--audio-file 在这个 libmpv 构建里不生效
             if (audioFile != null) {
@@ -83,6 +88,9 @@ object MpvCore {
     fun position(): Double = runCatching { MPVLib.getPropertyDouble("time-pos") ?: 0.0 }.getOrDefault(0.0)
     fun duration(): Double = runCatching { MPVLib.getPropertyDouble("duration") ?: 0.0 }.getOrDefault(0.0)
     fun isPaused(): Boolean = runCatching { MPVLib.getPropertyBoolean("pause") ?: false }.getOrDefault(false)
+    fun statD(name: String): Double = runCatching { MPVLib.getPropertyDouble(name) ?: 0.0 }.getOrDefault(0.0)
+    fun statI(name: String): Int = runCatching { MPVLib.getPropertyInt(name) ?: 0 }.getOrDefault(0)
+
     fun voConfigured(): Boolean =
         runCatching { MPVLib.getPropertyBoolean("vo-configured") ?: false }.getOrDefault(false)
     /** 没有画面时用来回报现场：VO 参数 / GL 版本 / ABI */

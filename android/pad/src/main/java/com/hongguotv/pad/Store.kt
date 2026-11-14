@@ -370,6 +370,9 @@ object Store : AccountState {
             JSONObject()
                 .put("seriesId", seriesId).put("title", title).put("cover", cover)
                 .put("episode", keep).put("total", total)
+                // 主动切到更早的集数时标一个 rewind：合并/云端都认这个标记，
+                // 否则「集数大者胜」会把用户重看第 1 集的进度顶回第 5 集
+                .put("rewind", allowRewind)
                 .put("at", System.currentTimeMillis()),
         )
         val arr = JSONArray()
@@ -463,7 +466,11 @@ object Store : AccountState {
                 val oe = old.optInt("episode", 0)
                 val rp = row.optLong("positionMs", 0)
                 val op = old.optLong("positionMs", 0)
+                val rowRewind = row.optBoolean("rewind")
+                val oldRewind = old.optBoolean("rewind")
                 val rowBetter = when {
+                    // 有一方是「主动重看旧集」：按时间戳，谁后谁生效
+                    rowRewind || oldRewind -> row.optLong("at") > old.optLong("at")
                     re != oe -> re > oe
                     rp != op -> rp > op
                     else -> row.optLong("at") > old.optLong("at")

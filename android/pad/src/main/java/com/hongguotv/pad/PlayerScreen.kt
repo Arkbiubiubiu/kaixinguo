@@ -471,6 +471,7 @@ fun PlayerScreen(
                         cover = DetailCache.get(curSeries)?.cover.orEmpty(),
                         episode = epIndex,
                         total = curCount,
+                        allowRewind = true,
                     )
                     Api.historySyncAsync()
                 }
@@ -670,6 +671,7 @@ fun PlayerScreen(
                         cover = DetailCache.get(seriesId)?.cover.orEmpty(),
                         episode = index,
                         total = episodes.size,
+                        allowRewind = true,
                     )
                     Api.historySyncAsync()
                     scope.launch(Dispatchers.IO) {
@@ -775,6 +777,7 @@ fun PlayerScreen(
                     cover = DetailCache.get(seriesId)?.cover.orEmpty(),
                     episode = index,
                     total = episodes.size,
+                    allowRewind = true,
                 )
                 Api.historySyncAsync()
                 // 互通：把进度也报给官方，手机官方 App / Windows 版侧栏历史能看到
