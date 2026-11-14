@@ -94,6 +94,8 @@ fun VvcPlayerScreen(
     // VVC 是纯软解：清晰度就是性能旋钮。默认电视 540p，用户可在播放页里切
     val qPrefs = remember { context.getSharedPreferences("vvc", android.content.Context.MODE_PRIVATE) }
     var cap by remember { mutableStateOf(qPrefs.getInt("cap", vvcPreferredCap(context))) }
+    // 倍速：和主播放器共用 Store.speed，切回普通集时速度不会被重置
+    var speed by remember { mutableStateOf(Store.speed) }
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInteract by remember { mutableStateOf(System.currentTimeMillis()) }
     fun touchUi() {
@@ -113,6 +115,7 @@ fun VvcPlayerScreen(
     val prevFocus = remember { FocusRequester() }
     val nextFocus = remember { FocusRequester() }
     val capFocus = remember { FocusRequester() }
+    val speedFocus = remember { FocusRequester() }
     var rootHasFocus by remember { mutableStateOf(true) }
 
     // 电视遥控器：焦点必须先落在根容器上，否则方向键/确定全部收不到（2.2.142 的坑）
@@ -224,6 +227,7 @@ fun VvcPlayerScreen(
                 if (!MpvCore.ensure(context)) return@runCatching false
                 `is`.xyz.mpv.MPVLib.attachSurface(sf)
                 MpvCore.load(f.absolutePath, audioFile?.absolutePath, fps)
+                MpvCore.setSpeed(speed.toDouble())
                 // 非刷剧：从上次看到的位置接着播
                 val resume = if (startAtZero) 0L else Store.posOf(episodes.getOrNull(index - 1)?.vid.orEmpty())
                 if (resume > 3000) MpvCore.seekTo(resume / 1000.0)
@@ -529,7 +533,7 @@ fun VvcPlayerScreen(
                         fontSize = 15.sp,
                         focusRequester = pauseFocus,
                         leftReq = null,
-                        rightReq = if (index > 1) prevFocus else if (index < episodes.size) nextFocus else capFocus,
+                        rightReq = if (index > 1) prevFocus else if (index < episodes.size) nextFocus else speedFocus,
                         onUp = { runCatching { rootFocus.requestFocus() } },
                     ) {
                         val p = MpvCore.isPaused()
@@ -543,7 +547,7 @@ fun VvcPlayerScreen(
                             fontSize = 14.sp,
                             focusRequester = prevFocus,
                             leftReq = pauseFocus,
-                            rightReq = if (index < episodes.size) nextFocus else null,
+                            rightReq = if (index < episodes.size) nextFocus else speedFocus,
                             onUp = { runCatching { rootFocus.requestFocus() } },
                         ) { saveProgress(); index -= 1 }
                         Spacer(Modifier.width(8.dp))
@@ -554,16 +558,32 @@ fun VvcPlayerScreen(
                             fontSize = 14.sp,
                             focusRequester = nextFocus,
                             leftReq = if (index > 1) prevFocus else pauseFocus,
-                            rightReq = capFocus,
+                            rightReq = speedFocus,
                             onUp = { runCatching { rootFocus.requestFocus() } },
                         ) { saveProgress(); index += 1 }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    CtrlButton(
+                        label = speedLabel(speed),
+                        fontSize = 14.sp,
+                        focusRequester = speedFocus,
+                        leftReq = if (index < episodes.size) nextFocus else if (index > 1) prevFocus else pauseFocus,
+                        rightReq = capFocus,
+                        onUp = { runCatching { rootFocus.requestFocus() } },
+                    ) {
+                        val opts = listOf(0.75f, 1f, 1.25f, 1.5f, 2f, 3f)
+                        val i = opts.indexOf(speed).let { if (it < 0) 1 else it }
+                        speed = opts[(i + 1) % opts.size]
+                        Store.speed = speed
+                        MpvCore.setSpeed(speed.toDouble())
+                        touchUi()
                     }
                     Spacer(Modifier.width(8.dp))
                     CtrlButton(
                         label = "${cap}P",
                         fontSize = 14.sp,
                         focusRequester = capFocus,
-                        leftReq = if (index < episodes.size) nextFocus else if (index > 1) prevFocus else pauseFocus,
+                        leftReq = speedFocus,
                         rightReq = null,
                         onUp = { runCatching { rootFocus.requestFocus() } },
                     ) {
@@ -590,6 +610,9 @@ fun VvcPlayerScreen(
         }
     }
 }
+
+private fun speedLabel(s: Float): String =
+    if (s == s.toInt().toFloat()) "${s.toInt()}x" else "${s}x"
 
 private fun fmt(sec: Double): String {
     if (sec <= 0) return "00:00"

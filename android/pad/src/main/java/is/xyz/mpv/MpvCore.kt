@@ -85,6 +85,7 @@ object MpvCore {
     }
     fun pause(p: Boolean) = runCatching { MPVLib.setPropertyBoolean("pause", p) }
     fun seekTo(sec: Double) = runCatching { MPVLib.command(arrayOf("seek", sec.toString(), "absolute+exact")) }
+    fun setSpeed(s: Double) = runCatching { MPVLib.setPropertyDouble("speed", s) }
     fun position(): Double = runCatching { MPVLib.getPropertyDouble("time-pos") ?: 0.0 }.getOrDefault(0.0)
     fun duration(): Double = runCatching { MPVLib.getPropertyDouble("duration") ?: 0.0 }.getOrDefault(0.0)
     fun isPaused(): Boolean = runCatching { MPVLib.getPropertyBoolean("pause") ?: false }.getOrDefault(false)
