@@ -195,7 +195,11 @@ fun HomeScreen(
                 // 现在有缓存就只把新首屏写进磁盘，等下次进推荐页（切 tab / 重启）才生效；
                 // 只有完全没有缓存（冷启动第一次）才直接用网络结果铺屏。
                 // 换一批（refreshNonce>0）也强制用网络结果铺屏——用户明确要「换新的」
-                if (cached.isEmpty() || refreshNonce > 0) {
+                // 冷启动/停在顶部时用网络快照替换缓存：服务端 tab/v 现在是 15 分钟共享快照，
+                // 这样 PC / 安卓 / TV 在同一个窗口里看到的是同一批内容。
+                // 用户已经往下翻时不替换（避免看着看着列表被换掉）。
+                val atTop = runCatching { grid.firstVisibleItemIndex == 0 }.getOrDefault(true)
+                if (cached.isEmpty() || refreshNonce > 0 || atTop) {
                     cards.clear()
                     cards.addAll(fixed)
                 }
