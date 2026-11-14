@@ -158,86 +158,54 @@ fun VvcPlayerScreen(
         baseSec = 0.0
         seekIdx = null
         phase = "准备中…"
-        var nonVvc = false
-        val prepared = withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             runCatching {
                 val root = File(context.cacheDir, "vvc")
-                // 只留当前这集：短剧集数多，缓存全留会把存储吃满
-                runCatching {
-                    val keep = "${e.vid}_$cap"
-                    root.listFiles()?.forEach { d ->
-                        if (d.name != keep) d.deleteRecursively()
-                    }
-                }
-                val dir = File(root, e.vid).apply { mkdirs() }
-                val v = File(dir, "video.266")
-                val a = File(dir, "audio.aac")
-                var metaDur = 0.0
-                var metaFps = 0.0
-                val meta = File(dir, "meta.txt")
-                if (v.exists() && v.length() > 0 && meta.exists()) {
-                    // 缓存复用：帧率/时长上次算过，直接读，别显示 00:00
-                    runCatching {
-                        val parts = meta.readText().trim().split(",")
-                        metaDur = parts[0].toDouble()
-                        metaFps = parts.getOrNull(1)?.toDouble() ?: 0.0
-                    }
-                }
-                if (!(v.exists() && v.length() > 0 && File(dir, "video.index").exists())) {
-                    phase = "正在下载并解密…"
-                    val tiers = Api.tiers(e.vid)
-                    val playable = tiers.filter { it.playable }
-                    // VVC 是纯软解：清晰度直接决定 CPU 占用
-                    val useCap = minOf(cap, Store.maxHeight)
-                    val picked = playable.firstOrNull { it.height == useCap }
-                        ?: playable.filter { it.height <= useCap }.maxByOrNull { it.height }
-                        ?: playable.minByOrNull { it.height }
-                    val info = picked?.toPlayInfo() ?: Api.play(e.vid, 1004, 0)
-                    val rv = RemoteVideo(info)
-                    rv.prepare(allowVvc = true)
-                    // 切集可能落到普通 HEVC/H.264 集：这集交给主播放器，别硬拆 VVC
-                    val tag = rv.videoCodec
-                    if (tag.isNotEmpty() && !tag.equals("bvc2", true)) {
-                        nonVvc = true
-                        return@runCatching null
-                    }
-                    val mp4 = File(dir, "source.mp4")
-                    rv.saveDecrypted(mp4)
-                    phase = "正在转换…"
-                    val res = VvcExport.export(mp4, v, a)
-                    runCatching { mp4.delete() }
-                    if (!res.videoOk) error("转换失败")
-                    metaDur = res.duration
-                    metaFps = res.fps
-                    runCatching { meta.writeText("${res.duration},${res.fps}") }
-                }
-                val af = a.takeIf { it.exists() && it.length() > 0 }
-                Triple(v, af, metaDur to metaFps)
-            }.getOrElse {
-                error = it.message ?: "VVC 准备失败"
-                null
+                val keep = "${e.vid}_$cap"
+                root.listFiles()?.forEach { d -> if (d.name != keep) d.deleteRecursively() }
             }
         }
-        if (nonVvc) {
-            Log.d("VvcPlayer", "ep$index 不是 VVC，交回主播放器")
-            onNonVvc(index)
+        val prepared = try {
+            prepareVvcFiles(context, e, cap) { phase = it }
+        } catch (t: Throwable) {
+            error = t.message ?: "VVC 准备失败"
+            null
+        }
+        if (prepared == null) {
+            if (error == null) {
+                Log.d("VvcPlayer", "ep$index 不是 VVC，交回主播放器")
+                onNonVvc(index)
+            }
             return@LaunchedEffect
         }
-        prepared ?: return@LaunchedEffect
-        Log.d("VvcPlayer", "prepared video=${prepared.first.length()}B audio=${prepared.second?.length() ?: 0}B dur=${prepared.third.first} fps=${prepared.third.second}")
+        Log.d("VvcPlayer", "prepared video=${prepared.video.length()}B audio=${prepared.audio?.length() ?: 0}B dur=${prepared.dur} fps=${prepared.fps}")
         // 先算完所有指标再改 videoFile：它一变就会触发起播 effect，
         // 中间如果有挂起点（withContext），起播会拿到 fps=0 的旧值
-        seekIdx = withContext(Dispatchers.IO) { SeekIndex.load(prepared.first.parentFile) }
-        dur = prepared.third.first
-        fps = prepared.third.second
-        audioFile = prepared.second
-        videoFile = prepared.first
+        seekIdx = withContext(Dispatchers.IO) { SeekIndex.load(prepared.video.parentFile) }
+        dur = prepared.dur
+        fps = prepared.fps
+        audioFile = prepared.audio
+        videoFile = prepared.video
         phase = "正在启动解码…"
         if (!withContext(Dispatchers.IO) { MpvCore.ensure(context) }) {
             error = "解码器初始化失败"
             return@LaunchedEffect
         }
         phase = ""
+    }
+
+    // 下一集 VVC 预取：当前集播起来后，后台把下一集的「下载+转换」先做掉。
+    // 切集时 prepareVvcFiles 直接命中缓存，和普通 HEVC 集的预取体验一致。
+    LaunchedEffect(loaded, index, cap) {
+        if (!loaded) return@LaunchedEffect
+        kotlinx.coroutines.delay(4_000)
+        val next = episodes.getOrNull(index) ?: return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            runCatching {
+                Log.d("VvcPlayer", "prefetch next ep${index + 1} vid=${next.vid}")
+                prepareVvcFiles(context, next, cap) { }
+            }.onFailure { Log.e("VvcPlayer", "预取下一集失败: ${it.message}", it) }
+        }
     }
 
     // 视频与 Surface 谁后到都由这里起播
@@ -620,6 +588,59 @@ private fun fmt(sec: Double): String {
     if (sec <= 0) return "00:00"
     val s = sec.toInt()
     return "%02d:%02d".format(s / 60, s % 60)
+}
+
+private class VvcFiles(val video: File, val audio: File?, val dur: Double, val fps: Double)
+
+/**
+ * 下载+解密+拆容器，返回可直接给 mpv 的文件。
+ * null = 这一集不是 VVC（应交给主播放器）；失败直接抛异常，由调用方决定提示。
+ */
+private suspend fun prepareVvcFiles(
+    ctx: android.content.Context,
+    e: Episode,
+    cap: Int,
+    onPhase: (String) -> Unit,
+): VvcFiles? = withContext(Dispatchers.IO) {
+    val root = File(ctx.cacheDir, "vvc")
+    val dir = File(root, "${e.vid}_$cap").apply { mkdirs() }
+    val v = File(dir, "video.266")
+    val a = File(dir, "audio.aac")
+    val meta = File(dir, "meta.txt")
+    var metaDur = 0.0
+    var metaFps = 0.0
+    if (v.exists() && v.length() > 0 && meta.exists()) {
+        runCatching {
+            val parts = meta.readText().trim().split(",")
+            metaDur = parts[0].toDouble()
+            metaFps = parts.getOrNull(1)?.toDouble() ?: 0.0
+        }
+    }
+    if (!(v.exists() && v.length() > 0 && File(dir, "video.index").exists())) {
+        onPhase("正在下载并解密…")
+        val tiers = Api.tiers(e.vid)
+        val playable = tiers.filter { it.playable }
+        val useCap = minOf(cap, Store.maxHeight)
+        val picked = playable.firstOrNull { it.height == useCap }
+            ?: playable.filter { it.height <= useCap }.maxByOrNull { it.height }
+            ?: playable.minByOrNull { it.height }
+        val info = picked?.toPlayInfo() ?: Api.play(e.vid, 1004, 0)
+        val rv = RemoteVideo(info)
+        rv.prepare(allowVvc = true)
+        val tag = rv.videoCodec
+        if (tag.isNotEmpty() && !tag.equals("bvc2", true)) return@withContext null
+        val mp4 = File(dir, "source.mp4")
+        rv.saveDecrypted(mp4)
+        onPhase("正在转换…")
+        val res = VvcExport.export(mp4, v, a)
+        runCatching { mp4.delete() }
+        if (!res.videoOk) error("转换失败")
+        metaDur = res.duration
+        metaFps = res.fps
+        runCatching { meta.writeText("${res.duration},${res.fps}") }
+    }
+    val af = a.takeIf { it.exists() && it.length() > 0 }
+    VvcFiles(v, af, metaDur, metaFps)
 }
 
 /** .266 裸流的 seek 索引（导出时生成）：每一帧在文件里的字节位置 + 是否关键帧。 */

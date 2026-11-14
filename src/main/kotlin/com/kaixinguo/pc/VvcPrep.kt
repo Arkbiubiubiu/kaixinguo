@@ -28,12 +28,23 @@ object VvcPrep {
         return File(File(appData, "KaixinguoPC"), "vvc")
     }
 
+    /** 只保留 keep 里的缓存目录（当前集 + 预取的下一集），其余删掉。 */
+    fun pruneExcept(keep: Set<String>) {
+        runCatching {
+            baseDir().listFiles()?.forEach { d -> if (d.name !in keep) d.deleteRecursively() }
+        }
+    }
+
+    /** 已经转换好的 clean.mp4（没有则 null）。预取和起播共用同一个判断。 */
+    fun cached(vid: String): File? {
+        val dir = File(baseDir(), vid)
+        val clean = File(dir, "clean.mp4")
+        val marker = File(dir, "v2.ok")
+        return clean.takeIf { marker.exists() && it.exists() && it.length() > 0 }
+    }
+
     fun prepare(vid: String, info: PlayInfo): Result {
         val root = baseDir().apply { mkdirs() }
-        // 短剧集数多，缓存只留当前这一集
-        runCatching {
-            root.listFiles()?.forEach { d -> if (d.name != vid) d.deleteRecursively() }
-        }
         val dir = File(root, vid).apply { mkdirs() }
         val video = File(dir, "video.266")
         val audio = File(dir, "audio.aac")

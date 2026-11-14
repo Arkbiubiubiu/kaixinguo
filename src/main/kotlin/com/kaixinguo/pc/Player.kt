@@ -467,7 +467,9 @@ fun PlayerScreen(
                 } catch (e: UnsupportedCodecException) {
                     if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
                         loadingNote = "VVC 片源，正在本机转换…（首次约十几秒）"
-                        PlaySource.Vvc(VvcPrep.prepare(ep.vid, info).playable)
+                        // 只留当前集 + 下一集，别让 VVC 缓存无限涨
+                        VvcPrep.pruneExcept(setOf(ep.vid, episodes.getOrNull(index)?.vid.orEmpty()))
+                        PlaySource.Vvc(VvcPrefetch.ensure(ep.vid, info))
                     } else {
                         throw e
                     }

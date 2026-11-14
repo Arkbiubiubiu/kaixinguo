@@ -7,6 +7,7 @@ import com.hongguotv.pad.PlayInfo
 import com.hongguotv.pad.PlayTier
 import com.hongguotv.pad.RemoteVideo
 import com.hongguotv.pad.StreamProxy
+import com.hongguotv.pad.UnsupportedCodecException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -143,6 +144,15 @@ object PlaybackPrefetch {
         try {
             // 预取的那一集不预热尾块：省 1MB，别跟正在播的抢带宽
             remote.prepare(warmLastBlock = false)
+        } catch (t: UnsupportedCodecException) {
+            runCatching { remote.close() }
+            if (t.codec.contains("bytevc", true) || t.codec.contains("vc2", true)) {
+                // VVC：没有可预取的代理，但可以后台把「下载+转换」先做掉；
+                // 下一集切过去时直接命中 clean.mp4，效果和普通集预取一样
+                VvcPrefetch.prime(vid, info)
+                return@runCatching Entry(vid, info.height, info, tiers, null, null, System.currentTimeMillis())
+            }
+            throw t
         } catch (t: Throwable) {
             runCatching { remote.close() }
             throw t
