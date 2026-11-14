@@ -31,6 +31,10 @@ object MpvCore {
             MPVLib.setOptionString("gpu-dumb-mode", "yes")
             MPVLib.setOptionString("ao", "audiotrack")
             MPVLib.setOptionString("hwdec", "no")
+            // VVC 只有软解：吃满多核 + 允许 VO 丢帧，否则 1080p 在电视上会卡成幻灯片
+            val cores = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+            MPVLib.setOptionString("vd-lavc-threads", cores.toString())
+            MPVLib.setOptionString("framedrop", "vo")
             MPVLib.setOptionString("keep-open", "no")
             MPVLib.setOptionString("idle", "yes")
             MPVLib.init()
@@ -75,7 +79,7 @@ object MpvCore {
         runCatching { MPVLib.command(arrayOf("stop")) }
     }
     fun pause(p: Boolean) = runCatching { MPVLib.setPropertyBoolean("pause", p) }
-    fun seekTo(sec: Double) = runCatching { MPVLib.command(arrayOf("seek", sec.toString(), "absolute")) }
+    fun seekTo(sec: Double) = runCatching { MPVLib.command(arrayOf("seek", sec.toString(), "absolute+exact")) }
     fun position(): Double = runCatching { MPVLib.getPropertyDouble("time-pos") ?: 0.0 }.getOrDefault(0.0)
     fun duration(): Double = runCatching { MPVLib.getPropertyDouble("duration") ?: 0.0 }.getOrDefault(0.0)
     fun isPaused(): Boolean = runCatching { MPVLib.getPropertyBoolean("pause") ?: false }.getOrDefault(false)

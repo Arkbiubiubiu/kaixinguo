@@ -5,6 +5,8 @@ import android.view.SurfaceView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -12,6 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -26,6 +33,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import `is`.xyz.mpv.MpvCore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -68,9 +76,20 @@ fun VvcPlayerScreen(
     var lastSave by remember { mutableStateOf(0L) }
     // 画面没出来时把现场留在屏幕上（用户可截图），同时写进 app.log 回传
     var diag by remember { mutableStateOf("") }
+    var baseSec by remember { mutableStateOf(0.0) }
+    var seekIdx by remember { mutableStateOf<SeekIndex?>(null) }
+    var seekJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var cutGen by remember { mutableStateOf(0) }
 
     val ep = episodes.getOrNull(index - 1)
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
+    val rootFocus = remember { FocusRequester() }
+
+    // 电视遥控器：焦点必须先落在根容器上，否则方向键/确定全部收不到（2.2.142 的坑）
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(400)
+        runCatching { rootFocus.requestFocus() }
+    }
 
     fun saveProgress() {
         val e = episodes.getOrNull(index - 1) ?: return
@@ -103,6 +122,8 @@ fun VvcPlayerScreen(
         dur = 0.0
         videoFile = null
         audioFile = null
+        baseSec = 0.0
+        seekIdx = null
         phase = "准备中…"
         val prepared = withContext(Dispatchers.IO) {
             runCatching {
@@ -127,14 +148,15 @@ fun VvcPlayerScreen(
                         metaFps = parts.getOrNull(1)?.toDouble() ?: 0.0
                     }
                 }
-                if (!(v.exists() && v.length() > 0)) {
+                if (!(v.exists() && v.length() > 0 && File(dir, "video.index").exists())) {
                     phase = "正在下载并解密…"
                     val tiers = Api.tiers(e.vid)
                     val playable = tiers.filter { it.playable }
-                    val cap = Store.maxHeight
+                    // VVC 是纯软解：1080p 在电视 CPU 上必卡，统一选 720p 以内
+                    val cap = minOf(720, Store.maxHeight)
                     val picked = playable.firstOrNull { it.height == cap }
-                        ?: playable.firstOrNull { it.height <= cap }
-                        ?: playable.firstOrNull()
+                        ?: playable.filter { it.height <= cap }.maxByOrNull { it.height }
+                        ?: playable.minByOrNull { it.height }
                     val info = picked?.toPlayInfo() ?: Api.play(e.vid, 1004, 0)
                     val rv = RemoteVideo(info)
                     rv.prepare(allowVvc = true)
@@ -158,6 +180,7 @@ fun VvcPlayerScreen(
         Log.d("VvcPlayer", "prepared video=${prepared.first.length()}B audio=${prepared.second?.length() ?: 0}B dur=${prepared.third.first} fps=${prepared.third.second}")
         videoFile = prepared.first
         audioFile = prepared.second
+        seekIdx = withContext(Dispatchers.IO) { SeekIndex.load(prepared.first.parentFile) }
         dur = prepared.third.first
         fps = prepared.third.second
         phase = "正在启动解码…"
@@ -208,7 +231,7 @@ fun VvcPlayerScreen(
     // 位置轮询 + 进度落盘 + 播完自动下一集
     LaunchedEffect(loaded) {
         while (loaded) {
-            pos = MpvCore.position()
+            pos = baseSec + MpvCore.position()
             if (dur <= 0) MpvCore.duration().let { if (it > 0) dur = it }
             paused = MpvCore.isPaused()
             val now = System.currentTimeMillis()
@@ -228,6 +251,76 @@ fun VvcPlayerScreen(
         }
     }
 
+    // 裸流 seek：从目标附近的关键帧切一段临时流（带 SPS/PPS），重新加载。
+    // 这是唯一可靠的做法——mpv 对无索引的 .266 直接 seek 会跳到 EOF。
+    fun requestSeek(target: Double) {
+        val idx = seekIdx ?: return
+        val vf = videoFile ?: return
+        if (!loaded || idx.fps <= 0) return
+        seekJob?.cancel()
+        seekJob = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+            // 连续按方向键时只处理最后一次
+            kotlinx.coroutines.delay(180)
+            val t = target.coerceIn(0.0, maxOf(0.0, dur - 1.0))
+            val frame = (t * idx.fps).toInt().coerceIn(0, idx.vOffsets.size - 1)
+            var k = frame
+            while (k > 0 && !idx.vKeys[k]) k--
+            val base = k / idx.fps
+            val wasPaused = MpvCore.isPaused()
+            cutGen += 1
+            val gen = cutGen
+            val okCut = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = vf.parentFile ?: return@runCatching false
+                    dir.listFiles()?.forEach { f ->
+                        if (f.name.startsWith("seek_") && !f.name.contains("_$gen.")) f.delete()
+                    }
+                    val params = java.io.File(dir, "params.266")
+                    val cutV = java.io.File(dir, "seek_v_$gen.266")
+                    cutV.outputStream().buffered(1 shl 20).use { out ->
+                        if (params.exists()) out.write(params.readBytes())
+                        java.io.RandomAccessFile(vf, "r").use { raf ->
+                            raf.seek(idx.vOffsets[k])
+                            val buf = ByteArray(1 shl 20)
+                            var left = raf.length() - idx.vOffsets[k]
+                            while (left > 0) {
+                                val n = raf.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                left -= n
+                            }
+                        }
+                    }
+                    var cutA: java.io.File? = null
+                    val af = audioFile
+                    if (af != null && idx.aOffsets.isNotEmpty()) {
+                        val ai = ((t / dur) * idx.aOffsets.size).toInt().coerceIn(0, idx.aOffsets.size - 1)
+                        cutA = java.io.File(dir, "seek_a_$gen.aac")
+                        cutA.outputStream().buffered(1 shl 18).use { out ->
+                            java.io.RandomAccessFile(af, "r").use { raf ->
+                                raf.seek(idx.aOffsets[ai])
+                                val buf = ByteArray(1 shl 18)
+                                var left = raf.length() - idx.aOffsets[ai]
+                                while (left > 0) {
+                                    val n = raf.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                                    if (n <= 0) break
+                                    out.write(buf, 0, n)
+                                    left -= n
+                                }
+                            }
+                        }
+                    }
+                    baseSec = base
+                    pos = base
+                    MpvCore.load(cutV.absolutePath, cutA?.absolutePath, fps)
+                    if (wasPaused) MpvCore.pause(true)
+                    true
+                }.getOrDefault(false)
+            }
+            if (!okCut) Log.e("VvcPlayer", "seek cut failed t=$t")
+        }
+    }
+
     BackHandler {
         saveProgress()
         onBack()
@@ -238,6 +331,11 @@ fun VvcPlayerScreen(
         onDispose {
             saveProgress()
             runCatching { MpvCore.stop() }
+            runCatching {
+                videoFile?.parentFile?.listFiles()?.forEach { f ->
+                    if (f.name.startsWith("seek_")) f.delete()
+                }
+            }
         }
     }
 
@@ -245,21 +343,29 @@ fun VvcPlayerScreen(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(rootFocus)
+            .focusable()
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key) {
-                    Key.DirectionCenter, Key.Enter -> {
+                    Key.DirectionCenter, Key.Enter, Key.Spacebar -> {
+                        val p = MpvCore.isPaused()
+                        MpvCore.pause(!p)
+                        paused = !p
+                        true
+                    }
+                    Key.MediaPlayPause -> {
                         val p = MpvCore.isPaused()
                         MpvCore.pause(!p)
                         paused = !p
                         true
                     }
                     Key.DirectionLeft -> {
-                        if (loaded) MpvCore.seekTo((pos - 10).coerceAtLeast(0.0))
+                        requestSeek((baseSec + MpvCore.position() - 10).coerceAtLeast(0.0))
                         true
                     }
                     Key.DirectionRight -> {
-                        if (loaded) MpvCore.seekTo(pos + 10)
+                        requestSeek(baseSec + MpvCore.position() + 10)
                         true
                     }
                     else -> false
@@ -331,29 +437,84 @@ fun VvcPlayerScreen(
             )
         }
 
-        // 底部：暂停 + 时间 + 下一集
+        // 底部控制条：可拖动进度条 + 播放/暂停 + 上下集（遥控器确定/左右也生效）
         if (loaded) {
-            Row(
+            var scrub by remember { mutableStateOf<Float?>(null) }
+            val frac = scrub ?: if (dur > 0) (pos / dur).toFloat().coerceIn(0f, 1f) else 0f
+            Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
+                var barWidth by remember { mutableStateOf(1f) }
                 Box(
-                    Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
-                        .clickable { MpvCore.pause(!paused); paused = !paused }
-                        .padding(horizontal = 18.dp, vertical = 10.dp),
-                ) { Text(if (paused) "播放" else "暂停", color = Color.White, fontSize = 15.sp) }
-                Spacer(Modifier.width(16.dp))
-                Text(
-                    "${fmt(pos)} / ${fmt(dur)}",
-                    color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp,
-                )
-                Spacer(Modifier.weight(1f))
-                if (!isTv && index < episodes.size) {
+                    Modifier
+                        .fillMaxWidth()
+                        .height(22.dp)
+                        .onSizeChanged { barWidth = it.width.toFloat().coerceAtLeast(1f) }
+                        .pointerInput(dur) {
+                            detectTapGestures { off ->
+                                if (dur > 0) requestSeek((off.x / barWidth).coerceIn(0f, 1f) * dur)
+                            }
+                        }
+                        .pointerInput(dur) {
+                            detectDragGestures(
+                                onDragStart = { off ->
+                                    scrub = (off.x / barWidth).coerceIn(0f, 1f)
+                                },
+                                onDrag = { ch, _ ->
+                                    ch.consume()
+                                    scrub = (ch.position.x / barWidth).coerceIn(0f, 1f)
+                                },
+                                onDragEnd = {
+                                    scrub?.let { f -> if (dur > 0) requestSeek(f * dur) }
+                                    scrub = null
+                                },
+                                onDragCancel = { scrub = null },
+                            )
+                        },
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0x55FFFFFF), RoundedCornerShape(2.dp)))
+                    Box(Modifier.fillMaxWidth(frac).height(4.dp).background(Color(0xFFFF4A3D), RoundedCornerShape(2.dp)))
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
-                            .clickable { saveProgress(); index += 1 }
+                            .clickable {
+                                val p = MpvCore.isPaused()
+                                MpvCore.pause(!p)
+                                paused = !p
+                            }
                             .padding(horizontal = 18.dp, vertical = 10.dp),
-                    ) { Text("下一集", color = Color.White, fontSize = 15.sp) }
+                    ) { Text(if (paused) "播放" else "暂停", color = Color.White, fontSize = 15.sp) }
+                    Spacer(Modifier.width(12.dp))
+                    if (index > 1) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
+                                .clickable { saveProgress(); index -= 1 }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        ) { Text("上一集", color = Color.White, fontSize = 14.sp) }
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    if (index < episodes.size) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
+                                .clickable { saveProgress(); index += 1 }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        ) { Text("下一集", color = Color.White, fontSize = 14.sp) }
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        "${fmt(scrub?.let { it * dur } ?: pos)} / ${fmt(dur)}",
+                        color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (isTv) {
+                        Text(
+                            "← → 快进退 · 确定 暂停",
+                            color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp,
+                        )
+                    }
                 }
             }
         }
@@ -364,4 +525,39 @@ private fun fmt(sec: Double): String {
     if (sec <= 0) return "00:00"
     val s = sec.toInt()
     return "%02d:%02d".format(s / 60, s % 60)
+}
+
+/** .266 裸流的 seek 索引（导出时生成）：每一帧在文件里的字节位置 + 是否关键帧。 */
+private class SeekIndex(
+    val fps: Double,
+    val dur: Double,
+    val vOffsets: LongArray,
+    val vKeys: BooleanArray,
+    val aOffsets: LongArray,
+) {
+    companion object {
+        fun load(dir: java.io.File): SeekIndex? = runCatching {
+            val f = java.io.File(dir, "video.index")
+            if (!f.exists()) return null
+            var fps = 25.0
+            var dur = 0.0
+            val vs = ArrayList<Long>()
+            val ks = ArrayList<Boolean>()
+            val as_ = ArrayList<Long>()
+            f.forEachLine { line ->
+                when {
+                    line.startsWith("fps=") -> fps = line.substring(4).toDoubleOrNull() ?: 25.0
+                    line.startsWith("dur=") -> dur = line.substring(4).toDoubleOrNull() ?: 0.0
+                    line.startsWith("v ") -> {
+                        val parts = line.substring(2).trim().split(' ')
+                        vs.add(parts[0].toLongOrNull() ?: 0L)
+                        ks.add(parts.getOrNull(1) == "1")
+                    }
+                    line.startsWith("a ") -> as_.add(line.substring(2).trim().toLongOrNull() ?: 0L)
+                }
+            }
+            if (vs.isEmpty()) null
+            else SeekIndex(fps, dur, vs.toLongArray(), ks.toBooleanArray(), as_.toLongArray())
+        }.getOrNull()
+    }
 }

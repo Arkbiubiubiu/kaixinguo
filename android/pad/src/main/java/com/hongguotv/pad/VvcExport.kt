@@ -55,9 +55,14 @@ object VvcExport {
             if (v == null) return Result(false, false, 0.0, 0.0)
             // 视频 → Annex-B
             var written = 0
+            val vOffsets = LongArray(v.sizes.size)
+            val vKeys = BooleanArray(v.sizes.size)
+            val params = java.io.ByteArrayOutputStream()
+            var vBytes = 0L
             videoOut.outputStream().buffered(1 shl 20).use { out ->
                 for (i in v.sizes.indices) {
                     val size = v.sizes[i]
+                    vOffsets[i] = vBytes
                     if (size <= 0 || size > 8 shl 20) continue
                     raf.seek(v.offsets[i])
                     val data = ByteArray(size)
@@ -66,13 +71,25 @@ object VvcExport {
                     while (p + 4 <= data.size) {
                         val n = be32(data, p)
                         if (n <= 0 || p + 4 + n > data.size) break
+                        val nal = data.copyOfRange(p + 4, p + 4 + n)
+                        val type = nalType(nal)
+                        // 关键帧：IDR_W_RADL(7)/IDR_N_LP(8)/CRA(9)，seek 只能落在这里
+                        if (type == 7 || type == 8 || type == 9) vKeys[i] = true
+                        // 第一帧里收集参数集（SPS=15/PPS=16/SEI=23），切段时补在最前面
+                        if (i == 0 && (type == 15 || type == 16 || type == 23)) {
+                            params.write(byteArrayOf(0, 0, 0, 1))
+                            params.write(nal)
+                        }
                         out.write(byteArrayOf(0, 0, 0, 1))
-                        out.write(data, p + 4, n)
+                        out.write(nal)
+                        vBytes += 4L + n
                         written++
                         p += 4 + n
                     }
                 }
             }
+            if (vKeys.isNotEmpty()) vKeys[0] = true
+            runCatching { java.io.File(videoOut.parentFile, "params.266").writeBytes(params.toByteArray()) }
             if (written == 0) {
                 Log.e("VvcExport", "视频轨没有解出任何 NAL（解密 key 不对？）")
                 return Result(false, false, 0.0, 0.0)
@@ -85,20 +102,43 @@ object VvcExport {
                 val objectType = (cfg[0].toInt() ushr 3) and 0x1F
                 val freqIdx = ((cfg[0].toInt() and 0x07) shl 1) or ((cfg[1].toInt() ushr 7) and 0x01)
                 val channels = (cfg[1].toInt() ushr 3) and 0x0F
+                val aOffsets = LongArray(a.sizes.size)
+                var aBytes = 0L
                 audioOut.outputStream().buffered(1 shl 18).use { out ->
                     for (i in a.sizes.indices) {
                         val size = a.sizes[i]
+                        aOffsets[i] = aBytes
                         if (size <= 0) continue
                         raf.seek(a.offsets[i])
                         val data = ByteArray(size)
                         raf.readFully(data)
                         out.write(adtsHeader(objectType, freqIdx, channels, size + 7))
                         out.write(data)
+                        aBytes += 7L + size
                     }
+                }
+                runCatching {
+                    val sb = StringBuilder()
+                    sb.append("fps=").append(v.fps).append("\n")
+                    sb.append("dur=").append(v.duration).append("\n")
+                    for (i in vOffsets.indices) {
+                        sb.append("v ").append(vOffsets[i]).append(if (vKeys[i]) " 1" else " 0").append("\n")
+                    }
+                    for (o in aOffsets) sb.append("a ").append(o).append("\n")
+                    java.io.File(videoOut.parentFile, "video.index").writeText(sb.toString())
                 }
                 audioOk = audioOut.length() > 0
             } else {
                 Log.w("VvcExport", "audio track missing or no esds config")
+                runCatching {
+                    val sb = StringBuilder()
+                    sb.append("fps=").append(v.fps).append("\n")
+                    sb.append("dur=").append(v.duration).append("\n")
+                    for (i in vOffsets.indices) {
+                        sb.append("v ").append(vOffsets[i]).append(if (vKeys[i]) " 1" else " 0").append("\n")
+                    }
+                    java.io.File(videoOut.parentFile, "video.index").writeText(sb.toString())
+                }
             }
             Result(true, audioOk, v.fps, v.duration)
         }
@@ -106,6 +146,10 @@ object VvcExport {
         Log.e("VvcExport", "export failed", it)
         Result(false, false, 0.0, 0.0)
     }
+
+    /** VVC NAL 头 2 字节：type = (b1 >> 3) & 0x1F */
+    private fun nalType(nal: ByteArray): Int =
+        if (nal.size < 2) -1 else (nal[1].toInt() ushr 3) and 0x1F
 
     private fun adtsHeader(objectType: Int, freqIdx: Int, channels: Int, frameLen: Int): ByteArray {
         val profile = (objectType - 1).coerceIn(0, 3)
