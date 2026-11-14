@@ -38,6 +38,10 @@ object PlaybackPrefetch {
         val remote: RemoteVideo?,
         val proxy: StreamProxy?,
         val at: Long,
+        /** 真·VVC：预热时已确认是 bytevc2，切集直接走 VvcPrefetch，不再试一遍 Exo/ffmpeg */
+        val vvc: Boolean = false,
+        /** 头部/转换是否已经做过（只有直链的条目为 false，轮到它时会升级） */
+        val headDone: Boolean = false,
     ) {
         fun release() {
             runCatching { proxy?.stop() }
@@ -107,8 +111,17 @@ object PlaybackPrefetch {
 
         for (i in fromIndex..end) {
             val ep = episodes.getOrNull(i - 1) ?: break
-            if (contains(ep.vid)) continue
             val head = i == prepareHeadFor
+            // 已经在池里的条目：如果轮到它是「下一集」了，但当初只拉了直链，
+            // 这里要补做头部/转换（以前直接 continue，导致 35 集这种 VVC
+            // 到切集那一刻才现场转换，看起来就是「跳一下、卡一下」）。
+            val existing = synchronized(lock) { entries[ep.vid] }
+            if (existing != null) {
+                if (!head || existing.headDone) continue
+                synchronized(lock) { entries.remove(ep.vid) }
+                existing.release()
+                Log.d("Prefetch", "第 ${ep.index} 集升级为「直链 + 头部」")
+            }
             val entry = withContext(Dispatchers.IO) { build(ep.vid, maxHeight, head) }
             if (entry == null) {
                 Log.d("Prefetch", "第 ${ep.index} 集预取失败（忽略，切集时走正常流程）")
@@ -138,7 +151,10 @@ object PlaybackPrefetch {
             ?: tiers.maxByOrNull { it.height }
         val info = picked?.toPlayInfo() ?: Api.play(vid, 1004, maxHeight)
         if (!prepareHead) {
-            return@runCatching Entry(vid, info.height, info, tiers, null, null, System.currentTimeMillis())
+            return@runCatching Entry(
+                vid, info.height, info, tiers, null, null, System.currentTimeMillis(),
+                headDone = false,
+            )
         }
         val remote = RemoteVideo(info)
         try {
@@ -150,7 +166,10 @@ object PlaybackPrefetch {
                 // VVC：没有可预取的代理，但可以后台把「下载+转换」先做掉；
                 // 下一集切过去时直接命中 clean.mp4，效果和普通集预取一样
                 VvcPrefetch.prime(vid, info)
-                return@runCatching Entry(vid, info.height, info, tiers, null, null, System.currentTimeMillis())
+                return@runCatching Entry(
+                    vid, info.height, info, tiers, null, null, System.currentTimeMillis(),
+                    vvc = true, headDone = true,
+                )
             }
             throw t
         } catch (t: Throwable) {
@@ -159,6 +178,9 @@ object PlaybackPrefetch {
         }
         val proxy = StreamProxy(remote)
         proxy.start()
-        Entry(vid, info.height, info, tiers, remote, proxy, System.currentTimeMillis())
+        Entry(
+            vid, info.height, info, tiers, remote, proxy, System.currentTimeMillis(),
+            headDone = true,
+        )
     }.getOrNull()
 }

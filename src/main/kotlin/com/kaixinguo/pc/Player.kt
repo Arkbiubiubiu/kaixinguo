@@ -491,7 +491,17 @@ fun PlayerScreen(
                         tiers = warm.tiers
                         val rv = warm.remote
                         val px = warm.proxy
-                        if (rv != null && px != null) {
+                        if (warm.vvc) {
+                            // 预取时已经确认是 VVC 并做了转换：别再 prepare 一遍
+                            // （那会白下 1MB 头部，还要多等几百毫秒才轮到 VvcPrefetch）
+                            VvcPrep.pruneExcept(
+                                setOf(ep.vid, episodes.getOrNull(index)?.vid.orEmpty()),
+                            )
+                            if (VvcPrep.cached(ep.vid) == null) {
+                                loadingNote = "VVC 片源，正在本机转换…"
+                            }
+                            PlaySource.Vvc(VvcPrefetch.ensure(ep.vid, warm.info))
+                        } else if (rv != null && px != null) {
                             PlaySource.Stream(rv, px, warm.info)
                         } else {
                             val fresh = RemoteVideo(warm.info)
