@@ -110,6 +110,7 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.onSizeChanged
@@ -1290,7 +1291,7 @@ fun PlayerScreen(
                     },
             )
             if (popup == "speed") {
-                OverlayAt(anchor("speed"), w = 132, h = 244, centered = true) {
+                OverlayAt(anchor("speed"), w = 132, centered = true) {
                     UpMenuCard {
                         MenuTitle("倍速")
                         // 引擎最多 2x（ffmpeg atempo 上限），菜单里不要再给 3x 这种点了没用的档
@@ -1301,7 +1302,7 @@ fun PlayerScreen(
                 }
             }
             if (popup == "quality") {
-                OverlayAt(anchor("quality"), w = 190, h = 240, centered = true) {
+                OverlayAt(anchor("quality"), w = 190, centered = true) {
                     UpMenuCard {
                         MenuTitle("清晰度")
                         MenuRow("自动（上限 ${PcStore.maxHeight}P）", quality == 0) { popup = null; quality = 0 }
@@ -1314,12 +1315,12 @@ fun PlayerScreen(
                 }
             }
             if (popup == "dmset") {
-                OverlayAt(anchor("dmset"), w = 252, h = 264, centered = false) {
+                OverlayAt(anchor("dmset"), w = 252, centered = false) {
                     DanmakuSettingsPanel()
                 }
             }
             if (popup == "episodes") {
-                OverlayAt(anchor("episodes"), w = 460, h = 470, centered = false) {
+                OverlayAt(anchor("episodes"), w = 460, centered = false) {
                     EpisodePickerPopup(
                         seriesId = seriesId,
                         currentIndex = index,
@@ -1332,7 +1333,7 @@ fun PlayerScreen(
                 }
             }
             if (volOpen) {
-                OverlayAt(anchor("volume"), w = 56, h = 150, centered = true) {
+                OverlayAt(anchor("volume"), w = 56, centered = true) {
                     VolumePopup(
                         if (muted) 0f else volume,
                         onHover = { volHovering = it },
@@ -1484,36 +1485,51 @@ private fun speedLabel(s: Float): String =
 
 /**
  * 控制栏浮层定位器：以按钮锚点为基准，把浮层内容放到按钮正上方
- * （centered=水平居中，否则右缘对齐按钮右缘——选集/设置面板 460/252 宽）。
- * 全部主窗口内绘制 + offset 绝对定位，规避 Desktop Popup 的对齐玄学。
+ * （centered=水平居中，否则右缘对齐按钮右缘）。
+ *
+ * 高度必须用**实测**的：以前按各面板写死高度（选集写 470dp，实际约 290dp），
+ * 差值直接从底栏高度里减掉，选集框就会浮到画面中间去。这里用
+ * SubcomposeLayout 先量内容再定位，面板长短变化（集数/系列剧）都不会错位。
  */
 @Composable
 private fun OverlayAt(
     anchor: androidx.compose.ui.unit.IntOffset?,
     w: Int,
-    h: Int,
     centered: Boolean,
     content: @Composable () -> Unit,
 ) {
     if (anchor == null) return
     val d = androidx.compose.ui.platform.LocalDensity.current
-    // anchor 是窗口坐标（positionInWindow），offset 是相对本 Box（stage 内 fillMaxSize）
-    // 的坐标——必须先减去本 Box 的窗口原点，否则浮层整体偏右 72px（侧栏）偏下 44px（顶栏）
+    // anchor 是窗口坐标（positionInWindow），place 是相对本布局（stage 内 fillMaxSize）
+    // 的坐标——必须先减去本布局的窗口原点，否则浮层整体偏右 72px（侧栏）偏下 44px（顶栏）
     var self by remember { mutableStateOf<androidx.compose.ui.unit.IntOffset?>(null) }
-    Box(Modifier.fillMaxSize().onGloballyPositioned {
-        val p = it.positionInWindow()
-        self = androidx.compose.ui.unit.IntOffset(p.x.toInt(), p.y.toInt())
-    }) {
-        Column(
-            Modifier
-                .offset {
-                    val s = self ?: return@offset androidx.compose.ui.unit.IntOffset.Zero
-                    val x = if (centered) anchor.x - s.x - (w * d.density).toInt() / 2 else anchor.x - s.x - (w * d.density).toInt()
-                    val y = anchor.y - s.y - (h * d.density).toInt() - (6 * d.density).toInt()
-                    androidx.compose.ui.unit.IntOffset(x.coerceAtLeast(8), y.coerceAtLeast(8))
-                }
-                .width(w.dp),
-        ) { content() }
+    SubcomposeLayout(
+        Modifier.fillMaxSize().onGloballyPositioned {
+            val p = it.positionInWindow()
+            self = androidx.compose.ui.unit.IntOffset(p.x.toInt(), p.y.toInt())
+        },
+    ) { constraints ->
+        val placeable = subcompose(Unit) {
+            Box(Modifier.width(w.dp)) { content() }
+        }.first().measure(
+            androidx.compose.ui.unit.Constraints(
+                maxWidth = constraints.maxWidth,
+                maxHeight = constraints.maxHeight,
+            ),
+        )
+        val s = self
+        val x = if (s == null) 0 else if (centered) {
+            anchor.x - s.x - placeable.width / 2
+        } else {
+            anchor.x - s.x - placeable.width
+        }
+        val y = if (s == null) 0 else {
+            anchor.y - s.y - placeable.height - (6 * d.density).toInt()
+        }
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            // self 还没量到的那一帧先不画，避免闪现到左上角
+            if (s != null) placeable.place(x.coerceAtLeast(8), y.coerceAtLeast(8))
+        }
     }
 }
 
