@@ -184,13 +184,15 @@ fun main() = application {
     // 无边框（旧版 decorations:false 同语义）：系统白条不画，自绘窗口钮+拖拽区
     Window(
         onCloseRequest = ::exitApplication,
-        title = "开心果",
+        title = "",
         state = state,
-        undecorated = true,
+        // 原生标题栏：标题留空 + 染成应用底色，看起来和内容一体；贴靠/最大化全是系统行为
+        undecorated = false,
         transparent = false,
         icon = brandBitmap?.let { BitmapPainter(it) },
     ) {
         val awt = java.awt.Window.getWindows().filterIsInstance<java.awt.Frame>().firstOrNull()
+        androidx.compose.runtime.LaunchedEffect(awt) { DarkTitleBar.apply(awt) }
         // 窗口最小化 → 播放暂停（回到前台不自动续播）
         androidx.compose.runtime.DisposableEffect(awt) {
             if (awt == null) return@DisposableEffect onDispose { }
@@ -258,12 +260,6 @@ fun main() = application {
     }
 }
 
-/** 顶栏高度；AWT 事件坐标是逻辑像素，与 dp 1:1。 */
-private const val TOP_BAR_H = 44
-
-/** 右侧三个 44dp 窗口钮的占位宽度（含左侧 12dp 间距）。 */
-private const val WINDOW_BTNS_W = 144
-
 /** 自绘窗口控制钮（旧版 window-controls.tsx 同语义：方形按钮靠右，寄生顶栏）。 */
 @Composable
 private fun WindowButtons(onExit: () -> Unit) {
@@ -314,83 +310,8 @@ private fun WindowBtn(glyph: String, onClick: () -> Unit) {
  */
 @Composable
 private fun AppShell(onExit: () -> Unit) {
-    // 顶栏拖拽：AWT 监听器直接挂 ComposeWindow（frameless 下唯一可靠方案，
-    // 旧版 Tauri 由 data-tauri-drag-region 处理，Compose 无内置等价物）。
-    // 位移必须用「按下时的窗口位置 + 光标屏幕位移量」，不能把窗口位置设成光标位置，
-    // 否则一按下窗口左上角就吸到鼠标上。可拖区域只限顶部 44dp，且避开右侧窗口钮。
-    val frame = java.awt.Window.getWindows().filterIsInstance<java.awt.Frame>().firstOrNull()
-    androidx.compose.runtime.DisposableEffect(frame) {
-        if (frame == null) return@DisposableEffect onDispose { }
-        FramelessSnap.enable(frame)
-        val drag = object : java.awt.event.MouseAdapter() {
-            private var pressScreen: java.awt.Point? = null
-            private var pressFrame: java.awt.Point? = null
-            override fun mousePressed(e: java.awt.event.MouseEvent) {
-                pressScreen = null
-                pressFrame = null
-                if (e.button != java.awt.event.MouseEvent.BUTTON1) return
-                if ((frame.extendedState and java.awt.Frame.MAXIMIZED_BOTH) != 0) return
-                val onTopBar = e.y in 0 until TOP_BAR_H && e.x < frame.width - WINDOW_BTNS_W
-                if (!onTopBar) return
-                pressScreen = e.locationOnScreen
-                pressFrame = frame.location
-            }
-            override fun mouseDragged(e: java.awt.event.MouseEvent) {
-                val startScreen = pressScreen ?: return
-                val startFrame = pressFrame ?: return
-                val now = e.locationOnScreen
-                frame.setLocation(
-                    startFrame.x + (now.x - startScreen.x),
-                    startFrame.y + (now.y - startScreen.y),
-                )
-            }
-            override fun mouseReleased(e: java.awt.event.MouseEvent) {
-                pressScreen = null
-                pressFrame = null
-            }
-        }
-        frame.addMouseListener(drag)
-        frame.addMouseMotionListener(drag)
-        onDispose {
-            frame.removeMouseListener(drag)
-            frame.removeMouseMotionListener(drag)
-        }
-    }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(Palette.bg)) {
-            // 小窗 / 全屏播放：顶栏整条藏掉，整窗只剩画面
-            if (!UiMode.mini.value && !UiMode.fullscreen.value) {
-            // 顶栏：44px 薄行（左：logo + 应用名 + 日期；右：窗口钮）
-            Row(
-                Modifier.fillMaxWidth().height(44.dp).background(Palette.panel),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Spacer(Modifier.width(12.dp))
-                Box(
-                    Modifier.size(20.dp).clip(RoundedCornerShape(6.dp))
-                        .background(Palette.accentFill),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val bmp = brandBitmap
-                    if (bmp != null) {
-                        androidx.compose.foundation.Image(
-                            bmp,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        )
-                    } else {
-                        Text("果", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Spacer(Modifier.width(8.dp))
-                Text("开心果", color = Palette.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.weight(1f))
-                Text(java.time.LocalDate.now().toString(), color = Palette.faint, fontSize = 12.sp)
-                Spacer(Modifier.width(12.dp))
-                WindowButtons(onExit)
-            }
-        }
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
                 AppRoot()
@@ -3395,139 +3316,39 @@ object DiagLog {
 }
 
 /**
- * 无边框窗口的「原生标题栏行为」补丁（Windows）。
- *
- * 只加 WS_CAPTION 会让系统把标题栏画出来（两层头），所以同时子类化窗口过程：
- * - WM_NCCALCSIZE 返回 0：客户区铺满整个窗口，系统标题栏不占空间
- * - WM_NCHITTEST：顶部 44dp 当 HTCAPTION（系统接管拖动 → Aero Snap / Win11 贴靠分区），
- *   四周 6dp 当缩放边，右侧窗口钮区域还给客户区
- *
- * 这样外观和自绘顶栏完全不变，但拖动、双击最大化、贴靠分区全是系统原生行为。
+ * 原生标题栏染成应用底色、文字同色（看起来没有标题栏），只保留右侧系统按钮。
+ * DWMWA_USE_IMMERSIVE_DARK_MODE=20 / CAPTION_COLOR=35 / TEXT_COLOR=36 / BORDER_COLOR=34。
  */
-private object FramelessSnap {
-    private const val GWL_STYLE = -16
-    private const val GWLP_WNDPROC = -4
-    private const val WS_CAPTION = 0x00C00000
-    private const val WS_THICKFRAME = 0x00040000
-    private const val WS_MAXIMIZEBOX = 0x00010000
-    private const val WS_MINIMIZEBOX = 0x00020000
-    private const val WM_NCCALCSIZE = 0x0083
-    private const val WM_NCHITTEST = 0x0084
-    private const val WM_NCACTIVATE = 0x0086
-    private const val SWP_NOSIZE = 0x0001
-    private const val SWP_NOMOVE = 0x0002
-    private const val SWP_NOZORDER = 0x0004
-    private const val SWP_FRAMECHANGED = 0x0020
-    private const val HTCLIENT = 1
-    private const val HTCAPTION = 2
-    private const val HTLEFT = 10
-    private const val HTRIGHT = 11
-    private const val HTTOP = 12
-    private const val HTTOPLEFT = 13
-    private const val HTTOPRIGHT = 14
-    private const val HTBOTTOM = 15
-    private const val HTBOTTOMLEFT = 16
-    private const val HTBOTTOMRIGHT = 17
-
-    private var proc: com.sun.jna.platform.win32.WinUser.WindowProc? = null
-    private var oldProc: com.sun.jna.Pointer? = null
-    private var scale = 1.0
-    private val done = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    private interface User32Proc : com.sun.jna.win32.StdCallLibrary {
-        fun SetWindowLongPtr(
+private object DarkTitleBar {
+    private interface Dwmapi : com.sun.jna.win32.StdCallLibrary {
+        fun DwmSetWindowAttribute(
             hWnd: com.sun.jna.platform.win32.WinDef.HWND,
-            nIndex: Int,
-            newProc: com.sun.jna.platform.win32.WinUser.WindowProc,
-        ): com.sun.jna.Pointer
-
-        fun CallWindowProc(
-            prev: com.sun.jna.Pointer,
-            hWnd: com.sun.jna.platform.win32.WinDef.HWND,
-            msg: Int,
-            wParam: com.sun.jna.platform.win32.WinDef.WPARAM,
-            lParam: com.sun.jna.platform.win32.WinDef.LPARAM,
-        ): com.sun.jna.platform.win32.WinDef.LRESULT
+            attr: Int,
+            value: com.sun.jna.ptr.IntByReference,
+            size: Int,
+        ): Int
 
         companion object {
-            val I: User32Proc = com.sun.jna.Native.load(
-                "user32", User32Proc::class.java,
-                com.sun.jna.win32.W32APIOptions.DEFAULT_OPTIONS,
-            )
+            val I: Dwmapi = com.sun.jna.Native.load("dwmapi", Dwmapi::class.java)
         }
     }
 
-    fun enable(frame: java.awt.Frame) {
+    fun apply(frame: java.awt.Frame?) {
+        frame ?: return
         if (!System.getProperty("os.name").lowercase().contains("win")) return
-        if (!done.compareAndSet(false, true)) return
         runCatching {
-            scale = frame.graphicsConfiguration?.defaultTransform?.scaleY ?: 1.0
-            val u = com.sun.jna.platform.win32.User32.INSTANCE
             val hwnd = com.sun.jna.platform.win32.WinDef.HWND(
                 com.sun.jna.Native.getWindowPointer(frame),
             )
-            val style = u.GetWindowLong(hwnd, GWL_STYLE)
-            u.SetWindowLong(
-                hwnd, GWL_STYLE,
-                style or WS_CAPTION or WS_THICKFRAME or WS_MAXIMIZEBOX or WS_MINIMIZEBOX,
-            )
-            proc = object : com.sun.jna.platform.win32.WinUser.WindowProc {
-                override fun callback(
-                    hWnd: com.sun.jna.platform.win32.WinDef.HWND,
-                    msg: Int,
-                    wParam: com.sun.jna.platform.win32.WinDef.WPARAM,
-                    lParam: com.sun.jna.platform.win32.WinDef.LPARAM,
-                ): com.sun.jna.platform.win32.WinDef.LRESULT {
-                    when (msg) {
-                        WM_NCCALCSIZE -> if (wParam.toLong() != 0L) {
-                            return com.sun.jna.platform.win32.WinDef.LRESULT(0)
-                        }
-                        WM_NCACTIVATE -> return com.sun.jna.platform.win32.WinDef.LRESULT(1)
-                        WM_NCHITTEST -> {
-                            val p = com.sun.jna.platform.win32.WinDef.POINT()
-                            val r = com.sun.jna.platform.win32.WinDef.RECT()
-                            u.GetCursorPos(p)
-                            u.GetWindowRect(hWnd, r)
-                            val border = (6 * scale).toInt()
-                            val topBar = (TOP_BAR_H * scale).toInt()
-                            val btns = (WINDOW_BTNS_W * scale).toInt()
-                            // 顶栏（右侧窗口钮除外）= 系统标题栏：拖动/双击最大化/贴靠分区都由系统处理
-                            if (p.y in r.top until (r.top + topBar) &&
-                                p.x < r.right - btns && p.x >= r.left
-                            ) {
-                                return com.sun.jna.platform.win32.WinDef.LRESULT(HTCAPTION.toLong())
-                            }
-                            val left = p.x < r.left + border
-                            val right = p.x >= r.right - border
-                            val top = p.y < r.top + border
-                            val bottom = p.y >= r.bottom - border
-                            val hit = when {
-                                top && left -> HTTOPLEFT
-                                top && right -> HTTOPRIGHT
-                                bottom && left -> HTBOTTOMLEFT
-                                bottom && right -> HTBOTTOMRIGHT
-                                left -> HTLEFT
-                                right -> HTRIGHT
-                                top -> HTTOP
-                                bottom -> HTBOTTOM
-                                else -> HTCLIENT
-                            }
-                            return com.sun.jna.platform.win32.WinDef.LRESULT(hit.toLong())
-                        }
-                    }
-                    val prev = oldProc
-                    return if (prev != null) {
-                        User32Proc.I.CallWindowProc(prev, hWnd, msg, wParam, lParam)
-                    } else {
-                        com.sun.jna.platform.win32.WinDef.LRESULT(0)
-                    }
+            fun set(attr: Int, v: Int) {
+                runCatching {
+                    Dwmapi.I.DwmSetWindowAttribute(hwnd, attr, com.sun.jna.ptr.IntByReference(v), 4)
                 }
             }
-            oldProc = User32Proc.I.SetWindowLongPtr(hwnd, GWLP_WNDPROC, proc!!)
-            u.SetWindowPos(
-                hwnd, null, 0, 0, 0, 0,
-                SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER or SWP_FRAMECHANGED,
-            )
+            set(20, 1)           // 深色
+            set(35, 0x001A1713)  // 标题栏底色 = 应用面板色 #13171A
+            set(36, 0x001A1713)  // 标题文字同色 → 看不见
+            set(34, 0x001A1713)  // 边框同色
         }
     }
 }
