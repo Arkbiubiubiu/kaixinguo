@@ -217,24 +217,22 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, badge: In
         Column(
             Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(
+                    when {
+                        active -> Palette.panelHi
+                        hovered -> Palette.panelHi.copy(alpha = 0.55f)
+                        else -> Color.Transparent
+                    },
+                )
                 .onPointerEvent(PointerEventType.Enter) { hovered = true }
                 .onPointerEvent(PointerEventType.Exit) { hovered = false }
                 .clickable { onClick() }
-                .padding(vertical = 4.dp),
+                .padding(vertical = 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // 选中/悬停只给图标一个 40dp 的圆角小底，不再整行铺一条浅色长方形
-            Box(
-                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(
-                    when {
-                        active -> Palette.panelHi
-                        hovered -> Palette.panelHi.copy(alpha = 0.5f)
-                        else -> Color.Transparent
-                    },
-                ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box {
+            Box {
                 Icon(
                     icon,
                     contentDescription = label,
@@ -259,9 +257,8 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, badge: In
                             .padding(horizontal = 4.dp, vertical = 1.dp),
                     )
                 }
-                }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 label,
                 color = if (active) Palette.text else Palette.dim,

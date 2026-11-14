@@ -2,6 +2,7 @@
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -611,7 +612,12 @@ private fun NavRail(
             // 否则从内容区左边缘按 ←，几何搜索会把焦点送到某个「不属于当前页」的分类上，
             // 而侧栏上按 → 的规则是「切到该分类并进内容区」，结果就是看详情时被直接带走。
             val active = enabled && current::class == item.screen::class
-            val tint = when {
+            val iconTint = when {
+                !enabled -> TextDim.copy(alpha = 0.35f)
+                active -> Red
+                else -> TextDim
+            }
+            val textTint = when {
                 !enabled -> TextDim.copy(alpha = 0.35f)
                 active -> Color.White
                 else -> TextDim
@@ -623,9 +629,13 @@ private fun NavRail(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 9.dp)
+                    .padding(horizontal = 7.dp)
                     .clip(RoundedCornerShape(11.dp))
-                    .background(if (active) Red else Color.Transparent)
+                    .background(if (active) Red.copy(alpha = 0.16f) else Color.Transparent)
+                    .then(
+                        if (active) Modifier.border(1.dp, Red.copy(alpha = 0.45f), RoundedCornerShape(11.dp))
+                        else Modifier
+                    )
                     .then(
                         if (!enabled) {
                             Modifier
@@ -656,9 +666,9 @@ private fun NavRail(
             ) {
                 Box {
                     if (item.custom != null) {
-                        RailIcon(item.custom, tint)
+                        RailIcon(item.custom, iconTint)
                     } else {
-                        Icon(item.icon!!, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                        Icon(item.icon!!, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
                     }
                     // 「追更」未读角标：红底白字，>99 显示 99+
                     if (item.screen is Screen.Follow && followBadge > 0) {
@@ -679,12 +689,12 @@ private fun NavRail(
                         }
                     }
                 }
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(
                     item.label,
-                    color = tint,
+                    color = textTint,
                     fontSize = 12.sp,
-                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                 )
             }
         }
