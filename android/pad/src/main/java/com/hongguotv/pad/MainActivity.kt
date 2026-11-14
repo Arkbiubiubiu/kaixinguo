@@ -60,6 +60,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         Store.init(this)
+        // 启动后后台自动清缓存（VVC 超过 7 天 / 总量超 800MB），不阻塞冷启动
+        Thread { runCatching { Store.autoCleanCache(this) } }
+            .apply { isDaemon = true; name = "cache-clean" }.start()
         // 日志定时回传（每 10 分钟发增量），电视上出问题我们也能主动看到
         runCatching { LogUploader.start(this) }
         App.state = Store

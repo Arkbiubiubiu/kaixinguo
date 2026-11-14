@@ -601,6 +601,7 @@ object Api {
         val body = JSONObject().put("vid", vid).put("want", want).toString()
         // 网络抖动重试一次（300ms）；取流失败不再被放大成几十秒
         for (attempt in 0 until 2) {
+        var serverFault = false
         for (base in serverBases()) {
             val data = runCatching {
                 val conn = URL(base.trimEnd('/') + "/api/playinfo").open()
@@ -616,6 +617,7 @@ object Api {
                     val code = conn.responseCode
                     if (code !in 200..299) {
                         lastPlayError = "HTTP $code"
+                        if (code in 500..599) serverFault = true
                         return@runCatching null
                     }
                     val raw = conn.inputStream
@@ -634,7 +636,9 @@ object Api {
                 preferredBase = base
                 return data
             }
+            if (serverFault) break
         }
+            if (serverFault) break
             if (attempt == 0) Thread.sleep(300)
         }
         return null

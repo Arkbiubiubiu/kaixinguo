@@ -35,6 +35,17 @@ object VvcPrep {
         }
     }
 
+    /** 自动清理：超过 7 天没碰过的 VVC 缓存整目录删掉（切集时的 prune 只保当前/下一集）。 */
+    fun autoClean(maxAgeDays: Int = 7) {
+        runCatching {
+            val cutoff = System.currentTimeMillis() - maxAgeDays * 86_400_000L
+            baseDir().listFiles()?.forEach { d ->
+                val newest = d.listFiles()?.maxOfOrNull { it.lastModified() } ?: d.lastModified()
+                if (newest < cutoff) d.deleteRecursively()
+            }
+        }
+    }
+
     /** 已经转换好的 clean.mp4（没有则 null）。预取和起播共用同一个判断。 */
     fun cached(vid: String): File? {
         val dir = File(baseDir(), vid)
@@ -68,6 +79,11 @@ object VvcPrep {
             val mp4 = File(dir, "source.mp4")
             rv.saveDecrypted(mp4)
             val res = export(mp4, video, audio)
+            // 容器解析偶尔认不出 esds（日志 audio=NNN 但 cfg=null）：这时别直接放弃音轨，
+            // 让 ffmpeg 从解密后的源 MP4 里再抽一次 AAC。之前这种情况会转出一集无声片。
+            if (!(audio.exists() && audio.length() > 0)) {
+                extractAudio(mp4, audio)
+            }
             runCatching { mp4.delete() }
             if (!res.first) error("VVC 转换失败")
             durationMs = res.second
@@ -81,6 +97,27 @@ object VvcPrep {
             remux(video, audio.takeIf { it.exists() && it.length() > 0 }, clean, fps, durationMs)
         }
         return Result(clean, durationMs, fps)
+    }
+
+    /** 兜底：直接从解密后的 MP4 抽 AAC 成 ADTS；抽不出来就保持无声，不阻塞视频。 */
+    private fun extractAudio(src: File, out: File) {
+        val exe = Ffmpeg.binary() ?: return
+        val cmd = listOf(
+            exe.absolutePath, "-hide_banner", "-loglevel", "error", "-y",
+            "-i", src.absolutePath, "-vn", "-c:a", "copy", "-f", "adts", out.absolutePath,
+        )
+        Log.d("VvcPrep", "audio parse miss, ffmpeg extract: ${cmd.joinToString(" ")}")
+        runCatching {
+            val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val text = p.inputStream.bufferedReader().readText()
+            val ok = p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
+            if (ok && out.exists() && out.length() > 0) {
+                Log.d("VvcPrep", "audio extract ok ${out.length()}B")
+            } else {
+                Log.e("VvcPrep", "audio extract failed: $text")
+                runCatching { out.delete() }
+            }
+        }
     }
 
     /**

@@ -53,6 +53,23 @@ object Covers {
 
     fun peek(url: String): ImageBitmap? = synchronized(memory) { memory[url] }
 
+    /**
+     * 自动清理：超过 30 天的先删；剩下的超过 3000 张按最久没用的继续删。
+     * 封面是纯缓存，删了下次重新下载即可，不能让它无限长到几百 MB。
+     */
+    fun autoClean(maxFiles: Int = 3000, maxAgeDays: Int = 30) {
+        runCatching {
+            val cutoff = System.currentTimeMillis() - maxAgeDays * 86_400_000L
+            val files = dir.listFiles()?.filter { it.isFile }.orEmpty()
+            files.filter { it.lastModified() < cutoff }.forEach { it.delete() }
+            dir.listFiles()?.filter { it.isFile }.orEmpty()
+                .sortedByDescending { it.lastModified() }
+                .drop(maxFiles)
+                .forEach { it.delete() }
+            synchronized(memory) { memory.clear() }
+        }
+    }
+
     /** 清掉内存里的封面（设置页「清理缓存」用；否则删了文件界面还挂着旧图）。 */
     fun clearMemory() {
         synchronized(memory) { memory.clear() }

@@ -332,7 +332,7 @@ class StreamProxy(private val remote: RemoteVideo, port: Int = 0) {
                         if (data.isEmpty()) {
                             // 短读：Content-Length 已声明完整长度，剩余字节发不出来时必须立刻断开，
                             // 否则播放器会永久等待 body（黑屏/卡死）。断开后播放器可自行重试 Range。
-                            Log.e("PadPlayer", "proxy short read at=$at end=$end（已发 ${at - start}B），断开连接")
+                            Log.d("PadPlayer", "proxy short read at=$at end=$end（已发 ${at - start}B），客户端正常断开")
                             return@use
                         }
                         output.write(data)
@@ -341,7 +341,15 @@ class StreamProxy(private val remote: RemoteVideo, port: Int = 0) {
                     }
                 }
             }
-        }.onFailure { Log.e("PadPlayer", "proxy serve err: ${it.message}") }
+        }.onFailure {
+            val m = it.message.orEmpty()
+            // 切集/拖动时播放器主动断开，Windows 报「主机中的软件中止」、Linux 报 reset/broken pipe，
+            // 都是正常关连接，不该记 E 级错误淹没真故障
+            if (m.contains("reset", true) || m.contains("broken pipe", true) ||
+                m.contains("中止", true) || m.contains("aborted", true) || m.contains("closed", true)
+            ) Log.d("PadPlayer", "proxy closed: $m")
+            else Log.e("PadPlayer", "proxy serve err: $m")
+        }
     }
 
     private fun readLine(input: InputStream): String? {

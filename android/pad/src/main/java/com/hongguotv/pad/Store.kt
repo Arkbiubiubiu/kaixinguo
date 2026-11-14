@@ -532,6 +532,32 @@ object Store : AccountState {
         }
     }
 
+    /**
+     * 自动清理缓存（启动时后台跑）：
+     *  - VVC 转换目录超过 7 天没碰过 → 删
+     *  - 总量超过 800MB → 从最旧的删到 400MB 以下
+     * 封面图由 Coil 自己的磁盘缓存管理（超限自动淘汰），这里只管我们自己的大文件。
+     */
+    fun autoCleanCache(context: Context) {
+        runCatching {
+            val root = File(context.cacheDir, "vvc")
+            fun sizeOf(f: File): Long = f.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+            fun touched(f: File): Long = f.walkBottomUp().filter { it.isFile }.maxOfOrNull { it.lastModified() } ?: f.lastModified()
+            val cutoff = System.currentTimeMillis() - 7 * 86_400_000L
+            root.listFiles()?.filter { it.isDirectory }?.forEach { d ->
+                if (touched(d) < cutoff) runCatching { d.deleteRecursively() }
+            }
+            val dirs = root.listFiles()?.filter { it.isDirectory }.orEmpty().sortedBy { touched(it) }
+            var total = dirs.sumOf { sizeOf(it) }
+            for (d in dirs) {
+                if (total <= 400L * 1024 * 1024) break
+                val n = sizeOf(d)
+                runCatching { d.deleteRecursively() }
+                total -= n
+            }
+        }
+    }
+
     /** 清缓存目录，返回给用户看的结果文案。 */
     fun clearCache(context: Context): String {
         var total = 0L

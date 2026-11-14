@@ -612,13 +612,21 @@ object Api {
         // 以前重试 3 次、每次可能耗 6 秒以上，一次坏片源能把刷剧首屏拖成 20~40 秒；
         // 快速失败后交给上层「跳下一部」反而体感更好。
         for (attempt in 0 until 2) {
+            var serverFault = false
             for (base in serverBases()) {
                 val data = requestPlayInfo(base, body)
                 if (data != null) {
                     preferredBase = base
                     return data
                 }
+                // 5xx 是服务器/上游自身故障：换地址、再重试都只会让用户多等，
+                // 记下原因立刻回去走本机直连兜底
+                if (lastPlayError?.startsWith("HTTP 5") == true) {
+                    serverFault = true
+                    break
+                }
             }
+            if (serverFault) break
             if (attempt == 0) Thread.sleep(300)
         }
         return null
@@ -636,7 +644,10 @@ object Api {
             conn.doOutput = true
             conn.outputStream.use { it.write(body.toByteArray()) }
             val code = conn.responseCode
-            if (code !in 200..299) return@runCatching null
+            if (code !in 200..299) {
+                lastPlayError = "HTTP $code"
+                return@runCatching null
+            }
             val raw = conn.inputStream
             // 服务器统一 gzip：要了 gzip 就必须解压，否则 JSON 解析必然失败
             val decoded = if ((conn.contentEncoding ?: "").contains("gzip", true)) {
