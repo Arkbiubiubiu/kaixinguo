@@ -620,6 +620,8 @@ fun PlayerScreen(
             ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
             ?: prefetchReady2
                 ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
+            // VVC 播放页预取的下一集（HEVC 时是现成的代理，VVC 时已提前转换）
+            ?: NextHandoff.take(index, ep.vid, defWant)
         if (hit == null && attempt == 0) {
             // 预取正在路上：等它，别重新取一遍流。等的时候不画转圈，
             // 画面停在上一集最后一帧，比中间闪个圈干净得多。
@@ -926,7 +928,10 @@ fun PlayerScreen(
             var produced: ReadyEpisode? = null
             try {
                 withContext(Dispatchers.IO) {
-                    produced = buildReady(want, next, defWant) { prefetchWant == want }
+                    produced = buildReady(
+                        want, next, defWant,
+                        setOf(episodes.getOrNull(index - 1)?.vid.orEmpty()),
+                    ) { prefetchWant == want }
                 }
                 slot?.complete(produced)
                 val p = produced
@@ -1343,12 +1348,13 @@ fun PlayerScreen(
             onBack = onBack,
             onDetail = onDetail,
             onNonVvc = { epIdx ->
+                val was = index
                 vvcEpisode = null
                 index = epIdx
                 // 交回来的可能正是当前这一集（21 集这种「被误送进 VVC 页」的情况）：
                 // index 没变化时上面的起播 effect 不会重跑，会停在一片黑屏上。
-                // 用 attempt 再踢一次，让普通播放器按真实编码重新起播。
-                attempt++
+                // 用 attempt 再踢一次；换集时 attempt 保持 0，才能吃到预取的手递手结果。
+                if (epIdx == was) attempt++
             },
         )
         return
@@ -1761,7 +1767,7 @@ fun PlayerScreen(
  * 预取好的一集：档位表、解密后的样本表、已监听的本地代理，起播要的东西都在这里，
  * 切过去只差一句 setMediaItem。
  */
-private class ReadyEpisode(
+internal class ReadyEpisode(
     val index: Int,
     val vid: String,
     val defWant: Int,
@@ -1777,15 +1783,65 @@ private fun dropReady(r: ReadyEpisode) {
 }
 
 /**
+ * VVC 页 → 普通播放器的手递手。
+ *
+ * VVC 页没法自己起 ExoPlayer，但它可以在后台把下一集（HEVC）的直链/头部/代理先备好，
+ * 放在这里；主播放器交回来时直接接管，B（VVC）→A（HEVC）也不用重新取流。
+ * 只存一格：短剧顺序连播，真正需要的永远只有紧邻的下一集。
+ */
+internal object NextHandoff {
+    private val lock = Any()
+    private var entry: ReadyEpisode? = null
+    private var at = 0L
+
+    fun put(e: ReadyEpisode) {
+        val old = synchronized(lock) {
+            val o = entry
+            entry = e
+            at = System.currentTimeMillis()
+            o
+        }
+        old?.let { dropReady(it) }
+    }
+
+    fun take(index: Int, vid: String, defWant: Int): ReadyEpisode? {
+        var stale: ReadyEpisode? = null
+        val e = synchronized(lock) {
+            val cur = entry ?: return null
+            val expired = System.currentTimeMillis() - at > 5 * 60_000L
+            if (expired || cur.index != index || cur.vid != vid ||
+                (defWant > 0 && cur.defWant != defWant)
+            ) {
+                entry = null
+                stale = cur
+                null
+            } else {
+                entry = null
+                cur
+            }
+        }
+        // 过期/不匹配：就地释放，绝不交给播放器
+        stale?.let { dropReady(it) }
+        return e
+    }
+
+    fun clear() {
+        val e = synchronized(lock) { entry.also { entry = null } }
+        e?.let { dropReady(it) }
+    }
+}
+
+/**
  * 把一集准备到「只差 setMediaItem」的程度。
  *
  * [alive] 在几个耗时的位置各查一次：用户中途切集或换清晰度时尽早收手，
  * 别让一个没人要的代理在后台继续吃带宽。
  */
-private fun buildReady(
+internal fun buildReady(
     index: Int,
     ep: Episode,
     defWant: Int,
+    keepVids: Set<String> = emptySet(),
     alive: () -> Boolean,
 ): ReadyEpisode? {
     if (!alive()) return null
@@ -1798,7 +1854,21 @@ private fun buildReady(
         ?: playable.firstOrNull()
     val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, defWant)
     val rv = RemoteVideo(info)
-    rv.prepare(warmLastBlock = false)
+    try {
+        rv.prepare(warmLastBlock = false)
+    } catch (e: UnsupportedCodecException) {
+        rv.close()
+        if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
+            // 格式无关的预取：下一集是 VVC 就提前下载+转换。
+            // 这样切过去时 prepareVvcFiles 直接命中磁盘缓存，不用现场等。
+            val vvcCap = vvcPreferredCap(Store.appContext)
+            val keep = keepVids.map { "${it}_$vvcCap" }.toSet() + "${ep.vid}_$vvcCap"
+            Log.i("nextup", "next ep$index is VVC, prime cap=$vvcCap keep=$keep")
+            VvcWarm.prime(Store.appContext, ep, vvcCap, keep)
+            return null
+        }
+        throw e
+    }
     if (!alive()) {
         rv.close()
         return null

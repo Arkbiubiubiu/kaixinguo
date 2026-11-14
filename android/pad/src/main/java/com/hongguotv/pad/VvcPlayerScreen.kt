@@ -35,11 +35,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import `is`.xyz.mpv.MpvCore
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * VVC（bytevc2）专用播放页：本地解密 → 拆成 Annex-B + ADTS → libmpv 软解渲染。
@@ -88,7 +93,7 @@ fun VvcPlayerScreen(
     var cutGen by remember { mutableStateOf(0) }
     // VVC 是纯软解：清晰度就是性能旋钮。默认电视 540p，用户可在播放页里切
     val qPrefs = remember { context.getSharedPreferences("vvc", android.content.Context.MODE_PRIVATE) }
-    var cap by remember { mutableStateOf(qPrefs.getInt("cap", if (Store.appContext.packageName.endsWith("nativeapp")) 540 else 720)) }
+    var cap by remember { mutableStateOf(qPrefs.getInt("cap", vvcPreferredCap(context))) }
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInteract by remember { mutableStateOf(System.currentTimeMillis()) }
     fun touchUi() {
@@ -158,15 +163,12 @@ fun VvcPlayerScreen(
         baseSec = 0.0
         seekIdx = null
         phase = "准备中…"
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val root = File(context.cacheDir, "vvc")
-                val keep = "${e.vid}_$cap"
-                root.listFiles()?.forEach { d -> if (d.name != keep) d.deleteRecursively() }
-            }
-        }
+        // 缓存清理交给 prepareVvcFiles：只留当前集 + 下一集。
+        // 原来这里「只留当前集」，会把还没播的预取结果一起删掉。
+        val nextVid = episodes.getOrNull(index)?.vid.orEmpty()
+        val keepNames = setOf("${e.vid}_$cap", "${nextVid}_$cap")
         val prepared = try {
-            prepareVvcFiles(context, e, cap) { phase = it }
+            prepareVvcFiles(context, e, cap, keepNames) { phase = it }
         } catch (t: Throwable) {
             error = t.message ?: "VVC 准备失败"
             null
@@ -194,16 +196,21 @@ fun VvcPlayerScreen(
         phase = ""
     }
 
-    // 下一集 VVC 预取：当前集播起来后，后台把下一集的「下载+转换」先做掉。
-    // 切集时 prepareVvcFiles 直接命中缓存，和普通 HEVC 集的预取体验一致。
-    LaunchedEffect(loaded, index, cap) {
+    // 下一集预取：格式无关。
+    // - HEVC：buildReady 把直链/头部/本地代理备好，放进 NextHandoff，交回主播放器直接播
+    // - VVC：buildReady 内部识别后调 VvcWarm.prime，提前下载+转换
+    // 这样 A(HEVC)→B(VVC)、B→A 两个方向切集都不用现场准备。
+    LaunchedEffect(loaded, index) {
         if (!loaded) return@LaunchedEffect
         kotlinx.coroutines.delay(4_000)
+        val nextIndex = index + 1
         val next = episodes.getOrNull(index) ?: return@LaunchedEffect
+        val curVid = episodes.getOrNull(index - 1)?.vid.orEmpty()
         withContext(Dispatchers.IO) {
             runCatching {
-                Log.d("VvcPlayer", "prefetch next ep${index + 1} vid=${next.vid}")
-                prepareVvcFiles(context, next, cap) { }
+                Log.d("VvcPlayer", "prefetch next ep$nextIndex vid=${next.vid}")
+                val ready = buildReady(nextIndex, next, 0, setOf(curVid)) { true }
+                if (ready != null) NextHandoff.put(ready)
             }.onFailure { Log.e("VvcPlayer", "预取下一集失败: ${it.message}", it) }
         }
     }
@@ -590,20 +597,52 @@ private fun fmt(sec: Double): String {
     return "%02d:%02d".format(s / 60, s % 60)
 }
 
-private class VvcFiles(val video: File, val audio: File?, val dur: Double, val fps: Double)
+internal class VvcFiles(val video: File, val audio: File?, val dur: Double, val fps: Double)
+
+/** VVC 播放页实际使用的清晰度：TV 默认 540，其它 720；用户可在播放页里改。 */
+internal fun vvcPreferredCap(ctx: android.content.Context): Int =
+    ctx.getSharedPreferences("vvc", android.content.Context.MODE_PRIVATE)
+        .getInt("cap", if (ctx.packageName.endsWith("nativeapp")) 540 else 720)
+
+/** 同一集只允许一个转换任务（预取和起播撞上时共用同一份结果）。 */
+private val vvcLocks = ConcurrentHashMap<String, Mutex>()
 
 /**
  * 下载+解密+拆容器，返回可直接给 mpv 的文件。
  * null = 这一集不是 VVC（应交给主播放器）；失败直接抛异常，由调用方决定提示。
+ *
+ * @param keep 允许留在缓存里的目录名（当前集/下一集）；不传表示不清理
  */
-private suspend fun prepareVvcFiles(
+internal suspend fun prepareVvcFiles(
     ctx: android.content.Context,
     e: Episode,
     cap: Int,
+    keep: Set<String> = emptySet(),
     onPhase: (String) -> Unit,
 ): VvcFiles? = withContext(Dispatchers.IO) {
+    val dirName = "${e.vid}_$cap"
+    val mutex = vvcLocks.getOrPut(dirName) { Mutex() }
+    mutex.withLock {
+        prepareVvcLocked(ctx.applicationContext, e, cap, dirName, keep, onPhase)
+    }
+}
+
+private fun prepareVvcLocked(
+    ctx: android.content.Context,
+    e: Episode,
+    cap: Int,
+    dirName: String,
+    keep: Set<String>,
+    onPhase: (String) -> Unit,
+): VvcFiles? {
     val root = File(ctx.cacheDir, "vvc")
-    val dir = File(root, "${e.vid}_$cap").apply { mkdirs() }
+    if (keep.isNotEmpty()) {
+        val keepNames = keep + dirName
+        runCatching {
+            root.listFiles()?.forEach { d -> if (d.name !in keepNames) d.deleteRecursively() }
+        }
+    }
+    val dir = File(root, dirName).apply { mkdirs() }
     val v = File(dir, "video.266")
     val a = File(dir, "audio.aac")
     val meta = File(dir, "meta.txt")
@@ -628,7 +667,7 @@ private suspend fun prepareVvcFiles(
         val rv = RemoteVideo(info)
         rv.prepare(allowVvc = true)
         val tag = rv.videoCodec
-        if (tag.isNotEmpty() && !tag.equals("bvc2", true)) return@withContext null
+        if (tag.isNotEmpty() && !tag.equals("bvc2", true)) return null
         val mp4 = File(dir, "source.mp4")
         rv.saveDecrypted(mp4)
         onPhase("正在转换…")
@@ -640,7 +679,32 @@ private suspend fun prepareVvcFiles(
         runCatching { meta.writeText("${res.duration},${res.fps}") }
     }
     val af = a.takeIf { it.exists() && it.length() > 0 }
-    VvcFiles(v, af, metaDur, metaFps)
+    return VvcFiles(v, af, metaDur, metaFps)
+}
+
+/**
+ * 格式无关的「下一集」预取入口。
+ *
+ * 主播放器预取下一集时发现是 VVC，就调 [prime] 在后台把下载+转换做掉；
+ * VVC 播放页的下一集预取也走这里。切集时 prepareVvcFiles 直接命中磁盘缓存，
+ * 不需要现场转换，A（HEVC）→B（VVC）、B→A 都不会再卡一下。
+ */
+internal object VvcWarm {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun prime(ctx: android.content.Context, e: Episode, cap: Int, keep: Set<String>) {
+        val dir = File(File(ctx.cacheDir, "vvc"), "${e.vid}_$cap")
+        if (File(dir, "video.index").exists() && File(dir, "video.266").length() > 0) return
+        scope.launch {
+            runCatching { prepareVvcFiles(ctx.applicationContext, e, cap, keep) { } }
+                .onFailure { Log.e("VvcWarm", "预取 ${e.vid} 失败: ${it.message}", it) }
+        }
+    }
+
+    fun cached(ctx: android.content.Context, vid: String, cap: Int): Boolean {
+        val dir = File(File(ctx.cacheDir, "vvc"), "${vid}_$cap")
+        return File(dir, "video.index").exists() && File(dir, "video.266").length() > 0
+    }
 }
 
 /** .266 裸流的 seek 索引（导出时生成）：每一帧在文件里的字节位置 + 是否关键帧。 */
