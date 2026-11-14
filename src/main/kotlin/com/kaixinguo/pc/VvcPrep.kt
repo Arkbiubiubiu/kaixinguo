@@ -39,17 +39,19 @@ object VvcPrep {
         val audio = File(dir, "audio.aac")
         val clean = File(dir, "clean.mp4")
         val meta = File(dir, "meta.txt")
+        // 缓存版本：1.2.47 的缓存没有音轨（ASC 过滤 bug），必须重建
+        val marker = File(dir, "v2.ok")
 
         var durationMs = 0L
         var fps = 0.0
-        if (video.exists() && video.length() > 0 && meta.exists()) {
+        if (marker.exists() && video.exists() && video.length() > 0 && meta.exists()) {
             runCatching {
                 val parts = meta.readText().trim().split(",")
                 durationMs = parts[0].toLong()
                 fps = parts.getOrNull(1)?.toDouble() ?: 0.0
             }
         }
-        if (!(video.exists() && video.length() > 0)) {
+        if (!(marker.exists() && video.exists() && video.length() > 0)) {
             val rv = RemoteVideo(info)
             rv.prepare(warmLastBlock = false, allowVvc = true)
             val mp4 = File(dir, "source.mp4")
@@ -59,7 +61,10 @@ object VvcPrep {
             if (!res.first) error("VVC 转换失败")
             durationMs = res.second
             fps = res.third
-            runCatching { meta.writeText("$durationMs,$fps") }
+            runCatching {
+                meta.writeText("$durationMs,$fps")
+                marker.writeText("ok")
+            }
         }
         if (!(clean.exists() && clean.length() > 0)) {
             remux(video, audio.takeIf { it.exists() && it.length() > 0 }, clean, fps, durationMs)
@@ -303,11 +308,9 @@ object VvcPrep {
                     if (b and 0x80 == 0) break
                 }
                 if (j + n <= limit && n in 2..8) {
-                    val cfg = d.copyOfRange(j, j + n)
-                    val ot = (cfg[0].toInt() ushr 3) and 0x1F
-                    val fi = ((cfg[0].toInt() and 0x07) shl 1) or ((cfg[1].toInt() ushr 7) and 0x01)
-                    val ch = (cfg[1].toInt() ushr 3) and 0x0F
-                    if (ot in 1..5 && fi <= 12 && ch in 1..8) return cfg
+                    // 不做字段合理性过滤：番茄的 HE-AAC 会算出 ot=31/ch=0，
+                    // 过滤掉就整集没声音（安卓 2.2.144 同一个坑，PC 1.2.47 没同步）
+                    return d.copyOfRange(j, j + n)
                 }
             }
             i++

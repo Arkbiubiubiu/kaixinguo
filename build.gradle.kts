@@ -60,7 +60,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "开心果"
-            packageVersion = "1.2.47"
+            packageVersion = "1.2.48"
             // 安装包 / 快捷方式 / 任务栏图标（与安卓启动图标同一张）
             windows {
                 iconFile.set(project.layout.projectDirectory.file("brand.ico"))
@@ -69,4 +69,9 @@ compose.desktop {
             appResourcesRootDir.set(project.layout.projectDirectory.dir("pack"))
         }
     }
+}
+
+tasks.register<JavaExec>("probe") {
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.kaixinguo.pc.ProbeKt")
 }
