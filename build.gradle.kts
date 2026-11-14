@@ -30,6 +30,10 @@ val buildPlayToken = (findProperty("playToken") as String?)?.trim().orEmpty()
 val buildSignUrl = (findProperty("signUrl") as String?)?.trim().orEmpty()
 val buildHistoryBase = (findProperty("historyBase") as String?)?.trim().orEmpty()
 
+// 版本号唯一来源：发版只改这一行，packageVersion 和代码里的 BuildInfo 都从这里生成
+val pcVersion = "1.2.76"
+val pcCode = pcVersion.split('.').let { it[0].toInt() * 10000 + it[1].toInt() * 100 + it[2].toInt() }
+
 val generateBuildDefaults = tasks.register("generateBuildDefaults") {
     val outDir = layout.buildDirectory.dir("generated/defaults")
     outputs.dir(outDir)
@@ -37,6 +41,8 @@ val generateBuildDefaults = tasks.register("generateBuildDefaults") {
     val pt = buildPlayToken
     val su = buildSignUrl
     val hb = buildHistoryBase
+    val ver = pcVersion
+    val verCode = pcCode
     doLast {
         val f = outDir.get().asFile.resolve("com/kaixinguo/pc/BuildDefaults.kt")
         f.parentFile.mkdirs()
@@ -53,6 +59,21 @@ val generateBuildDefaults = tasks.register("generateBuildDefaults") {
             |}
             |""".trimMargin(),
         )
+        // BuildInfo 也一起生成：以前版本号在 build.gradle 和 Updater.kt 各写一份，
+        // 1.2.72~1.2.75 只改了安装包版本，程序里还认为自己是 1.2.71，
+        // 设置页显示错误、检查更新永远提示有新版本。
+        val fv = outDir.get().asFile.resolve("com/kaixinguo/pc/BuildInfo.kt")
+        fv.writeText(
+            """
+            |// 由 build.gradle.kts 生成，不要手改；版本号只改 build.gradle.kts 的 pcVersion
+            |package com.kaixinguo.pc
+            |
+            |object BuildInfo {
+            |    const val VERSION = "$ver"
+            |    const val CODE = $verCode
+            |}
+            |""".trimMargin(),
+        )
     }
 }
 kotlin.sourceSets["main"].kotlin.srcDir(generateBuildDefaults)
@@ -63,7 +84,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "开心果"
-            packageVersion = "1.2.75"
+            packageVersion = pcVersion
             // 安装包 / 快捷方式 / 任务栏图标（与安卓启动图标同一张）
             windows {
                 iconFile.set(project.layout.projectDirectory.file("brand.ico"))
