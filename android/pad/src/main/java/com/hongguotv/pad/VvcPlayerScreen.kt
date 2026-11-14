@@ -4,6 +4,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -15,8 +16,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
@@ -84,11 +88,22 @@ fun VvcPlayerScreen(
     val ep = episodes.getOrNull(index - 1)
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
     val rootFocus = remember { FocusRequester() }
+    val pauseFocus = remember { FocusRequester() }
+    val prevFocus = remember { FocusRequester() }
+    val nextFocus = remember { FocusRequester() }
+    var rootHasFocus by remember { mutableStateOf(true) }
 
     // 电视遥控器：焦点必须先落在根容器上，否则方向键/确定全部收不到（2.2.142 的坑）
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(400)
         runCatching { rootFocus.requestFocus() }
+    }
+    // 控制条出现/切集后焦点可能被重建，重新把焦点还给播放层
+    LaunchedEffect(loaded, index) {
+        if (loaded) {
+            kotlinx.coroutines.delay(200)
+            runCatching { rootFocus.requestFocus() }
+        }
     }
 
     fun saveProgress() {
@@ -344,10 +359,16 @@ fun VvcPlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(rootFocus)
-            .focusable()
+            .onFocusChanged { rootHasFocus = it.isFocused }
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // 焦点在按钮上时，方向键/确定交给按钮自己处理
+                if (!rootHasFocus) return@onPreviewKeyEvent false
                 when (ev.key) {
+                    Key.DirectionDown -> {
+                        if (loaded) runCatching { pauseFocus.requestFocus() }
+                        true
+                    }
                     Key.DirectionCenter, Key.Enter, Key.Spacebar -> {
                         val p = MpvCore.isPaused()
                         MpvCore.pause(!p)
@@ -370,7 +391,8 @@ fun VvcPlayerScreen(
                     }
                     else -> false
                 }
-            },
+            }
+            .focusable(),
     ) {
         AndroidView(
             factory = { ctx ->
@@ -478,30 +500,39 @@ fun VvcPlayerScreen(
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
-                            .clickable {
-                                val p = MpvCore.isPaused()
-                                MpvCore.pause(!p)
-                                paused = !p
-                            }
-                            .padding(horizontal = 18.dp, vertical = 10.dp),
-                    ) { Text(if (paused) "播放" else "暂停", color = Color.White, fontSize = 15.sp) }
+                    CtrlButton(
+                        label = if (paused) "播放" else "暂停",
+                        fontSize = 15.sp,
+                        focusRequester = pauseFocus,
+                        leftReq = null,
+                        rightReq = if (index > 1) prevFocus else if (index < episodes.size) nextFocus else null,
+                        onUp = { runCatching { rootFocus.requestFocus() } },
+                    ) {
+                        val p = MpvCore.isPaused()
+                        MpvCore.pause(!p)
+                        paused = !p
+                    }
                     Spacer(Modifier.width(12.dp))
                     if (index > 1) {
-                        Box(
-                            Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
-                                .clickable { saveProgress(); index -= 1 }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                        ) { Text("上一集", color = Color.White, fontSize = 14.sp) }
+                        CtrlButton(
+                            label = "上一集",
+                            fontSize = 14.sp,
+                            focusRequester = prevFocus,
+                            leftReq = pauseFocus,
+                            rightReq = if (index < episodes.size) nextFocus else null,
+                            onUp = { runCatching { rootFocus.requestFocus() } },
+                        ) { saveProgress(); index -= 1 }
                         Spacer(Modifier.width(8.dp))
                     }
                     if (index < episodes.size) {
-                        Box(
-                            Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
-                                .clickable { saveProgress(); index += 1 }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                        ) { Text("下一集", color = Color.White, fontSize = 14.sp) }
+                        CtrlButton(
+                            label = "下一集",
+                            fontSize = 14.sp,
+                            focusRequester = nextFocus,
+                            leftReq = if (index > 1) prevFocus else pauseFocus,
+                            rightReq = null,
+                            onUp = { runCatching { rootFocus.requestFocus() } },
+                        ) { saveProgress(); index += 1 }
                     }
                     Spacer(Modifier.width(16.dp))
                     Text(
@@ -511,7 +542,7 @@ fun VvcPlayerScreen(
                     Spacer(Modifier.weight(1f))
                     if (isTv) {
                         Text(
-                            "← → 快进退 · 确定 暂停",
+                            "← → 快进退 · ↓ 选按钮",
                             color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp,
                         )
                     }
@@ -559,5 +590,49 @@ private class SeekIndex(
             if (vs.isEmpty()) null
             else SeekIndex(fps, dur, vs.toLongArray(), ks.toBooleanArray(), as_.toLongArray())
         }.getOrNull()
+    }
+}
+
+/** 电视控制按钮：可聚焦、有红框焦点态、确定触发、↑ 回到播放层。 */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@androidx.compose.runtime.Composable
+private fun CtrlButton(
+    label: String,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    focusRequester: FocusRequester? = null,
+    leftReq: FocusRequester? = null,
+    rightReq: FocusRequester? = null,
+    onUp: () -> Unit,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(20.dp)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(Color(0x66000000))
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .focusProperties {
+                left = leftReq ?: FocusRequester.Cancel
+                right = rightReq ?: FocusRequester.Cancel
+                up = FocusRequester.Cancel
+            }
+            .onFocusChanged { focused = it.isFocused }
+            .then(if (focused) Modifier.border(2.dp, Color(0xFFFF4A3D), shape) else Modifier)
+            .onKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (ev.key) {
+                    Key.DirectionCenter, Key.Enter -> { onClick(); true }
+                    Key.DirectionUp -> { onUp(); true }
+                    else -> false
+                }
+            }
+            .focusable()
+            .pointerInput(Unit) {
+                detectTapGestures { onClick() }
+            }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Text(label, color = Color.White, fontSize = fontSize)
     }
 }

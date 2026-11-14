@@ -296,13 +296,9 @@ object VvcExport {
                     }
                     n
                 }
-                if (q + len <= limit && len in 2..8) {
-                    val cfg = d.copyOfRange(q, q + len)
-                    val ot = (cfg[0].toInt() ushr 3) and 0x1F
-                    val fi = ((cfg[0].toInt() and 0x07) shl 1) or ((cfg[1].toInt() ushr 7) and 0x01)
-                    val ch = (cfg[1].toInt() ushr 3) and 0x0F
-                    if (ot in 1..5 && fi <= 12 && ch in 1..8) return cfg
-                }
+                // 注意：不要对 ASC 做「字段合理性」过滤 —— 番茄的 HE-AAC 配置
+                // 用简单解析会算出 ot=31/ch=0，过滤掉就整集没声音（2.2.143 踩过）
+                if (q + len <= limit && len in 2..8) return d.copyOfRange(q, q + len)
             }
             i++
         }
