@@ -2937,67 +2937,6 @@ private fun SettingsPage() {
                     Text("播放器里改倍速会记住，下次起播继续用。", color = Palette.faint, fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(12.dp))
-                // 下载（旧版 download 页的等价形态：本集单文件任务列表）
-                SettingBlock("下载") {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (Downloader.tasks.isEmpty()) "播放页点「下载」把当前集存到本地（原画质 remux，不转码）" else "共 ${Downloader.tasks.size} 个任务",
-                            color = Palette.dim, fontSize = 12.sp, modifier = Modifier.weight(1f),
-                        )
-                        OutlineButton("打开目录") { Downloader.openFolder() }
-                    }
-                    Downloader.tasks.forEach { t ->
-                        Spacer(Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "${t.title} · 第${t.episode}集",
-                                    color = Palette.text, fontSize = 13.sp,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(50))
-                                            .background(Palette.panelHi),
-                                    ) {
-                                        Box(
-                                            Modifier.fillMaxWidth(t.progress.coerceIn(0f, 1f)).fillMaxHeight()
-                                                .clip(RoundedCornerShape(50))
-                                                .background(if (t.state == Downloader.State.FAILED) Palette.dim else Palette.accentFill),
-                                        )
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    val errMsg = t.error
-                                    Text(
-                                        when (t.state) {
-                                            Downloader.State.DONE -> "已完成"
-                                            Downloader.State.FAILED -> if (errMsg.isNullOrBlank()) "失败" else "失败：$errMsg"
-                                            Downloader.State.CANCELED -> "已取消"
-                                            else -> "${(t.progress * 100).toInt()}%"
-                                        },
-                                        color = Palette.faint, fontSize = 11.sp,
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.width(10.dp))
-                            if (t.state == Downloader.State.RUNNING || t.state == Downloader.State.QUEUED) {
-                                Text(
-                                    "取消",
-                                    color = Palette.faint, fontSize = 11.sp,
-                                    modifier = Modifier.clickable { Downloader.cancel(t) },
-                                )
-                                Spacer(Modifier.width(10.dp))
-                            }
-                            Text(
-                                "删除",
-                                color = Palette.faint, fontSize = 11.sp,
-                                modifier = Modifier.clickable { Downloader.delete(t) },
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
                 // 磁盘占用（旧版 storage 卡）
                 SettingBlock("磁盘占用") {
                     var cacheBump by remember { mutableStateOf(0) }

@@ -1179,16 +1179,6 @@ fun PlayerScreen(
                 Box(Modifier.onGloballyPositioned { val p = it.positionInWindow(); btnPos["episodes"] = androidx.compose.ui.unit.IntOffset((p.x + it.size.width).toInt(), p.y.toInt()); btnCenter["episodes"] = androidx.compose.ui.unit.IntOffset((p.x + it.size.width / 2).toInt(), (p.y + it.size.height / 2).toInt()) }) {
                     CtrlText(Icons.AutoMirrored.Filled.List, "选集·全${episodes.size}集") { popup = if (popup == "episodes") null else "episodes" }
                 }
-                // 下载本集（旧版 download-sheet 的单文件等价形态）
-                CtrlText(Icons.Filled.FileDownload, "下载") {
-                    val ep = episodes.getOrNull(index - 1)
-                    val best = tiers.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
-                        ?: tiers.maxByOrNull { it.height }
-                    if (ep != null && best != null) {
-                        Downloader.download(title.ifBlank { seriesId }, ep.index, best.url, engine?.info?.durationMs ?: 0L)
-                        chromeWake()
-                    }
-                }
                 // 弹幕开关：「弹」字按钮，关闭叠反斜杠（B 站同款，旧版 DanmakuSwitchIcon）
                 DanmakuSwitchButton(danmakuOn) {
                     // 原来先翻转 danmakuOn 再取反写设置，写进去的是**旧值**：
