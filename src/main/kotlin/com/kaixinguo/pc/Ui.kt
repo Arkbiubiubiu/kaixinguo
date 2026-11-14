@@ -192,7 +192,7 @@ val FollowsEmptyIcon = Icons.Filled.Tv
 @Composable
 fun Sidebar(selected: String, collapsed: Boolean, onSelect: (String) -> Unit, onToggle: () -> Unit, badge: Int = 0) {
     Column(
-        Modifier.width(72.dp).fillMaxHeight().background(Palette.panel).padding(vertical = 8.dp),
+        Modifier.width(72.dp).fillMaxHeight().background(Palette.bg).padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NAV.forEach { (label, icon) ->

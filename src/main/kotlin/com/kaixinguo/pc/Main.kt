@@ -5,6 +5,8 @@
 
 package com.kaixinguo.pc
 
+import androidx.compose.ui.graphics.toArgb
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -192,7 +194,11 @@ fun main() = application {
         icon = brandBitmap?.let { BitmapPainter(it) },
     ) {
         val awt = java.awt.Window.getWindows().filterIsInstance<java.awt.Frame>().firstOrNull()
-        androidx.compose.runtime.LaunchedEffect(awt) { DarkTitleBar.apply(awt) }
+        androidx.compose.runtime.LaunchedEffect(awt, Palette.isDark.value) {
+            // 等窗口真正上屏后再刷 DWM，否则某些机器上颜色不生效
+            kotlinx.coroutines.delay(120)
+            DarkTitleBar.apply(awt, Palette.bg.toArgb())
+        }
         // 窗口最小化 → 播放暂停（回到前台不自动续播）
         androidx.compose.runtime.DisposableEffect(awt) {
             if (awt == null) return@DisposableEffect onDispose { }
@@ -3333,9 +3339,13 @@ private object DarkTitleBar {
         }
     }
 
-    fun apply(frame: java.awt.Frame?) {
+    fun apply(frame: java.awt.Frame?, argb: Int) {
         frame ?: return
         if (!System.getProperty("os.name").lowercase().contains("win")) return
+        val r = (argb shr 16) and 0xFF
+        val g = (argb shr 8) and 0xFF
+        val b = argb and 0xFF
+        val colorref = (b shl 16) or (g shl 8) or r
         runCatching {
             val hwnd = com.sun.jna.platform.win32.WinDef.HWND(
                 com.sun.jna.Native.getWindowPointer(frame),
@@ -3345,10 +3355,10 @@ private object DarkTitleBar {
                     Dwmapi.I.DwmSetWindowAttribute(hwnd, attr, com.sun.jna.ptr.IntByReference(v), 4)
                 }
             }
-            set(20, 1)           // 深色
-            set(35, 0x001A1713)  // 标题栏底色 = 应用面板色 #13171A
-            set(36, 0x001A1713)  // 标题文字同色 → 看不见
-            set(34, 0x001A1713)  // 边框同色
+            set(20, 1)                // 深色
+            set(35, colorref)         // 标题栏底色 = 顶条颜色
+            set(36, colorref)         // 标题文字同色 → 看不见
+            set(34, colorref)         // 边框同色
         }
     }
 }
