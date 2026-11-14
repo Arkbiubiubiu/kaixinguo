@@ -813,6 +813,13 @@ fun PlayerScreen(
                     runCatching { r.close() }
                 }
                 created = null
+                // 进 VVC 页会丢掉 ExoPlayer 的队列；queued 这张记账表也要清，
+                // 否则回来之后预取以为「下一集已经排好」，实际没排，播着播着跳一集
+                queued.values.toList().let { q ->
+                    queued.clear()
+                    q.forEach { dropReady(it) }
+                }
+                runCatching { player.clearMediaItems() }
                 preparing = false
                 failed = null
                 vvcEpisode = epNow

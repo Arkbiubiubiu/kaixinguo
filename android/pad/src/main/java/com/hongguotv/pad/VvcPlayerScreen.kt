@@ -549,7 +549,7 @@ fun VvcPlayerScreen(
                             leftReq = pauseFocus,
                             rightReq = if (index < episodes.size) nextFocus else speedFocus,
                             onUp = { runCatching { rootFocus.requestFocus() } },
-                        ) { saveProgress(); index -= 1 }
+                        ) { ended = true; saveProgress(); index -= 1 }
                         Spacer(Modifier.width(8.dp))
                     }
                     if (index < episodes.size) {
@@ -560,7 +560,7 @@ fun VvcPlayerScreen(
                             leftReq = if (index > 1) prevFocus else pauseFocus,
                             rightReq = speedFocus,
                             onUp = { runCatching { rootFocus.requestFocus() } },
-                        ) { saveProgress(); index += 1 }
+                        ) { ended = true; saveProgress(); index += 1 }
                     }
                     Spacer(Modifier.width(8.dp))
                     CtrlButton(
@@ -728,8 +728,17 @@ internal object VvcWarm {
             File(dir, AUDIO_FIX_MARKER).exists()
         ) return
         scope.launch {
-            runCatching { prepareVvcFiles(ctx.applicationContext, e, cap, keep) { } }
-                .onFailure { Log.e("VvcWarm", "预取 ${e.vid} 失败: ${it.message}", it) }
+            // 下载/解密偶发失败一次（隧道抖动）；预取失败不要紧，但重试一次能救回大多数
+            repeat(2) { attempt ->
+                val r = runCatching { prepareVvcFiles(ctx.applicationContext, e, cap, keep) { } }
+                if (r.isSuccess && r.getOrNull() != null) return@launch
+                if (attempt == 0) {
+                    Log.d("VvcWarm", "预取 ${e.vid} 失败，重试一次: ${r.exceptionOrNull()?.message}")
+                    kotlinx.coroutines.delay(600)
+                } else {
+                    Log.e("VvcWarm", "预取 ${e.vid} 失败: ${r.exceptionOrNull()?.message}")
+                }
+            }
         }
     }
 
@@ -788,6 +797,14 @@ private fun CtrlButton(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // 电视遥控确定键偶尔会连发两次 KeyDown；没有防抖时按一次「下一集」会跳两集
+    var lastFire by remember { mutableStateOf(0L) }
+    fun fire() {
+        val now = System.currentTimeMillis()
+        if (now - lastFire < 350L) return
+        lastFire = now
+        onClick()
+    }
     val shape = RoundedCornerShape(20.dp)
     Box(
         Modifier
@@ -804,14 +821,14 @@ private fun CtrlButton(
             .onKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when (ev.key) {
-                    Key.DirectionCenter, Key.Enter -> { onClick(); true }
+                    Key.DirectionCenter, Key.Enter -> { fire(); true }
                     Key.DirectionUp -> { onUp(); true }
                     else -> false
                 }
             }
             .focusable()
             .pointerInput(Unit) {
-                detectTapGestures { onClick() }
+                detectTapGestures { fire() }
             }
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
