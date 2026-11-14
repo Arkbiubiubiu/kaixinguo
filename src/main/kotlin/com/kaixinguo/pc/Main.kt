@@ -509,6 +509,7 @@ private fun AppRoot() {
                 onToggle = { RouteHolder.toggle() },
                 badge = unreadNotices,
             )
+            Spacer(Modifier.width(8.dp))
         }
         Column(Modifier.weight(1f)) {
             when (val r = route) {
