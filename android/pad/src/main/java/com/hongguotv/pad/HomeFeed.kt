@@ -422,7 +422,7 @@ private fun HomeHero(
             .fillMaxWidth()
             .height(300.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Panel),
+            .background(Bg),
     ) {
         if (cover.isNotEmpty()) {
             AsyncImage(
@@ -435,15 +435,16 @@ private fun HomeHero(
                 contentScale = ContentScale.Crop,
             )
         }
-        // 遮罩：卡面色 63.5% 压住上半，向下融入页面底色（Animeko 配方）
+        // 与 PC HeroCard 同一套遮罩：左深右浅的横向渐变（0xF00F0D0F → 0x990F0D0F → 0x2E0F0D0F），
+        // 之前是竖向 Panel 压暗再融到底色，安卓/TV 看起来会比 PC 更「整块发灰」
         Box(
             Modifier
                 .matchParentSize()
                 .background(
-                    Brush.verticalGradient(
-                        0f to Panel.copy(alpha = 0.635f),
-                        0.4f to Panel.copy(alpha = 0.635f),
-                        1f to Bg,
+                    Brush.horizontalGradient(
+                        0f to Color(0xF00F0D0F),
+                        0.5f to Color(0x990F0D0F),
+                        1f to Color(0x2E0F0D0F),
                     ),
                 ),
         )
