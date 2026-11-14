@@ -134,8 +134,20 @@ fun HomeScreen(
         kotlinx.coroutines.delay(350)
         kotlinx.coroutines.coroutineScope {
             launch {
-                heroDetail = withContext(Dispatchers.IO) {
+                val d = withContext(Dispatchers.IO) {
                     runCatching { Api.ensureDetail(id) }.getOrNull()
+                }
+                heroDetail = d
+                // hero 用详情 hot_score（官网同款），对应卡片也同步成这个值，
+                // 避免「上面 4659万、下面 392万」；数字统一 formatCount
+                val hot = d?.hotScore?.takeIf { it.isNotBlank() }?.let { h ->
+                    if (h.toLongOrNull() != null) formatCount(h) else h
+                }
+                if (hot != null) {
+                    val i = cards.indexOfFirst { it.seriesId == id }
+                    if (i >= 0 && cards[i].playText != hot) {
+                        cards[i] = cards[i].copy(playText = hot)
+                    }
                 }
             }
             launch {
