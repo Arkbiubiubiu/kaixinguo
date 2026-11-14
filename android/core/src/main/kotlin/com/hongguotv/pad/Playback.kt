@@ -32,6 +32,9 @@ class RemoteVideo(private val info: PlayInfo) {
     var total: Long = 0L
         private set
 
+    /** 视频轨的真实编码标记（bvc2/hvc1/avc1…）；prepare 之后才有值。 */
+    val videoCodec: String get() = prepared?.videoCodec.orEmpty()
+
     private var prepared: MediaCrypto.Prepared? = null
 
     /** 切集后旧实例要能被叫停：否则后台还在拉数据，跟新流抢带宽。 */

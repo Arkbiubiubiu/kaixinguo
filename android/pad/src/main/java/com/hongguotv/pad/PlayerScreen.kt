@@ -791,6 +791,24 @@ fun PlayerScreen(
             if (epNow != null && (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) &&
                 MpvCore.nativeSupported()
             ) {
+                // 切到 VVC 前必须把上一集的 ExoPlayer 停掉：
+                // 正常情况下旧播放器会顶到新首帧再释放，但 VVC 页是自己起 mpv，
+                // 旧集的声音会一直放（第 5 集切第 1 集时两路声音叠在一起）。
+                if (preparedVid.isNotEmpty() && preparedIndex > 0) {
+                    runCatching { Store.markPos(preparedVid, player.currentPosition) }
+                }
+                runCatching { player.pause() }
+                runCatching { player.stop() }
+                live?.let { (r, p) ->
+                    runCatching { p.stop() }
+                    runCatching { r.close() }
+                }
+                live = null
+                created?.let { (r, p) ->
+                    runCatching { p.stop() }
+                    runCatching { r.close() }
+                }
+                created = null
                 preparing = false
                 failed = null
                 vvcEpisode = epNow
@@ -1322,6 +1340,10 @@ fun PlayerScreen(
             startAtZero = feed,
             onBack = onBack,
             onDetail = onDetail,
+            onNonVvc = { epIdx ->
+                vvcEpisode = null
+                index = epIdx
+            },
         )
         return
     }

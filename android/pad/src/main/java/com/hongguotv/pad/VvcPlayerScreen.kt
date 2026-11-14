@@ -62,6 +62,8 @@ fun VvcPlayerScreen(
     startAtZero: Boolean,
     onBack: () -> Unit,
     onDetail: () -> Unit,
+    /** 上一集/下一集落到非 VVC 集时，交回普通播放器 */
+    onNonVvc: (Int) -> Unit,
 ) {
     val context = LocalContext.current
     var index by remember(seriesId) { mutableStateOf(startIndex.coerceAtLeast(1)) }
@@ -140,6 +142,7 @@ fun VvcPlayerScreen(
         baseSec = 0.0
         seekIdx = null
         phase = "准备中…"
+        var nonVvc = false
         val prepared = withContext(Dispatchers.IO) {
             runCatching {
                 val root = File(context.cacheDir, "vvc")
@@ -175,6 +178,12 @@ fun VvcPlayerScreen(
                     val info = picked?.toPlayInfo() ?: Api.play(e.vid, 1004, 0)
                     val rv = RemoteVideo(info)
                     rv.prepare(allowVvc = true)
+                    // 切集可能落到普通 HEVC/H.264 集：这集交给主播放器，别硬拆 VVC
+                    val tag = rv.videoCodec
+                    if (tag.isNotEmpty() && !tag.equals("bvc2", true)) {
+                        nonVvc = true
+                        return@runCatching null
+                    }
                     val mp4 = File(dir, "source.mp4")
                     rv.saveDecrypted(mp4)
                     phase = "正在转换…"
@@ -191,7 +200,13 @@ fun VvcPlayerScreen(
                 error = it.message ?: "VVC 准备失败"
                 null
             }
-        } ?: return@LaunchedEffect
+        }
+        if (nonVvc) {
+            Log.d("VvcPlayer", "ep$index 不是 VVC，交回主播放器")
+            onNonVvc(index)
+            return@LaunchedEffect
+        }
+        prepared ?: return@LaunchedEffect
         Log.d("VvcPlayer", "prepared video=${prepared.first.length()}B audio=${prepared.second?.length() ?: 0}B dur=${prepared.third.first} fps=${prepared.third.second}")
         videoFile = prepared.first
         audioFile = prepared.second
