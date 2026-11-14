@@ -115,7 +115,6 @@ fun HomeScreen(
     // 评分（剧评接口 extra，与 PC 端同源）+ 相关推荐（plan 接口 works）
     var heroScore by remember { mutableStateOf("") }
     var heroScoreCount by remember { mutableStateOf(0) }
-    var heroRelated by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
     /** 「换一批」计数：变化时强制重拉首屏（跳过缓存） */
     var refreshNonce by remember { mutableStateOf(0) }
     LaunchedEffect(heroCard?.seriesId) {
@@ -124,7 +123,6 @@ fun HomeScreen(
             heroDetail = null
             heroScore = ""
             heroScoreCount = 0
-            heroRelated = emptyList()
             return@LaunchedEffect
         }
         // 串行、但每一步都在 IO 线程：detail 有 LRU 缓存通常秒回，
@@ -146,12 +144,6 @@ fun HomeScreen(
                 }
                 heroScore = page?.score.orEmpty()
                 heroScoreCount = page?.scoreCount ?: 0
-            }
-            launch {
-                heroRelated = withContext(Dispatchers.IO) {
-                    runCatching { Api.relatedSeries(id) }.getOrNull()
-                        ?.firstOrNull()?.items.orEmpty().take(3)
-                }
             }
         }
     }
@@ -291,7 +283,6 @@ fun HomeScreen(
             detail = heroDetail,
             score = heroScore,
             scoreCount = heroScoreCount,
-            related = heroRelated,
             position = heroPos,
             count = cards.size,
             showArrows = !isTv,
@@ -399,7 +390,6 @@ private fun HomeHero(
     detail: SeriesDetail?,
     score: String,
     scoreCount: Int,
-    related: List<SeriesCard>,
     position: Int,
     count: Int,
     /** 平板显示左右圆钮（PC 同款）；TV 不显示，靠网格焦点切换 */
@@ -592,46 +582,6 @@ private fun HomeHero(
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                     )
-                }
-            }
-            // 相关推荐列（PC 同款：3 张迷你海报 + 剧名，右侧竖排）。
-            // TV 上纯展示不聚焦——遥控器焦点模型不变（焦点仍在网格卡片上），
-            // 想看相关作品在网格里走即可。
-            if (related.isNotEmpty()) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    Text(
-                        "相关推荐 · ${related.size}",
-                        color = TextDim,
-                        fontSize = 11.sp,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        related.forEach { r ->
-                            Column(
-                                Modifier.width(64.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                AsyncImage(
-                                    model = r.cover,
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(3f / 4f)
-                                        .clip(RoundedCornerShape(8.dp)),
-                                    contentScale = ContentScale.Crop,
-                                )
-                                Text(
-                                    r.title,
-                                    color = TextDim,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
