@@ -142,6 +142,19 @@ fun App() {
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
     }
 
+    // debug 直达（测试 VVC 等特定剧集用；release 不生效）
+    LaunchedEffect(Unit) {
+        if (BuildConfig.DEBUG) {
+            val sid = MainActivity.deepSeries
+            val ep = MainActivity.deepEp
+            if (!sid.isNullOrEmpty()) {
+                MainActivity.deepSeries = null
+                kotlinx.coroutines.delay(600)
+                push(if (ep > 0) Screen.Play(sid, ep) else Screen.Detail(sid))
+            }
+        }
+    }
+
     if (current is Screen.Play) {
         // 播放页自己没有 BackHandler（只靠焦点键处理），这里兜住系统返回
         BackHandler(enabled = true) { back() }

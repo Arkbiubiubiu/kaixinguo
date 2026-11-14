@@ -19,6 +19,20 @@ import java.net.URL
  * - 失败静默，下一轮再试；日志文件超过 2MB 时保留尾部。
  */
 object LogUploader {
+    // 樱花隧道把 TLS 终止在本地，用的是自签证书：这里必须和 Api/Updater 一样
+    // 只对樱花域名放行自签信任，否则上传永远静默失败（2.2.141 之前就是这样）。
+    private val SAKURA_HOSTS = setOf("frp-bar.com", "dx.frp-bar.com", "yd.frp-bar.com", "lt.frp-bar.com")
+    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
+        val tm = object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+        }
+        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
+        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
+    }
+
     private const val PREF = "log_upload"
     private const val KEY_OFFSET = "sent_offset"
     private const val INTERVAL_MS = 10 * 60 * 1000L
@@ -72,6 +86,10 @@ object LogUploader {
             .put("lines", text.takeLast(200_000))
         val ok = runCatching {
             val conn = URL(base.trimEnd('/') + "/api/clientlog").openConnection() as HttpURLConnection
+            if (conn is javax.net.ssl.HttpsURLConnection && conn.url.host.lowercase() in SAKURA_HOSTS) {
+                conn.sslSocketFactory = sakuraTls.first
+                conn.hostnameVerifier = sakuraTls.second
+            }
             try {
                 conn.requestMethod = "POST"
                 conn.connectTimeout = 6_000

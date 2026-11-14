@@ -30,8 +30,18 @@ object AppLifecycle {
 }
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** 仅 debug 用的直达参数（adb am start --es kxg_series … --ei kxg_ep …） */
+        var deepSeries: String? = null
+        var deepEp: Int = 0
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) {
+            intent?.getStringExtra("kxg_series")?.let { deepSeries = it }
+            deepEp = intent?.getIntExtra("kxg_ep", 0) ?: 0
+        }
         // 日志同时落盘：电视/平板连不上 adb 时，把 app.log 发回来就能定位问题
         val logFile = java.io.File(filesDir, "app.log")
         if (logFile.length() > 5L * 1024 * 1024) logFile.delete()

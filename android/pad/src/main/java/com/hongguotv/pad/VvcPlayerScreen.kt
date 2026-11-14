@@ -66,6 +66,8 @@ fun VvcPlayerScreen(
     var surface by remember { mutableStateOf<android.view.Surface?>(null) }
     var ended by remember { mutableStateOf(false) }
     var lastSave by remember { mutableStateOf(0L) }
+    // 画面没出来时把现场留在屏幕上（用户可截图），同时写进 app.log 回传
+    var diag by remember { mutableStateOf("") }
 
     val ep = episodes.getOrNull(index - 1)
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
@@ -93,6 +95,7 @@ fun VvcPlayerScreen(
     // 每一集：有缓存直接用，没有才下载+解密+拆容器
     LaunchedEffect(index, ep?.vid, attempt) {
         val e = ep ?: return@LaunchedEffect
+        Log.d("VvcPlayer", "prepare ep=$index vid=${e.vid} attempt=$attempt")
         error = null
         loaded = false
         ended = false
@@ -152,6 +155,7 @@ fun VvcPlayerScreen(
                 null
             }
         } ?: return@LaunchedEffect
+        Log.d("VvcPlayer", "prepared video=${prepared.first.length()}B audio=${prepared.second?.length() ?: 0}B dur=${prepared.third.first} fps=${prepared.third.second}")
         videoFile = prepared.first
         audioFile = prepared.second
         dur = prepared.third.first
@@ -185,7 +189,20 @@ fun VvcPlayerScreen(
         if (ok) {
             loaded = true
             phase = ""
+            Log.d("VvcPlayer", "load ok ep=$index vo=${MpvCore.voConfigured()}")
         } else if (error == null) error = "播放器启动失败"
+    }
+
+    // 8 秒还没建立视频输出 = 这台设备的 GPU/驱动没跑起来，把诊断留在屏幕上
+    LaunchedEffect(loaded, index) {
+        if (!loaded) return@LaunchedEffect
+        delay(8000)
+        if (!MpvCore.voConfigured()) {
+            diag = MpvCore.renderDiag()
+            Log.e("VvcPlayer", "no video after 8s ep=$index $diag")
+        } else {
+            diag = ""
+        }
     }
 
     // 位置轮询 + 进度落盘 + 播完自动下一集
@@ -301,6 +318,17 @@ fun VvcPlayerScreen(
                 Modifier.clip(RoundedCornerShape(18.dp)).background(Color(0x66000000))
                     .clickable { saveProgress(); onDetail() }.padding(horizontal = 14.dp, vertical = 8.dp),
             ) { Text("详情", color = Color.White, fontSize = 15.sp) }
+        }
+
+        if (diag.isNotEmpty()) {
+            Text(
+                "画面未初始化：$diag",
+                color = Color(0xFFFFD54F),
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 78.dp)
+                    .clip(RoundedCornerShape(10.dp)).background(Color(0x99000000))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
 
         // 底部：暂停 + 时间 + 下一集
