@@ -727,11 +727,10 @@ fun PlayerScreen(
             val info = pre?.info ?: picked?.toPlayInfo()
                 ?: withContext(Dispatchers.IO) { Api.play(ep.vid, 1004, defWant) }
             curDef = info.height
-            // 已知解不了的分集：不要再为它下载一遍头部（刷剧里每换一部都要等 1~2 秒）
-            if (Store.isUnsupported(ep.vid)) {
-                pre?.let { runCatching { it.remote.close() } }
-                throw UnsupportedCodecException("bytevc2/AV1")
-            }
+            // 注意：不要再按「历史标记」直接跳过这一集。
+            // 标记只说明「某次、某个清晰度」确实解不了，不代表现在也解不了
+            // （21 集曾被旧标记误判成 bvc2，VVC 页发现是 hvc1 又交回来，来回跳）。
+            // 一律按真实取流结果判断，代价只是多拉一次头部。
             val rv = pre?.remote ?: RemoteVideo(info)
             if (pre == null) withContext(Dispatchers.IO) { rv.prepare() }
             val px = StreamProxy(rv)
@@ -840,19 +839,19 @@ fun PlayerScreen(
                     failed = "这部片源本机解不了，按 ↓ 换下一部"
                 }
             } else {
-                // 往后找第一个没被标记过的集，别一集一集地慢慢试
-                var next = index + 1
-                while (next <= episodes.size && Store.isUnsupported(episodes[next - 1].vid)) next += 1
+                // 只试紧邻的下一集：后面的集由它自己的播放结果决定，
+                // 不能凭旧标记连跳（会把能播的集一起跳过）
+                val next = index + 1
                 if (next <= episodes.size) {
                     runCatching {
                         android.widget.Toast.makeText(
-                            context, "片源编码不支持（AV1），已跳到第 $next 集",
+                            context, "本集编码 ${e.codec} 本机解不了，已跳到第 $next 集",
                             android.widget.Toast.LENGTH_SHORT,
                         ).show()
                     }
                     index = next
                 } else {
-                    failed = "这部剧的片源编码本机解不了（AV1 私有封装），换一部看吧"
+                    failed = "这部剧的片源编码本机解不了（${e.codec}），换一部看吧"
                 }
             }
         } catch (e: Exception) {
@@ -1346,6 +1345,10 @@ fun PlayerScreen(
             onNonVvc = { epIdx ->
                 vvcEpisode = null
                 index = epIdx
+                // 交回来的可能正是当前这一集（21 集这种「被误送进 VVC 页」的情况）：
+                // index 没变化时上面的起播 effect 不会重跑，会停在一片黑屏上。
+                // 用 attempt 再踢一次，让普通播放器按真实编码重新起播。
+                attempt++
             },
         )
         return

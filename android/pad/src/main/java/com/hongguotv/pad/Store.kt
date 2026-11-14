@@ -228,7 +228,9 @@ object Store : AccountState {
     // ---------------- 解不了的片源（bytevc2/AV1 私有封装） ----------------
     // 记住这些分集，下次直接跳过：否则每进一次刷剧都要为同一集白下载一遍头部
     // （隧道 1MB/s 左右，一集就要一两秒，看起来就是「加载特别慢」）。
-    private const val KEY_UNSUPPORTED = "unsupported_vids"
+    // v2：旧键里存着 VVC 支持前误标的集（如《黑白心弈》21 集，实际是 hvc1），
+    // 换键名让这些历史标记全部作废，只保留新版本按真实编码记下的。
+    private const val KEY_UNSUPPORTED = "unsupported_vids_v2"
 
     fun isUnsupported(vid: String): Boolean =
         vid.isNotBlank() && readSet(KEY_UNSUPPORTED).contains(vid)
