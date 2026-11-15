@@ -65,7 +65,6 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import `is`.xyz.mpv.MpvCore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -78,7 +77,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 1 = 只备下一集（老行为）；2 = 正在看第 N 集时，N+1、N+2 都备好，连看三集都不用等。
  * 别往大调：每一集都要在后台拉约 1MB 片头并占一条连接，条数一多就会跟当前这集抢带宽。
  */
-private const val PREFETCH_AHEAD = 2
+private const val PREFETCH_AHEAD = 3
 
 /**
  * 无缝换集开关。
@@ -172,8 +171,6 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
     var preparing by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf<String?>(null) }
-    /** 当前这一集是 VVC（bytevc2）：改走 libmpv 本地软解 */
-    var vvcEpisode by remember(seriesId) { mutableStateOf<Episode?>(null) }
     var attempt by remember { mutableStateOf(0) }
     var preparedIndex by remember { mutableStateOf(-1) }
     /** 转圈只在真需要等网络时出现；已经预取好的集切过去不转 */
@@ -632,8 +629,6 @@ fun PlayerScreen(
             ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
             ?: prefetchReady2
                 ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
-            // VVC 播放页预取的下一集（HEVC 时是现成的代理，VVC 时已提前转换）
-            ?: NextHandoff.take(index, ep.vid, defWant)
         if (hit == null && attempt == 0) {
             // 预取正在路上：等它，别重新取一遍流。等的时候不画转圈，
             // 画面停在上一集最后一帧，比中间闪个圈干净得多。
@@ -802,82 +797,13 @@ fun PlayerScreen(
         } catch (e: CancellationException) {
             throw e
         } catch (e: UnsupportedCodecException) {
-            // 这一集的片源是 VVC（bytevc2）：不当失败处理，转 libmpv 本地软解。
-            val epNow = episodes.getOrNull(index - 1)
-            if (epNow != null && (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) &&
-                MpvCore.nativeSupported()
-            ) {
-                // 切到 VVC 前必须把上一集的 ExoPlayer 停掉：
-                // 正常情况下旧播放器会顶到新首帧再释放，但 VVC 页是自己起 mpv，
-                // 旧集的声音会一直放（第 5 集切第 1 集时两路声音叠在一起）。
-                if (preparedVid.isNotEmpty() && preparedIndex > 0) {
-                    runCatching { Store.markPos(preparedVid, player.currentPosition) }
-                }
-                runCatching { player.pause() }
-                runCatching { player.stop() }
-                live?.let { (r, p) ->
-                    runCatching { p.stop() }
-                    runCatching { r.close() }
-                }
-                live = null
-                created?.let { (r, p) ->
-                    runCatching { p.stop() }
-                    runCatching { r.close() }
-                }
-                created = null
-                // 进 VVC 页会丢掉 ExoPlayer 的队列；queued 这张记账表也要清，
-                // 否则回来之后预取以为「下一集已经排好」，实际没排，播着播着跳一集
-                queued.values.toList().let { q ->
-                    queued.clear()
-                    q.forEach { dropReady(it) }
-                }
-                runCatching { player.clearMediaItems() }
-                // 队列/接手标记作废：seamlessHandled 若还停在某一集，交回来时
-                // 起播 effect 会误以为「播放器已经接上了」直接 return → 永远卡住
-                seamlessHandled = -1
-                preparing = false
-                failed = null
-                vvcEpisode = epNow
-                return@LaunchedEffect
-            }
-            // 其他未知编码：刷剧里跳过这一部，详情里跳下一集
+            // 服务端已经把 VVC 集换成 H.265/H.264；走到这里说明兼容接口和转码都失败。
+            // 不再进 VVC 软解页（控制条/播放器会和正常集不一致），直接给出可操作提示。
             preparing = false
-            failed = null
+            failed = "这一集片源暂不支持（${e.codec}），换一集试试"
             val badVid = episodes.getOrNull(index - 1)?.vid.orEmpty()
             episodes.getOrNull(index - 1)?.let { Store.markUnsupported(it.vid) }
-            // 记进日志（会随日志回传）：以后能统计到底多少集是 VVC、哪些剧
-            Log.e(
-                "Playback",
-                "unsupported codec vid=$badVid series=$seriesId title=$title feed=$feed ep=${index}/${episodes.size}",
-            )
-            if (feed) {
-                runCatching {
-                    android.widget.Toast.makeText(
-                        context, "这部片源本机解不了，已跳过",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
-                }
-                if (onFeedStep != null) {
-                    onFeedStep.invoke(1)
-                } else {
-                    failed = "这部片源本机解不了，按 ↓ 换下一部"
-                }
-            } else {
-                // 只试紧邻的下一集：后面的集由它自己的播放结果决定，
-                // 不能凭旧标记连跳（会把能播的集一起跳过）
-                val next = index + 1
-                if (next <= episodes.size) {
-                    runCatching {
-                        android.widget.Toast.makeText(
-                            context, "本集编码 ${e.codec} 本机解不了，已跳到第 $next 集",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                    index = next
-                } else {
-                    failed = "这部剧的片源编码本机解不了（${e.codec}），换一部看吧"
-                }
-            }
+            Log.e("Playback", "unsupported codec vid=$badVid series=$seriesId title=$title ep=$index")
         } catch (e: Exception) {
             val msg = e.message ?: "起播失败"
             // 刷剧：取流服务偶发失败（隧道抖动/上游 502）不要停在这一部上，
@@ -1359,30 +1285,6 @@ fun PlayerScreen(
         runCatching { focus.requestFocus() }
     }
 
-    // VVC 剧集：交给 libmpv 本地软解（ExoPlayer 没有 VVC 解码器）
-    vvcEpisode?.let { ep ->
-        VvcPlayerScreen(
-            seriesId = seriesId,
-            episodes = episodes,
-            startIndex = index,
-            title = title,
-            startAtZero = feed,
-            onBack = onBack,
-            onDetail = onDetail,
-            onNonVvc = { epIdx ->
-                val was = index
-                vvcEpisode = null
-                seamlessHandled = -1
-                index = epIdx
-                // 交回来的可能正是当前这一集（21 集这种「被误送进 VVC 页」的情况）：
-                // index 没变化时上面的起播 effect 不会重跑，会停在一片黑屏上。
-                // 用 attempt 再踢一次；换集时 attempt 保持 0，才能吃到预取的手递手结果。
-                if (epIdx == was) attempt++
-            },
-        )
-        return
-    }
-
     Box(
         Modifier
             .fillMaxSize()
@@ -1805,61 +1707,6 @@ private fun dropReady(r: ReadyEpisode) {
     runCatching { r.remote.close() }
 }
 
-/**
- * VVC 页 → 普通播放器的手递手。
- *
- * VVC 页没法自己起 ExoPlayer，但它可以在后台把下一集（HEVC）的直链/头部/代理先备好，
- * 放在这里；主播放器交回来时直接接管，B（VVC）→A（HEVC）也不用重新取流。
- * 只存一格：短剧顺序连播，真正需要的永远只有紧邻的下一集。
- */
-internal object NextHandoff {
-    private val lock = Any()
-    private var entry: ReadyEpisode? = null
-    private var at = 0L
-
-    fun put(e: ReadyEpisode) {
-        val old = synchronized(lock) {
-            val o = entry
-            entry = e
-            at = System.currentTimeMillis()
-            o
-        }
-        old?.let { dropReady(it) }
-    }
-
-    fun take(index: Int, vid: String, defWant: Int): ReadyEpisode? {
-        var stale: ReadyEpisode? = null
-        val e = synchronized(lock) {
-            val cur = entry ?: return null
-            val expired = System.currentTimeMillis() - at > 5 * 60_000L
-            if (expired || cur.index != index || cur.vid != vid ||
-                (defWant > 0 && cur.defWant != defWant)
-            ) {
-                entry = null
-                stale = cur
-                null
-            } else {
-                entry = null
-                cur
-            }
-        }
-        // 过期/不匹配：就地释放，绝不交给播放器
-        stale?.let { dropReady(it) }
-        return e
-    }
-
-    fun clear() {
-        val e = synchronized(lock) { entry.also { entry = null } }
-        e?.let { dropReady(it) }
-    }
-}
-
-/**
- * 把一集准备到「只差 setMediaItem」的程度。
- *
- * [alive] 在几个耗时的位置各查一次：用户中途切集或换清晰度时尽早收手，
- * 别让一个没人要的代理在后台继续吃带宽。
- */
 internal fun buildReady(
     index: Int,
     ep: Episode,
@@ -1881,16 +1728,8 @@ internal fun buildReady(
         rv.prepare(warmLastBlock = false)
     } catch (e: UnsupportedCodecException) {
         rv.close()
-        if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
-            // 格式无关的预取：下一集是 VVC 就提前下载+转换。
-            // 这样切过去时 prepareVvcFiles 直接命中磁盘缓存，不用现场等。
-            val vvcCap = vvcPreferredCap(Store.appContext)
-            val keep = keepVids.map { "${it}_$vvcCap" }.toSet() + "${ep.vid}_$vvcCap"
-            Log.i("nextup", "next ep$index is VVC, prime cap=$vvcCap keep=$keep")
-            VvcWarm.prime(Store.appContext, ep, vvcCap, keep)
-            return null
-        }
-        throw e
+        Log.w("nextup", "next ep$index unsupported codec=${e.codec}（服务端转码失败）")
+        return null
     }
     if (!alive()) {
         rv.close()

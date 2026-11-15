@@ -185,7 +185,10 @@ fun main() = application {
     // 缓存自动清理（封面 30 天/最多 3000 张，VVC 7 天）：后台跑，不拖启动
     Thread {
         runCatching { Covers.autoClean() }
-        runCatching { VvcPrep.autoClean() }
+        // VVC 播放链路已删除，旧转换缓存直接清掉
+        runCatching {
+            java.io.File(System.getenv("APPDATA") ?: ".", "KaixinguoPC/vvc").deleteRecursively()
+        }
     }.apply { isDaemon = true; name = "cache-clean" }.start()
     val state = rememberWindowState(width = 1440.dp, height = 900.dp)
     // 无边框（旧版 decorations:false 同语义）：系统白条不画，自绘窗口钮+拖拽区

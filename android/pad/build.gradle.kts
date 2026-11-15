@@ -11,8 +11,8 @@ android {
     defaultConfig {
         minSdk = 26
         targetSdk = 36
-        versionCode = 282
-        versionName = "2.2.162"
+        versionCode = 283
+        versionName = "2.2.163"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
@@ -28,10 +28,6 @@ android {
         buildConfigField("String", "DEVICE_CDID", "\"${prop("deviceCdid")}\"")
     }
 
-    // libmpv（VVC 软解）：库文件是本机构建资产，不进仓库（见 .gitignore）
-    sourceSets.getByName("main") {
-        jniLibs.srcDir("mpvlibs")
-    }
 
     // 原项目就是两个包名两个包：TV 与 Pad 共用同一份源码
     flavorDimensions += "device"

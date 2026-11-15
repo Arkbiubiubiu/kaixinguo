@@ -462,26 +462,10 @@ fun PlayerScreen(
                     ?: list.maxByOrNull { it.height }
                 val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, PcStore.maxHeight)
                 val rv = RemoteVideo(info)
-                val vvc = try {
-                    rv.prepare()
-                    null
-                } catch (e: UnsupportedCodecException) {
-                    if (e.codec.contains("bytevc", true) || e.codec.contains("vc2", true)) {
-                        loadingNote = "VVC 片源，正在本机转换…（首次约十几秒）"
-                        // 只留当前集 + 下一集，别让 VVC 缓存无限涨
-                        VvcPrep.pruneExcept(setOf(ep.vid, episodes.getOrNull(index)?.vid.orEmpty()))
-                        PlaySource.Vvc(VvcPrefetch.ensure(ep.vid, info))
-                    } else {
-                        throw e
-                    }
-                }
-                return if (vvc != null) {
-                    vvc
-                } else {
-                    val px = StreamProxy(rv)
-                    px.start()
-                    PlaySource.Stream(rv, px, info)
-                }
+                rv.prepare()
+                val px = StreamProxy(rv)
+                px.start()
+                return PlaySource.Stream(rv, px, info)
             }
             try {
                 if (warm != null) {
@@ -491,17 +475,7 @@ fun PlayerScreen(
                         tiers = warm.tiers
                         val rv = warm.remote
                         val px = warm.proxy
-                        if (warm.vvc) {
-                            // 预取时已经确认是 VVC 并做了转换：别再 prepare 一遍
-                            // （那会白下 1MB 头部，还要多等几百毫秒才轮到 VvcPrefetch）
-                            VvcPrep.pruneExcept(
-                                setOf(ep.vid, episodes.getOrNull(index)?.vid.orEmpty()),
-                            )
-                            if (VvcPrep.cached(ep.vid) == null) {
-                                loadingNote = "VVC 片源，正在本机转换…"
-                            }
-                            PlaySource.Vvc(VvcPrefetch.ensure(ep.vid, warm.info))
-                        } else if (rv != null && px != null) {
+                        if (rv != null && px != null) {
                             PlaySource.Stream(rv, px, warm.info)
                         } else {
                             val fresh = RemoteVideo(warm.info)
@@ -532,14 +506,13 @@ fun PlayerScreen(
             failed = "这一集暂时取不到（网络波动或片源问题），点「重试」再试一次"
             return@LaunchedEffect
         }
-        val vvcFile = (src as? PlaySource.Vvc)?.file
         if (src is PlaySource.Stream) {
             remote = src.remote
             proxy = src.proxy
         }
         loadingNote = ""
 
-        val eng = VideoEngine(vvcFile?.absolutePath ?: (src as PlaySource.Stream).proxy.url)
+        val eng = VideoEngine((src as PlaySource.Stream).proxy.url)
         engine = eng
         // 换集/起播：新引擎从 0 开始播，暂停状态和「启动宽限」一起重置
         userPaused = false
@@ -658,6 +631,21 @@ fun PlayerScreen(
             maxHeight = PcStore.maxHeight,
             prepareHeadFor = index + 1,
         )
+    }
+
+    // 后面 3 集的「格式」预热：只拉档位表，不下载视频。
+    // 服务端遇到 VVC 会在这一步就换成 H.265/H.264（必要时现场转码），
+    // 等真正切过去时已经是普通格式，不会临时等待/切播放器。
+    LaunchedEffect(index, episodes.size) {
+        if (episodes.isEmpty() || index >= episodes.size) return@LaunchedEffect
+        kotlinx.coroutines.delay(2_000)
+        withContext(Dispatchers.IO) {
+            val end = minOf(episodes.size, index + 3)
+            for (i in index + 1..end) {
+                val ep = episodes.getOrNull(i - 1) ?: continue
+                runCatching { Api.tiers(ep.vid) }
+            }
+        }
     }
 
     // 位置轮询 + 弹幕续窗
@@ -2363,5 +2351,4 @@ private fun EmojiPanel(onPick: (String) -> Unit) {
 /** 一集的播放源：普通加密流（本地代理）或 VVC（本机转换后的干净 MP4）。 */
 private sealed interface PlaySource {
     class Stream(val remote: RemoteVideo, val proxy: StreamProxy, val info: com.hongguotv.pad.PlayInfo) : PlaySource
-    class Vvc(val file: File) : PlaySource
 }

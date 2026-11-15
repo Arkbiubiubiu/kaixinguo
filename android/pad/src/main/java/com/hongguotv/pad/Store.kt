@@ -230,7 +230,7 @@ object Store : AccountState {
     // （隧道 1MB/s 左右，一集就要一两秒，看起来就是「加载特别慢」）。
     // v2：旧键里存着 VVC 支持前误标的集（如《黑白心弈》21 集，实际是 hvc1），
     // 换键名让这些历史标记全部作废，只保留新版本按真实编码记下的。
-    private const val KEY_UNSUPPORTED = "unsupported_vids_v2"
+    private const val KEY_UNSUPPORTED = "unsupported_vids_v3"
 
     fun isUnsupported(vid: String): Boolean =
         vid.isNotBlank() && readSet(KEY_UNSUPPORTED).contains(vid)
@@ -539,23 +539,8 @@ object Store : AccountState {
      * 封面图由 Coil 自己的磁盘缓存管理（超限自动淘汰），这里只管我们自己的大文件。
      */
     fun autoCleanCache(context: Context) {
-        runCatching {
-            val root = File(context.cacheDir, "vvc")
-            fun sizeOf(f: File): Long = f.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
-            fun touched(f: File): Long = f.walkBottomUp().filter { it.isFile }.maxOfOrNull { it.lastModified() } ?: f.lastModified()
-            val cutoff = System.currentTimeMillis() - 7 * 86_400_000L
-            root.listFiles()?.filter { it.isDirectory }?.forEach { d ->
-                if (touched(d) < cutoff) runCatching { d.deleteRecursively() }
-            }
-            val dirs = root.listFiles()?.filter { it.isDirectory }.orEmpty().sortedBy { touched(it) }
-            var total = dirs.sumOf { sizeOf(it) }
-            for (d in dirs) {
-                if (total <= 400L * 1024 * 1024) break
-                val n = sizeOf(d)
-                runCatching { d.deleteRecursively() }
-                total -= n
-            }
-        }
+        // VVC 播放页已删除，旧的 vvc 转换缓存不再使用，直接清掉
+        runCatching { File(context.cacheDir, "vvc").deleteRecursively() }
     }
 
     /** 清缓存目录，返回给用户看的结果文案。 */

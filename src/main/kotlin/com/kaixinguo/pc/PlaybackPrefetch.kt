@@ -38,8 +38,6 @@ object PlaybackPrefetch {
         val remote: RemoteVideo?,
         val proxy: StreamProxy?,
         val at: Long,
-        /** 真·VVC：预热时已确认是 bytevc2，切集直接走 VvcPrefetch，不再试一遍 Exo/ffmpeg */
-        val vvc: Boolean = false,
         /** 头部/转换是否已经做过（只有直链的条目为 false，轮到它时会升级） */
         val headDone: Boolean = false,
     ) {
@@ -162,15 +160,6 @@ object PlaybackPrefetch {
             remote.prepare(warmLastBlock = false)
         } catch (t: UnsupportedCodecException) {
             runCatching { remote.close() }
-            if (t.codec.contains("bytevc", true) || t.codec.contains("vc2", true)) {
-                // VVC：没有可预取的代理，但可以后台把「下载+转换」先做掉；
-                // 下一集切过去时直接命中 clean.mp4，效果和普通集预取一样
-                VvcPrefetch.prime(vid, info)
-                return@runCatching Entry(
-                    vid, info.height, info, tiers, null, null, System.currentTimeMillis(),
-                    vvc = true, headDone = true,
-                )
-            }
             throw t
         } catch (t: Throwable) {
             runCatching { remote.close() }
