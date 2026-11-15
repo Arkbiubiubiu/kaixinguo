@@ -64,16 +64,37 @@ object MpvCore {
                 MPVLib.setOptionString("container-fps-override", f)
             }
             MPVLib.command(arrayOf("loadfile", file, "replace"))
-            // 独立音轨用 audio-add 挂，--audio-file 在这个 libmpv 构建里不生效
+            // 独立音轨用 audio-add 挂，--audio-file 在这个 libmpv 构建里不生效。
+            //
+            // 这里不能再把「command 没抛异常」当成成功：JNI 的 command 对 mpv 返回的错误
+            // 是静默的。文件还没 loaded 时 audio-add 会被拒，旧代码第一次就 return，
+            // 结果音轨根本没挂上——画面正常、就是没声音（缓存/预取集更容易踩，因为加载快）。
+            // 现在用 aid 判断：没选出音轨就一直重试，并显式把 aid 设成 auto。
             if (audioFile != null) {
-                // 文件刚 loadfile 时还没进 loaded 状态，audio-add 可能被拒；重试几次到成功
                 Thread {
-                    for (i in 0 until 6) {
-                        try { Thread.sleep(400) } catch (_: InterruptedException) {}
-                        val r = runCatching { MPVLib.command(arrayOf("audio-add", audioFile, "select", "1")) }
-                        Log.d(TAG, "audio-add #$i ok=${r.isSuccess} ${r.exceptionOrNull()?.message ?: ""}")
-                        if (r.isSuccess) return@Thread
+                    // 等 loadfile 真正读完（duration / vo 至少有一个就绪）
+                    for (i in 0 until 20) {
+                        try { Thread.sleep(300) } catch (_: InterruptedException) {}
+                        val dur = runCatching { MPVLib.getPropertyDouble("duration") }.getOrNull() ?: 0.0
+                        val vo = runCatching { MPVLib.getPropertyBoolean("vo-configured") }.getOrNull() ?: false
+                        if (dur > 0.0 || vo) break
                     }
+                    for (i in 0 until 10) {
+                        val before = runCatching { MPVLib.getPropertyString("aid") }.getOrNull()
+                        if (!before.isNullOrEmpty() && before != "no" && before != "auto") {
+                            Log.d(TAG, "audio already selected aid=$before")
+                            return@Thread
+                        }
+                        runCatching { MPVLib.command(arrayOf("audio-add", audioFile, "select")) }
+                        // select 标记偶发不生效；再显式选第一条音轨
+                        runCatching { MPVLib.setPropertyString("aid", "auto") }
+                        try { Thread.sleep(250) } catch (_: InterruptedException) {}
+                        val aid = runCatching { MPVLib.getPropertyString("aid") }.getOrNull()
+                        val codec = runCatching { MPVLib.getPropertyString("audio-codec") }.getOrNull()
+                        Log.d(TAG, "audio-add #$i aid=$aid codec=$codec")
+                        if (!aid.isNullOrEmpty() && aid != "no" && aid != "auto") return@Thread
+                    }
+                    Log.e(TAG, "audio attach failed after retries: $audioFile")
                 }.start()
             }
         }.onFailure { Log.e(TAG, "load failed", it) }

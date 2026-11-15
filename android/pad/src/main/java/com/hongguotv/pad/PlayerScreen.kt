@@ -224,6 +224,15 @@ fun PlayerScreen(
     val curSeries by rememberUpdatedState(seriesId)
     val curSwitch by rememberUpdatedState(onSwitch)
 
+    // 内部换集（自动连播/VVC 页交回/手动上下集）之后，把导航栈顶的集号同步掉。
+    // 不同步的话：从 245 交回到 244 时栈顶还记着 245，244 播完自动下一集
+    // 又「切到 245」——和栈顶一模一样，Compose 不重组，播放器就一直停在播完状态。
+    LaunchedEffect(index, seriesId) {
+        if (!feedMode && index != startIndex) {
+            runCatching { onSwitch(seriesId, index) }
+        }
+    }
+
     // 多季接续去重：STATE_ENDED 可能连着回调多次
     var seasonJumping by remember { mutableStateOf(false) }
 
@@ -501,7 +510,10 @@ fun PlayerScreen(
                     return
                 }
                 if (at < curCount) {
-                    curSwitch(curSeries, at + 1)
+                    // 直接改内部集号；上面的 LaunchedEffect 会同步导航栈。
+                    // 不能再只调 curSwitch：栈顶刚好已经是这一集时它不产生任何变化，
+                    // 播放器就停在「已播完」不动。
+                    setEpisodeIndex(at + 1)
                     return
                 }
                 // 本季播完了：多季剧要接下一季第 1 集（第一季看完接第二季），
@@ -820,6 +832,9 @@ fun PlayerScreen(
                     q.forEach { dropReady(it) }
                 }
                 runCatching { player.clearMediaItems() }
+                // 队列/接手标记作废：seamlessHandled 若还停在某一集，交回来时
+                // 起播 effect 会误以为「播放器已经接上了」直接 return → 永远卡住
+                seamlessHandled = -1
                 preparing = false
                 failed = null
                 vvcEpisode = epNow
@@ -1357,6 +1372,7 @@ fun PlayerScreen(
             onNonVvc = { epIdx ->
                 val was = index
                 vvcEpisode = null
+                seamlessHandled = -1
                 index = epIdx
                 // 交回来的可能正是当前这一集（21 集这种「被误送进 VVC 页」的情况）：
                 // index 没变化时上面的起播 effect 不会重跑，会停在一片黑屏上。
