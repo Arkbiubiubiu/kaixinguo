@@ -3517,6 +3517,16 @@ object Api {
      * 切档时直接用这里的 url + spade_a，不再请求上游——既快又不会出现
      * 「菜单里列的档位」和「实际取回来的档位」对不上的情况。
      */
+    /** 清掉某一集的档位缓存（直链过期/证书域名变更后用）。 */
+    fun invalidateTiers(vid: String) {
+        tierCache.remove(vid)
+    }
+
+    /** 整批清掉档位缓存（证书/域名变更导致旧直链不可用时用）。 */
+    fun clearTierCache() {
+        tierCache.clear()
+    }
+
     fun tiers(vid: String): List<PlayTier> {
         tierCache[vid]?.let { (at, list) ->
             if (System.currentTimeMillis() - at < TIER_TTL_MS) return list

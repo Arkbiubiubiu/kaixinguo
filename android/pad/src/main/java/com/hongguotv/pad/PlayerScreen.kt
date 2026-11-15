@@ -488,7 +488,21 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Log.e("Playback", "player error index=$curIndex code=${error.errorCode} ${error.message}")
+                val msg = error.message.orEmpty()
+                Log.e("Playback", "player error index=$curIndex code=${error.errorCode} $msg")
+                // 旧档位缓存里可能还是自签证书域名（frp-bar.com）的转码地址，
+                // ExoPlayer 默认不信任自签证书 → Trust anchor 报错。
+                // 清掉档位缓存并自动重取一次，服务端现在返回的是有效证书域名 dl.fabao.xin。
+                if ((msg.contains("Trust anchor", true) || msg.contains("CertPath", true)) &&
+                    stallRetries < 2
+                ) {
+                    stallRetries += 1
+                    Api.clearTierCache()
+                    preparing = true
+                    failed = null
+                    attempt += 1
+                    return
+                }
                 preparing = false
                 failed = "播放出错了，点「重试」再试一次"
             }
