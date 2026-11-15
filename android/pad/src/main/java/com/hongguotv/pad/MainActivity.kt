@@ -78,6 +78,8 @@ class MainActivity : ComponentActivity() {
         // 播放器真正取流前（至少几秒后）早就绪；DeviceResolver.play 里另有等待兜底。
         Thread({ DeviceResolver.init(this) }, "resolver-init").start()
         LocalResolverProvider.play = { vid, want -> DeviceResolver.play(vid, want) }
+        // 服务端功能开关：后台拉，失败保持默认旧路径
+        Thread { runCatching { Api.fetchFlags() } }.apply { isDaemon = true; name = "flags-init" }.start()
         setContent {
             // 先把「启动画面」这一帧画上去，再做完整界面的首次组合：
             // 电视上冷启动 Compose 首帧要好几秒（实测 Displayed +10~11s），

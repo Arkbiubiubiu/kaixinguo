@@ -64,7 +64,7 @@ import kotlinx.coroutines.withContext
 fun DetailScreen(
     seriesId: String,
     onBack: () -> Unit,
-    onPlay: (String, Int) -> Unit,
+    onPlay: (String, Int, Long) -> Unit,
     onCreator: (String) -> Unit,
     onOpen: (String) -> Unit = {},
 ) {
@@ -116,7 +116,7 @@ fun DetailScreen(
         reservedIds = if (on) reservedIds + card.seriesId else reservedIds - card.seriesId
         Store.toggleCard(Store.KEY_RESERVE, card)
         scope.launch(Dispatchers.IO) {
-            val ok = runCatching { Api.reserveToggle(card.seriesId, on) }.getOrDefault(false)
+            val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, card.seriesId, on) }.getOrDefault(false)
             withContext(Dispatchers.Main) {
                 if (!ok) {
                     if (Store.loggedIn) {
@@ -219,8 +219,8 @@ fun DetailScreen(
                     Store.toggleCard(Store.KEY_LIKE, cardOf(d))
                 }
             }
-            // 跨端续播：拉一页官方最近历史，主号在别的端看到第几集这边也能续上。
-            // 只往「更靠后」的方向修，别把用户已经翻到的更远位置拉回来。
+            // 跨端续播：拉一页官方最近历史，按「最近一次真实播放」合并；
+            // 合并结果就是当前该续的集数，别只许变大——别的端刚看了低集数也要跟着走。
             launch {
                 withContext(Dispatchers.IO) {
                     runCatching {
@@ -229,7 +229,7 @@ fun DetailScreen(
                     }
                 }
                 val merged = Store.progress(seriesId)
-                if (merged > resumeIdx) resumeIdx = merged
+                if (merged > 0) resumeIdx = merged
             }
         }
         launch {
@@ -241,7 +241,7 @@ fun DetailScreen(
         // 季清单单独问 plan 接口，保证每一季都点得到
         launch {
             seasons = withContext(Dispatchers.IO) {
-                val own = runCatching { Api.seasons(seriesId) }.getOrDefault(emptyList())
+                val own = runCatching { SeasonService.list(seriesId) }.getOrDefault(emptyList())
                 if (own.isEmpty() || d == null) {
                     own
                 } else {
@@ -249,7 +249,7 @@ fun DetailScreen(
                     // 第二季只存在于另一套）。缺号就按「主创名字有交集」去另一套里补回来。
                     val names = d.creators.map { it.name }.filter { it.isNotBlank() }.toSet()
                     val extra = runCatching {
-                        Api.fillMissingSeasons(seriesId, d.title, own, names)
+                        SeasonService.fillMissing(seriesId, d.title, own, names)
                     }.getOrDefault(emptyList())
                     (own + extra).sortedBy { it.index }
                 }
@@ -297,6 +297,11 @@ fun DetailScreen(
     val episodes = d.episodes
     val resumeIndex = (if (resumeIdx > 0) resumeIdx else Store.progress(seriesId))
         .coerceIn(1, episodes.size.coerceAtLeast(1))
+    // 续播秒数：历史行正好是这一集时带上，详情页按钮也能从上次停下的地方接
+    val resumeRow = Store.history().firstOrNull { it.optString("seriesId") == seriesId }
+    val resumePosition = if (resumeRow?.optInt("episode", 0) == resumeIndex) {
+        resumeRow.optLong("positionMs", 0L)
+    } else 0L
     val metaLine = listOfNotNull(
         // 评分优先用剧评接口的（PC 同源）；detail 的 score 只作兜底
         (reviewScore.ifEmpty { d.score }).takeIf { it.isNotBlank() && it != "0" }?.let { s ->
@@ -575,7 +580,7 @@ fun DetailScreen(
                                         reserved = next
                                         Store.toggleCard(Store.KEY_RESERVE, cardOf(d))
                                         scope.launch(Dispatchers.IO) {
-                                            val ok = runCatching { Api.reserveToggle(seriesId, next) }
+                                            val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, seriesId, next) }
                                                 .getOrDefault(false)
                                             if (!ok) withContext(Dispatchers.Main) {
                                                 reserved = !next
@@ -611,7 +616,7 @@ fun DetailScreen(
                                 scope.launch(Dispatchers.IO) {
                                     // 和下面的正式分支保持一致：写失败要回滚并说明原因，
                                     // 不然未登录时界面照样显示「已收藏」，其实没写上去
-                                    val ok = runCatching { Api.collectSeries(seriesId, next) }
+                                    val ok = runCatching { ShelfRepository.toggle(ShelfKind.Favorite, seriesId, next) }
                                         .getOrDefault(false)
                                     if (!ok) withContext(Dispatchers.Main) {
                                         favorite = !next
@@ -636,7 +641,7 @@ fun DetailScreen(
                                 // 主按钮第一次真正上屏时给一次焦点（见上方说明）
                                 .onPlaced { autoFocusPlay() }
                                 // clickable 在外、clip 在内：焦点框画在 clickable 层，不会被圆角裁掉
-                                .clickable { onPlay(seriesId, resumeIndex) }
+                                .clickable { onPlay(seriesId, resumeIndex, resumePosition) }
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Red)
                                 .padding(horizontal = 18.dp),
@@ -654,7 +659,7 @@ fun DetailScreen(
                             favorite = next
                             Store.toggleCard(Store.KEY_FAVORITE, cardOf(d))
                             scope.launch(Dispatchers.IO) {
-                                val ok = runCatching { Api.collectSeries(seriesId, next) }.getOrDefault(false)
+                                val ok = runCatching { ShelfRepository.toggle(ShelfKind.Favorite, seriesId, next) }.getOrDefault(false)
                                 if (!ok) withContext(Dispatchers.Main) {
                                     favorite = !next
                                     Store.toggleCard(Store.KEY_FAVORITE, cardOf(d))
@@ -667,7 +672,7 @@ fun DetailScreen(
                             followed = next
                             Store.toggleCard(Store.KEY_FOLLOW, cardOf(d))
                             scope.launch(Dispatchers.IO) {
-                                val ok = runCatching { Api.followToggle(seriesId, next) }.getOrDefault(false)
+                                val ok = runCatching { ShelfRepository.toggle(ShelfKind.Follow, seriesId, next) }.getOrDefault(false)
                                 if (!ok) withContext(Dispatchers.Main) {
                                     followed = !next
                                     Store.toggleCard(Store.KEY_FOLLOW, cardOf(d))
@@ -709,7 +714,7 @@ fun DetailScreen(
                 0 -> EpisodeGrid(
                     episodes = episodes,
                     activeIndex = resumeIndex - 1,
-                    onPick = { i -> onPlay(seriesId, i + 1) },
+                    onPick = { i -> onPlay(seriesId, i + 1, 0L) },
                 )
                 1 -> ReviewsBlock(
                     reviews, reviewScore, reviewScoreCount,

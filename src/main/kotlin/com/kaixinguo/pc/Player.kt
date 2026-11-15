@@ -44,7 +44,6 @@ import androidx.compose.material.icons.filled.Comment
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.CropPortrait
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.HighQuality
@@ -120,12 +119,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hongguotv.pad.ShelfKind
+import com.hongguotv.pad.ShelfRepository
+import com.hongguotv.pad.SeasonService
 import com.hongguotv.pad.Api
+import com.hongguotv.pad.PlaybackApi
 import com.hongguotv.pad.DmItem
 import com.hongguotv.pad.Episode
 import com.hongguotv.pad.Log
 import com.hongguotv.pad.PlayTier
 import com.hongguotv.pad.RemoteVideo
+import com.hongguotv.pad.StallWatchdog
 import com.hongguotv.pad.StreamProxy
 import com.hongguotv.pad.UnsupportedCodecException
 import java.io.File
@@ -186,9 +190,7 @@ fun PlayerScreen(
     // 取流重试计数：失败卡片上的「重试」把它 +1，起播 effect 会重跑
     var playAttempt by remember(seriesId) { mutableStateOf(0) }
     // 播放卡顿看门狗：进度 8 秒不动就重新取流，最多 2 次
-    var pcLastPos by remember { mutableStateOf(-1L) }
-    var pcLastAt by remember { mutableStateOf(0L) }
-    var pcStallRetries by remember { mutableStateOf(0) }
+    val watchdog = remember { StallWatchdog() }
     // 播放中断（不是自然播完）：断流时解码进程退出，以前被当成「播完」自动跳下一集
     var interrupted by remember(seriesId) { mutableStateOf(false) }
     // 每一集只自动重试一次：按 (seriesId, index) 记住，切集自动重置
@@ -258,6 +260,8 @@ fun PlayerScreen(
     var spaceHeld by remember { mutableStateOf(false) }
     // 引擎创建时刻：起播/换集后 6 秒内不算「暂停」，避免控制栏闪
     var engineReadyAt by remember { mutableStateOf(0L) }
+    /** 本次进入这一集后真正播放了多久：续播点很高也不能一进来就算看过 */
+    var playedThisEpisode by remember { mutableStateOf(0L) }
     // 刷剧页（onWheelStep 非空）：控制栏常驻、不倒计时。
     // 只有从详情点「观看完整短剧」进来的播放页才用 3 秒自动淡出。
     val pinChrome = onWheelStep != null
@@ -459,12 +463,12 @@ fun PlayerScreen(
 
         val src = withContext(Dispatchers.IO) {
             fun normalSource(): PlaySource {
-                val list = runCatching { Api.tiers(ep.vid) }.getOrDefault(emptyList())
+                val list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
                 tiers = list
                 val picked = if (quality > 0) list.firstOrNull { it.height == quality }
                 else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
                     ?: list.maxByOrNull { it.height }
-                val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, PcStore.maxHeight)
+                val info = picked?.toPlayInfo() ?: PlaybackApi.play(ep.vid, 1004, PcStore.maxHeight)
                 val rv = RemoteVideo(info)
                 rv.prepare()
                 val px = StreamProxy(rv)
@@ -522,6 +526,7 @@ fun PlayerScreen(
         userPaused = false
         keyboardPaused = false
         engineReadyAt = System.currentTimeMillis()
+        playedThisEpisode = 0L
         withContext(Dispatchers.IO) {
             runCatching { eng.probe() }
             eng.setVolume(if (muted) 0f else volume)
@@ -532,8 +537,6 @@ fun PlayerScreen(
             else if (index == startIndex && startMs > 0) startMs
             else PcStore.posOf(ep.vid).takeIf { it > 3_000 } ?: 0L
             eng.start(resume)
-            // 刷剧（预览连播）不计入历史：只有进「观看完整短剧」后的正常播放页才记
-            if (!embedded) PcStore.record(seriesId, title, "", index, episodes.size, positionMs = resume)
         }
         eng.onEnded = {
             // 自然播完到下一集之间也有一个极短的「旧引擎已停、新引擎未建」窗口，
@@ -594,11 +597,14 @@ fun PlayerScreen(
             val pos = runCatching { engine?.positionMs ?: 0L }.getOrDefault(0L)
             if (pos <= 0L) continue
             PcStore.markPos(ep.vid, pos)
-            PcStore.touchHistoryPos(seriesId, index, pos)
+            // 历史 = 最近一次真实播放：真正播过 3 秒才写；换到低集数也照实更新
+            if (playedThisEpisode >= 3_000L && pos > 0L) {
+                HistoryReporter.onPlayed(seriesId, title, "", index, episodes.size, pos)
+            }
             // 20 秒报一次官方；开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）
             if (tick % 5 == 0 && pos > 5_000L && ep.vid.isNotEmpty()) {
                 withContext(Dispatchers.IO) {
-                    runCatching { Api.reportProgress(seriesId, ep.vid, index, pos) }
+                    runCatching { HistoryReporter.reportOfficial(seriesId, ep.vid, index, pos) }
                 }
             }
         }
@@ -612,8 +618,8 @@ fun PlayerScreen(
         onDispose {
             if (!embedded && vid.isNotEmpty()) {
                 val pos = runCatching { eng?.positionMs ?: 0L }.getOrDefault(0L)
-                if (pos > 5_000L) {
-                    Thread { runCatching { Api.reportProgress(seriesId, vid, idx, pos) } }.start()
+                if (pos > 0L && playedThisEpisode >= 5_000L) {
+                    Thread { runCatching { HistoryReporter.reportOfficial(seriesId, vid, idx, pos) } }.start()
                 }
             }
         }
@@ -647,15 +653,13 @@ fun PlayerScreen(
             val end = minOf(episodes.size, index + 3)
             for (i in index + 1..end) {
                 val ep = episodes.getOrNull(i - 1) ?: continue
-                runCatching { Api.tiers(ep.vid) }
+                runCatching { PlaybackApi.tiers(ep.vid, priority = true) }
             }
         }
     }
 
     LaunchedEffect(index) {
-        pcLastPos = -1L
-        pcLastAt = 0L
-        pcStallRetries = 0
+        watchdog.reset()
     }
 
     // 位置轮询 + 弹幕续窗
@@ -666,23 +670,17 @@ fun PlayerScreen(
                 tick = e.positionMs
                 val nowMs = System.currentTimeMillis()
                 if (e.playing && tick > 0) {
-                    if (tick == pcLastPos) {
-                        if (pcLastAt == 0L) pcLastAt = nowMs
-                        else if (nowMs - pcLastAt > 8_000L && !loading) {
-                            pcLastAt = 0L
-                            if (pcStallRetries < 2) {
-                                pcStallRetries += 1
-                                Log.e("Player", "stalled index=$index pos=$tick retry=$pcStallRetries")
-                                loading = true
-                                playAttempt += 1
-                            } else {
-                                failed = "播放卡住了，点「重试」再试一次"
-                                loading = false
-                            }
+                    when (watchdog.onTick(tick, nowMs, active = e.playing, preparing = loading, switching = false)) {
+                        StallWatchdog.Decision.RETRY -> {
+                            Log.e("Player", "stalled index=$index pos=$tick retry=${watchdog.retryCount}")
+                            loading = true
+                            playAttempt += 1
                         }
-                    } else {
-                        pcLastPos = tick
-                        pcLastAt = 0L
+                        StallWatchdog.Decision.GIVE_UP -> {
+                            failed = "播放卡住了，点「重试」再试一次"
+                            loading = false
+                        }
+                        StallWatchdog.Decision.NONE -> Unit
                     }
                 }
                 if (dmMore && danmakuOn && danmaku.isNotEmpty() && tick > danmaku.last().offsetMs - 2_000) {
@@ -718,13 +716,14 @@ fun PlayerScreen(
             val e = engine ?: continue
             val playing = e.playing
             val pos = e.positionMs
+            if (playing) playedThisEpisode += 1_000L
             if (playing && pos > 0 && pos - lastSaved >= 5_000) {
                 lastSaved = pos
                 PcStore.markPos(ep.vid, pos)
             }
-            if (playing && !embedded && pos > 5_000 && pos - lastReport >= 60_000) {
+            if (playing && !embedded && playedThisEpisode >= 5_000L && pos > 0 && pos - lastReport >= 60_000) {
                 lastReport = pos
-                withContext(Dispatchers.IO) { runCatching { Api.reportProgress(seriesId, ep.vid, index, pos) } }
+                withContext(Dispatchers.IO) { runCatching { HistoryReporter.reportOfficial(seriesId, ep.vid, index, pos) } }
             }
         }
     }
@@ -1029,7 +1028,7 @@ fun PlayerScreen(
                 onClick = {
                     val target = !fav
                     scope.launch(Dispatchers.IO) {
-                        runCatching { Api.collectSeries(seriesId, target) }
+                        runCatching { ShelfRepository.toggle(ShelfKind.Favorite, seriesId, target) }
                         if (PcStore.contains("favorite", seriesId) != target) PcStore.toggle("favorite", seriesId)
                         withContext(Dispatchers.Main) { fav = target }
                     }
@@ -1056,7 +1055,7 @@ fun PlayerScreen(
                     val target = !liked
                     val vid = episodes.getOrNull(index - 1)?.vid.orEmpty()
                     scope.launch(Dispatchers.IO) {
-                        if (vid.isNotBlank()) runCatching { Api.diggVideo(vid, seriesId, target) }
+                        if (vid.isNotBlank()) runCatching { ShelfRepository.toggle(ShelfKind.Like, seriesId, target, vid) }
                         if (PcStore.contains("like", seriesId) != target) PcStore.toggle("like", seriesId)
                         withContext(Dispatchers.Main) { liked = target }
                     }
@@ -1710,7 +1709,7 @@ private fun EpisodePickerPopup(
     LaunchedEffect(seriesId, tab) {
         if (tab != 1 || seasons.isNotEmpty()) return@LaunchedEffect
         seasonsLoading = true
-        seasons = withContext(Dispatchers.IO) { runCatching { Api.seasons(seriesId) }.getOrDefault(emptyList()) }
+        seasons = withContext(Dispatchers.IO) { runCatching { SeasonService.list(seriesId) }.getOrDefault(emptyList()) }
         seasonsLoading = false
     }
     LaunchedEffect(seriesId) { seasons = emptyList() }

@@ -38,6 +38,9 @@ object App {
     var playBases: List<String> = emptyList()
     var historyBase: String = ""
 
+    /** 服务端功能开关（只影响新实现是否启用；默认全部 false = 旧路径）。 */
+    var flags: Map<String, Boolean> = emptyMap()
+
     /**
      * 设备身份覆盖（空 = 用内置默认值）。
      *

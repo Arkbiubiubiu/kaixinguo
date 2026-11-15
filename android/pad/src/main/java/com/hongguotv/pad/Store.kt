@@ -22,6 +22,7 @@ object Store : AccountState {
     const val KEY_LIKE = "like"
     const val KEY_FOLLOW = "follow"
     const val KEY_RESERVE = "reserve"
+    private const val HISTORY_SCHEMA = HistoryRepository.SCHEMA
 
     private const val SEP = "\u0001"
 
@@ -33,9 +34,36 @@ object Store : AccountState {
     private fun p(): SharedPreferences =
         prefs ?: error("Store 未初始化，先调用 Store.init(context)")
 
+    /** 给 ShelfStore / HistoryStore 共用同一份 SharedPreferences。 */
+    internal fun prefs(): SharedPreferences = p()
+
     fun init(context: Context) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences("hongguo_pad", Context.MODE_PRIVATE)
+        migrateHistorySchema()
+    }
+
+    /** 历史行结构版本：清掉缺 seriesId/集数的脏行，补齐秒数/时间字段；只跑一次。 */
+    private fun migrateHistorySchema() {
+        val sp = p()
+        if (sp.getInt("history_schema", 0) >= HISTORY_SCHEMA) return
+        runCatching {
+            val arr = JSONArray(sp.getString("history", "[]"))
+            val out = JSONArray()
+            for (i in 0 until arr.length()) {
+                val row = arr.optJSONObject(i) ?: continue
+                val id = row.optString("seriesId")
+                val ep = row.optInt("episode", 0)
+                if (id.isEmpty() || ep <= 0) continue
+                row.put("episode", ep)
+                    .put("total", maxOf(0, row.optInt("total", 0)))
+                    .put("positionMs", maxOf(0L, row.optLong("positionMs", 0L)))
+                    .put("at", maxOf(0L, row.optLong("at", 0L)))
+                out.put(row)
+            }
+            sp.edit().putString("history", out.toString())
+                .putInt("history_schema", HISTORY_SCHEMA).apply()
+        }
     }
 
     // ---------------- 播放设置 ----------------
@@ -215,307 +243,59 @@ object Store : AccountState {
     }
 
     // ---------------- 集合类（收藏/点赞/追更/预约） ----------------
+    // 实现已拆到 ShelfStore.kt；这里保留同名方法，调用方零改动。
 
-    private fun readSet(key: String): LinkedHashSet<String> {
-        val raw = p().getString(key, "").orEmpty()
-        return LinkedHashSet(raw.split(SEP).filter { it.isNotBlank() })
-    }
+    fun isUnsupported(vid: String): Boolean = ShelfStore.isUnsupported(vid)
 
-    private fun writeSet(key: String, set: Collection<String>) {
-        p().edit().putString(key, set.joinToString(SEP)).apply()
-    }
+    fun markUnsupported(vid: String) = ShelfStore.markUnsupported(vid)
 
-    // ---------------- 解不了的片源（bytevc2/AV1 私有封装） ----------------
-    // 记住这些分集，下次直接跳过：否则每进一次刷剧都要为同一集白下载一遍头部
-    // （隧道 1MB/s 左右，一集就要一两秒，看起来就是「加载特别慢」）。
-    // v2：旧键里存着 VVC 支持前误标的集（如《黑白心弈》21 集，实际是 hvc1），
-    // 换键名让这些历史标记全部作废，只保留新版本按真实编码记下的。
-    private const val KEY_UNSUPPORTED = "unsupported_vids_v3"
+    fun toggle(key: String, seriesId: String): Boolean = ShelfStore.toggle(key, seriesId)
 
-    fun isUnsupported(vid: String): Boolean =
-        vid.isNotBlank() && readSet(KEY_UNSUPPORTED).contains(vid)
+    override fun contains(key: String, seriesId: String): Boolean = ShelfStore.contains(key, seriesId)
 
-    fun markUnsupported(vid: String) {
-        if (vid.isBlank()) return
-        val set = readSet(KEY_UNSUPPORTED)
-        if (set.add(vid)) writeSet(KEY_UNSUPPORTED, set)
-    }
+    fun ids(key: String): List<String> = ShelfStore.ids(key)
 
-    /** 切换某个 id 在集合里的状态，返回切换后是否在集合中。 */
-    fun toggle(key: String, seriesId: String): Boolean {
-        val set = readSet(key)
-        val on = if (set.contains(seriesId)) {
-            set.remove(seriesId); false
-        } else {
-            set.add(seriesId); true
-        }
-        writeSet(key, set)
-        return on
-    }
+    fun toggleCard(key: String, card: SeriesCard): Boolean = ShelfStore.toggleCard(key, card)
 
-    override fun contains(key: String, seriesId: String): Boolean = readSet(key).contains(seriesId)
+    fun replaceCards(key: String, cards: List<SeriesCard>) = ShelfStore.replaceCards(key, cards)
 
-    fun ids(key: String): List<String> = readSet(key).toList()
+    fun card(key: String, seriesId: String): SeriesCard? = ShelfStore.card(key, seriesId)
 
-    /** 切换并把卡片信息一并存下来，列表页不用再请求详情。 */
-    fun toggleCard(key: String, card: SeriesCard): Boolean {
-        val on = toggle(key, card.seriesId)
-        if (on) {
-            val arr = runCatching { JSONArray(p().getString("cards_$key", "[]")) }
-                .getOrDefault(JSONArray())
-            arr.put(card.toJson())
-            p().edit().putString("cards_$key", arr.toString()).apply()
-        }
-        return on
-    }
+    fun cacheShelfCards(cards: List<SeriesCard>) = ShelfStore.cacheShelfCards(cards)
 
-    /** 整体替换某个列表（云端为准时用）。不能循环 toggle：id 已存在时 toggle 会把它删掉。 */
-    fun replaceCards(key: String, cards: List<SeriesCard>) {
-        writeSet(key, cards.map { it.seriesId }.distinct())
-        val arr = JSONArray()
-        cards.forEach { arr.put(it.toJson()) }
-        p().edit().putString("cards_$key", arr.toString()).apply()
-    }
+    fun clearShelfCards() = ShelfStore.clearShelfCards()
 
-    fun card(key: String, seriesId: String): SeriesCard? {
-        val arr = runCatching { JSONArray(p().getString("cards_$key", "[]")) }
-            .getOrDefault(JSONArray())
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("seriesId") == seriesId) return o.toCard()
-        }
-        return null
-    }
+    fun shelfCard(seriesId: String): SeriesCard? = ShelfStore.shelfCard(seriesId)
 
-    fun cacheShelfCards(cards: List<SeriesCard>) {
-        val arr = JSONArray()
-        cards.forEach { arr.put(it.toJson()) }
-        p().edit().putString("shelf_cards", arr.toString()).apply()
-    }
+    // ---------------- 观看历史（实现见 HistoryStore.kt） ----------------
 
-    fun clearShelfCards() {
-        p().edit().remove("shelf_cards").apply()
-    }
+    override fun history(): List<JSONObject> = HistoryStore.history()
 
-    fun shelfCard(seriesId: String): SeriesCard? {
-        val arr = runCatching { JSONArray(p().getString("shelf_cards", "[]")) }
-            .getOrDefault(JSONArray())
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("seriesId") != seriesId) continue
-            if (o.optString("title").isEmpty()) return null
-            return o.toCard()
-        }
-        return null
-    }
-
-    private fun SeriesCard.toJson(): JSONObject = JSONObject()
-        .put("seriesId", seriesId).put("title", title).put("cover", cover)
-        .put("episodeCount", episodeCount).put("playText", playText)
-        .put("score", score).put("vid", vid).put("contentType", contentType)
-        .put("tags", JSONArray(tags))
-
-    private fun JSONObject.toCard(): SeriesCard {
-        val tags = mutableListOf<String>()
-        optJSONArray("tags")?.let { a ->
-            for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let(tags::add)
-        }
-        return SeriesCard(
-            seriesId = optString("seriesId"),
-            vid = optString("vid"),
-            title = optString("title"),
-            cover = optString("cover"),
-            episodeCount = optInt("episodeCount"),
-            score = optString("score"),
-            playText = optString("playText"),
-            tags = tags,
-            contentType = optInt("contentType", 1004),
-        )
-    }
-
-    // ---------------- 观看历史 ----------------
-
-    /** 历史列表：同标题只留「看得最多」的一条，按时间倒序。 */
-    override fun history(): List<JSONObject> = runCatching {
-        val arr = JSONArray(p().getString("history", "[]"))
-        val rows = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-        rows.groupBy { it.optString("title") }.values
-            .mapNotNull { same ->
-                same.maxWithOrNull(compareBy({ it.optInt("episode", 0) }, { it.optLong("at") }))
-            }
-            .sortedByDescending { it.optLong("at") }
-    }.getOrDefault(emptyList())
-
-    /**
-     * 记一条观看历史。
-     *
-     * **进度只增不减**：历史回答的是「我看到哪了」，不是「我最后点了哪一集」。
-     * 从推荐/搜索点进一部看了一半的剧时，详情页默认从第 1 集起播，
-     * 一次就会把「看到 136 集」改写成 1 —— 所以这里取两者的较大值。
-     */
-    fun record(
+    fun recordPlayback(
         seriesId: String,
         title: String,
         cover: String,
         episode: Int,
         total: Int,
-        allowRewind: Boolean = false,
-    ) {
-        val rows = history()
-        val oldEp = rows.firstOrNull { it.optString("seriesId") == seriesId }
-            ?.optInt("episode", 0) ?: 0
-        val keep = if (allowRewind) episode else maxOf(oldEp, episode)
+        positionMs: Long,
+    ) = HistoryStore.recordPlayback(seriesId, title, cover, episode, total, positionMs)
 
-        val list = rows.filter { it.optString("seriesId") != seriesId }.toMutableList()
-        list.add(
-            0,
-            JSONObject()
-                .put("seriesId", seriesId).put("title", title).put("cover", cover)
-                .put("episode", keep).put("total", total)
-                // 主动切到更早的集数时标一个 rewind：合并/云端都认这个标记，
-                // 否则「集数大者胜」会把用户重看第 1 集的进度顶回第 5 集
-                .put("rewind", allowRewind)
-                .put("at", System.currentTimeMillis()),
-        )
-        val arr = JSONArray()
-        list.take(200).forEach { arr.put(it) }
-        p().edit().putString("history", arr.toString())
-            .putInt("progress_$seriesId", keep)
-            .apply()
-    }
+    fun markPos(vid: String, ms: Long) = HistoryStore.markPos(vid, ms)
 
-    // ---------------- 秒级位置（只在本次进程内有效） ----------------
-    //
-    // 用来解决「从播放页点详情、返回后这一集从头开始」：导航栈只存集号，
-    // 播放页一销毁 ExoPlayer 就没了。这里按 vid 记一个秒数，回来后 seek 过去。
-    // 故意不放 SharedPreferences —— 跨进程沿用旧位置反而容易让人困惑（比如想重看某集）。
-    private val lastPos = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    fun posOf(vid: String): Long = HistoryStore.posOf(vid)
 
-    /**
-     * 记下某集看到哪儿。开头 5 秒内不记，免得「刚点进去就退出」也存个 0 秒。
-     *
-     * 落盘（`pos_<vid>`）：以前只存内存，App 一重启历史就只能从这一集的开头看。
-     * 按 5 秒节流，避免每秒写一次盘。
-     */
-    fun markPos(vid: String, ms: Long) {
-        if (vid.isEmpty()) return
-        val key = "pos_$vid"
-        if (ms > 5_000) {
-            lastPos[vid] = ms
-            val saved = runCatching { p().getLong(key, 0L) }.getOrDefault(0L)
-            if (kotlin.math.abs(ms - saved) >= 5_000) {
-                runCatching { p().edit().putLong(key, ms).apply() }
-            }
-        } else {
-            lastPos.remove(vid)
-            // 从头看了：把旧的续播点清掉，否则下次又跳回老位置
-            runCatching { p().edit().remove(key).apply() }
-        }
-    }
+    fun progress(seriesId: String): Int = HistoryStore.progress(seriesId)
 
-    /**
-     * 播放中刷新历史行的「看到第几秒」+ at（历史页显示最新进度，而不是进入时的位置）。
-     */
-    fun touchHistoryPos(seriesId: String, episode: Int, positionMs: Long) {
-        if (positionMs <= 0) return
-        // 读-改-写必须串行：this 每 4 秒一次，与 historySync 的 mergeHistory 并发会互相覆盖丢写
-        synchronized(historyLock) {
-            val rows = history()
-            val row = rows.firstOrNull { it.optString("seriesId") == seriesId } ?: return
-            if (row.optInt("episode") != episode) return
-            row.put("positionMs", positionMs).put("at", System.currentTimeMillis())
-            val arr = JSONArray()
-            rows.take(500).forEach { arr.put(it) }
-            p().edit().putString("history", arr.toString()).apply()
-            historyStamp.value = System.currentTimeMillis()
-        }
-    }
+    val historyStamp: MutableState<Long> get() = HistoryStore.historyStamp
 
-    /** 该集上次看到的毫秒数；内存没有就读盘（跨进程也能接着看）。 */
-    fun posOf(vid: String): Long =
-        if (vid.isEmpty()) 0L
-        else lastPos[vid] ?: runCatching { p().getLong("pos_$vid", 0L) }.getOrDefault(0L)
+    override fun mergeHistory(remote: List<JSONObject>): List<JSONObject> = HistoryStore.mergeHistory(remote)
 
-    /** 该剧看到第几集（本地进度与历史取较大值）。 */
-    fun progress(seriesId: String): Int {
-        val fromPrefs = p().getInt("progress_$seriesId", 0)
-        val fromHistory = history().firstOrNull { it.optString("seriesId") == seriesId }
-            ?.optInt("episode", 0) ?: 0
-        return maxOf(fromPrefs, fromHistory)
-    }
+    fun clearHistory() = HistoryStore.clearHistory()
 
-    /** 历史变化计数：界面靠它感知「别处写入了历史」，不用轮询。 */
-    val historyStamp: MutableState<Long> = mutableStateOf(0L)
+    override fun updateHistoryCover(seriesId: String, cover: String) =
+        HistoryStore.updateHistoryCover(seriesId, cover)
 
-    /** 与云端历史合并：同一条目按集数取大（集数相同才比时间）。 */
-    private val historyLock = Any()
-
-    override fun mergeHistory(remote: List<JSONObject>): List<JSONObject> = synchronized(historyLock) {
-        mergeHistoryLocked(remote)
-    }
-
-    private fun mergeHistoryLocked(remote: List<JSONObject>): List<JSONObject> {
-        val merged = LinkedHashMap<String, JSONObject>()
-        (history() + remote).forEach { row ->
-            val id = row.optString("seriesId")
-            if (id.isEmpty()) return@forEach
-            val old = merged[id]
-            if (old == null) {
-                merged[id] = row
-            } else {
-                // 进度优先：集数大 > 同集秒数大 > 时间戳新（与服务端 / PC 同规则）
-                val re = row.optInt("episode", 0)
-                val oe = old.optInt("episode", 0)
-                val rp = row.optLong("positionMs", 0)
-                val op = old.optLong("positionMs", 0)
-                val rowRewind = row.optBoolean("rewind")
-                val oldRewind = old.optBoolean("rewind")
-                val rowBetter = when {
-                    // 有一方是「主动重看旧集」：按时间戳，谁后谁生效
-                    rowRewind || oldRewind -> row.optLong("at") > old.optLong("at")
-                    re != oe -> re > oe
-                    rp != op -> rp > op
-                    else -> row.optLong("at") > old.optLong("at")
-                }
-                val win = if (rowBetter) row else old
-                val lose = if (rowBetter) old else row
-                // 空字段互补：历史记录里 cover 曾是空串，合并后不应把已有封面覆盖成空
-                if (win.optString("cover").isEmpty()) win.put("cover", lose.optString("cover"))
-                if (win.optString("title").isEmpty()) win.put("title", lose.optString("title"))
-                merged[id] = win
-            }
-        }
-        // 官方观看历史同账号实测 1500+ 条，本地只留最近的 500 条（prefs 体积可控，够翻很久）
-        val list = merged.values.sortedByDescending { it.optLong("at") }.take(500)
-        val arr = JSONArray()
-        list.forEach { arr.put(it) }
-        val editor = p().edit().putString("history", arr.toString())
-        list.forEach { editor.putInt("progress_${it.optString("seriesId")}", it.optInt("episode")) }
-        editor.apply()
-        historyStamp.value = System.currentTimeMillis()
-        return list
-    }
-
-    fun clearHistory() {
-        p().edit().remove("history").apply()
-    }
-
-    /** 补一条历史的封面（早期版本写历史时 cover 写死空串，留下脏数据）。 */
-    override fun updateHistoryCover(seriesId: String, cover: String) {
-        val arr = JSONArray()
-        history().forEach { r ->
-            if (r.optString("seriesId") == seriesId) r.put("cover", cover)
-            arr.put(r)
-        }
-        p().edit().putString("history", arr.toString()).apply()
-    }
-
-    fun removeHistory(seriesId: String) {
-        val arr = JSONArray()
-        history().filter { it.optString("seriesId") != seriesId }.forEach { arr.put(it) }
-        p().edit().putString("history", arr.toString())
-            .remove("progress_$seriesId").apply()
-    }
+    fun removeHistory(seriesId: String) = HistoryStore.removeHistory(seriesId)
 
     /** 缓存目录当前占用多少（给设置页显示用，不动文件）。 */
     fun cacheSizeText(context: Context): String {

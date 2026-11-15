@@ -76,14 +76,14 @@ object FeedPreload {
             synchronized(lock) { dead.add(seriesId) }
             return
         }
-        val tiers = Api.tiers(ep.vid)
+        val tiers = PlaybackApi.tiers(ep.vid)
         val cap = Store.maxHeight
         val playable = tiers.filter { it.playable }
         val picked = playable.firstOrNull { it.height == cap }
             ?: playable.firstOrNull { it.height <= cap }
             ?: playable.firstOrNull()
         val info = picked?.toPlayInfo()
-            ?: runCatching { Api.play(ep.vid, 1004, 0) }.getOrNull()
+            ?: runCatching { PlaybackApi.play(ep.vid, 1004, 0) }.getOrNull()
             ?: return
         val rv = RemoteVideo(info)
         rv.prepare(warmLastBlock = false)

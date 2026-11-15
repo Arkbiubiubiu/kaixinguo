@@ -141,11 +141,8 @@ fun PlayerScreen(
     var index by remember(startIndex) { mutableStateOf(startIndex) }
     var title by remember { mutableStateOf("") }
 
-    var controlsVisible by remember { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(PlayerMenu.None) }
-    var lastActionAt by remember { mutableStateOf(0L) }
+    val ui = remember { PlayerUiState() }
     /** 弹幕输入框拿到焦点期间不许自动收控制条，否则打字打到一半栏没了 */
-    var editing by remember { mutableStateOf(false) }
 
     var speed by remember { mutableStateOf(Store.speed) }
     var dmOn by remember { mutableStateOf(Store.danmakuOn) }
@@ -156,25 +153,17 @@ fun PlayerScreen(
 
     // 清晰度：0 = 自动（取 Store.maxHeight 上限以内的最高档）
     var defWant by remember { mutableStateOf(0) }
-    var tiers by remember { mutableStateOf<List<PlayTier>>(emptyList()) }
-    var curDef by remember { mutableStateOf(0) }
+    val ps = remember { PlaybackSession() }
 
     var dmItems by remember { mutableStateOf<List<DmItem>>(emptyList()) }
-    var hint by remember { mutableStateOf<String?>(null) }
 
     // 播放页互动（与 PC 右侧互动栏对齐）：收藏 / 点赞
     var fav by remember(seriesId) { mutableStateOf(Store.contains("favorite", seriesId)) }
     var liked by remember(seriesId) { mutableStateOf(Store.contains("like", seriesId)) }
     /** 单集评论面板是否打开（打开时按键交给面板，返回键先关面板） */
-    var commentsOpen by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
-    var preparing by remember { mutableStateOf(true) }
-    var failed by remember { mutableStateOf<String?>(null) }
-    var attempt by remember { mutableStateOf(0) }
-    var preparedIndex by remember { mutableStateOf(-1) }
     /** 转圈只在真需要等网络时出现；已经预取好的集切过去不转 */
-    var showSpinner by remember { mutableStateOf(true) }
     /** 预取好的下一集：URL / 索引 / 本地代理全部就绪，切过去只差一句 setMediaItem */
     var prefetchReady by remember { mutableStateOf<ReadyEpisode?>(null) }
     /** 再往后一集的预取（「预取集数 = 2」时的第二集）。 */
@@ -193,12 +182,8 @@ fun PlayerScreen(
     val uriToEp = remember { mutableMapOf<String, Int>() }
     /** 预取正在进行时的占位：切集撞上它就直接等，不用重新取一遍流 */
     var prefetchSlot by remember { mutableStateOf<CompletableDeferred<ReadyEpisode?>?>(null) }
-    /** 预取用：当前集自己的 vid，用来校验 episodes 列表刷新后没串集 */
-    var preparedVid by remember { mutableStateOf("") }
     /** 正在预取哪一集（-1 = 没在预取）；切成别的集时靠它让预取自己收手 */
     var prefetchWant by remember { mutableStateOf(-1) }
-    /** 切集/换源的头一秒：这段时间 playing 会短暂变 false，不能当成「用户暂停了」 */
-    var switching by remember { mutableStateOf(false) }
 
     // 播放器监听器用（避免闭包捕获旧值）
     //
@@ -236,12 +221,9 @@ fun PlayerScreen(
     // 换集或换季之后放开跳季锁，否则第二季播完时 seasonJumping 还是 true，永远不再往第三季跳
     LaunchedEffect(seriesId, index) { seasonJumping = false }
     var position by remember { mutableStateOf(0L) }
-    var duration by remember { mutableStateOf(0L) }
     var playing by remember { mutableStateOf(true) }
     // 卡顿看门狗：画面/进度 8 秒不动就重新取一次流，别让用户对着黑屏干等
-    var lastTickPos by remember { mutableStateOf(-1L) }
-    var lastTickAt by remember { mutableStateOf(0L) }
-    var stallRetries by remember { mutableStateOf(0) }
+    val watchdog = remember { StallWatchdog() }
 
     val focus = remember { FocusRequester() }
     val playFocus = remember { FocusRequester() }
@@ -438,7 +420,7 @@ fun PlayerScreen(
                 val ready = queued.remove(uri) ?: return
                 val epIndex = ready.index
                 // 换集前的清晰度：用来判断这次要不要重建解码器
-                val prevDef = curDef
+                val prevDef = ps.curDef
                 uriToEp[uri] = epIndex
                 val prev = live
                 live = ready.remote to ready.proxy
@@ -446,11 +428,11 @@ fun PlayerScreen(
                     runCatching { p.stop() }
                     runCatching { r.close() }
                 }
-                preparedIndex = epIndex
-                preparedVid = ready.vid
-                tiers = ready.tiers
-                curDef = ready.def
-                duration = ready.remote.total
+                ps.preparedIndex = epIndex
+                ps.preparedVid = ready.vid
+                ps.tiers = ready.tiers
+                ps.curDef = ready.def
+                ps.duration = ready.remote.total
                 // 先记上"这集是队列接手的"，再去改 index —— 否则 index 一变，
                 // 下面那个「开始播放某一集」的 LaunchedEffect 会重新取一次流，
                 // 正好把无缝打断（变成原来那种定格）。
@@ -473,18 +455,6 @@ fun PlayerScreen(
                     decodeSeekTo = 0L
                     decodeGen += 1
                 }
-                // 刷剧（预览连播）不计入历史：只有「观看完整短剧」后的正常播放页才记
-                if (!feed) scope.launch {
-                    Store.record(
-                        seriesId = curSeries,
-                        title = title,
-                        cover = DetailCache.get(curSeries)?.cover.orEmpty(),
-                        episode = epIndex,
-                        total = curCount,
-                        allowRewind = true,
-                    )
-                    Api.historySyncAsync()
-                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -492,24 +462,17 @@ fun PlayerScreen(
                 Log.e("Playback", "player error index=$curIndex code=${error.errorCode} $msg")
                 // 证书错误/直链 404/旧地址：旧档位缓存可能还是自签证书域名或过期直链。
                 // 清掉档位缓存、清空 ExoPlayer 队列（防止它自己连跳几集），重取一次。
-                val recoverable = msg.contains("Trust anchor", true) ||
-                    msg.contains("CertPath", true) ||
-                    msg.contains("Source error", true) ||
-                    msg.contains("HTTP", true) ||
-                    msg.contains("404", true) ||
-                    msg.contains("unexpected", true)
-                if (recoverable && stallRetries < 2) {
-                    stallRetries += 1
-                    Api.clearTierCache()
+                if (PlaybackErrorPolicy.isRecoverable(msg) && watchdog.consumeRetry()) {
+                    PlaybackApi.clearTierCache()
                     runCatching { player.clearMediaItems() }
                     setEpisodeIndex(curIndex)
-                    preparing = true
-                    failed = null
-                    attempt += 1
+                    ps.preparing = true
+                    ps.failed = null
+                    ps.attempt += 1
                     return
                 }
-                preparing = false
-                failed = "播放出错了，点「重试」再试一次"
+                ps.preparing = false
+                ps.failed = "播放出错了，点「重试」再试一次"
             }
 
             override fun onRenderedFirstFrame() {
@@ -547,7 +510,7 @@ fun PlayerScreen(
                 if (seasonJumping) return
                 seasonJumping = true
                 scope.launch {
-                    val next = withContext(Dispatchers.IO) { runCatching { Api.nextSeason(curSeries) }.getOrNull() }
+                    val next = withContext(Dispatchers.IO) { runCatching { SeasonService.next(curSeries) }.getOrNull() }
                     withContext(Dispatchers.Main) {
                         if (next != null) {
                             curSwitch(next, 1)
@@ -556,12 +519,12 @@ fun PlayerScreen(
                             // 光给个一闪而过的提示不够，把控制台亮出来，
                             // 用户能看到进度在末尾、能直接选集或退出，不会以为卡死。
                             seasonJumping = false
-                            hint = "已经是最后一集了"
+                            ui.hint = "已经是最后一集了"
                             // 看完（没有下一季了）按设置抹掉观看记录，与 PC 同语义
                             if (Store.deleteAfterFinish) Store.removeHistory(curSeries)
                             if (!feed) {
-                                controlsVisible = true
-                                lastActionAt = System.currentTimeMillis()
+                                ui.controlsVisible = true
+                                ui.lastActionAt = System.currentTimeMillis()
                             }
                         }
                     }
@@ -631,25 +594,33 @@ fun PlayerScreen(
     // 从「历史 / 追更」直接点继续播放进来时，开头几帧 episodes 还是空的 ——
     // 每拍都重新取，详情到位后自然接上，不会像以前那样直接结束循环。
     var reportTick = 0
+    /** 这一集是否已经写过历史：真正播放超过 3 秒才写第一次，点开马上退出不算 */
+    var historyWritten by remember { mutableStateOf(false) }
+    /** 本次进入这一集后真正播放了多久（暂停/缓冲不计）：续播点很高也不能一进来就算看过 */
+    var playedThisEpisode by remember { mutableStateOf(0L) }
+    LaunchedEffect(seriesId, index) {
+        historyWritten = false
+        playedThisEpisode = 0L
+    }
 
     // 换了清晰度就不是"队列已接手"那一集了，得重新取流
     LaunchedEffect(defWant) { seamlessHandled = -1 }
 
-    LaunchedEffect(index, attempt, episodes.size, defWant, detailLoaded) {
+    LaunchedEffect(index, ps.attempt, episodes.size, defWant, detailLoaded) {
         // 队列刚自动把这一集接上、已经在播了 —— 不能再去取一次流，否则无缝就被打断
         if (SEAMLESS_PLAYLIST && seamlessHandled == index) return@LaunchedEffect
         if (episodes.isEmpty()) {
             // 详情还没回来就等（到位后 key 变化会重跑）。已经回来了还是空，
             // 说明这一季是「预约未上线」——自动跳季跳过来会卡在这里转圈，明说一句
             if (detailLoaded) {
-                preparing = false
-                showSpinner = false
-                failed = "这一季还没有上线的剧集"
+                ps.preparing = false
+                ps.showSpinner = false
+                ps.failed = "这一季还没有上线的剧集"
             }
             return@LaunchedEffect
         }
         val ep = episodes.getOrNull(index - 1) ?: return@LaunchedEffect
-        failed = null
+        ps.failed = null
 
         // ---- 快速路径：下一集在上一集播着的时候就预取好了，直接换源 ----
         // URL 解析、1MB 头部、样本表、本地代理全是现成的，只剩一句 setMediaItem，
@@ -658,38 +629,40 @@ fun PlayerScreen(
             ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
             ?: prefetchReady2
                 ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
-        if (hit == null && attempt == 0) {
+        if (hit == null && ps.attempt == 0) {
             // 预取正在路上：等它，别重新取一遍流。等的时候不画转圈，
             // 画面停在上一集最后一帧，比中间闪个圈干净得多。
             val slot = prefetchSlot
             if (slot != null && prefetchWant == index) {
-                preparing = true
-                showSpinner = false
+                ps.preparing = true
+                ps.showSpinner = false
                 hit = withTimeoutOrNull(4_000) { slot.await() }
                     ?.takeIf { it.index == index && it.vid == ep.vid && it.defWant == defWant }
             }
         }
-        if (hit != null && attempt == 0) {
+        if (hit != null && ps.attempt == 0) {
             // 所有权交给 live，不能再让预取逻辑去关它
             if (prefetchReady === hit) prefetchReady = null
             if (prefetchReady2 === hit) prefetchReady2 = null
             Log.i("nextup", "hit index=$index def=${hit.def}")
             val ok = runCatching {
-                preparing = true
-                showSpinner = false
-                tiers = hit.tiers
-                curDef = hit.def
-                duration = hit.remote.total
+                ps.preparing = true
+                ps.showSpinner = false
+                ps.tiers = hit.tiers
+                ps.curDef = hit.def
+                ps.duration = hit.remote.total
                 // 切走之前把上一集的进度存下来，来回切集/退出都能接着看
-                if (preparedVid.isNotEmpty() && preparedIndex > 0) {
-                    runCatching { Store.markPos(preparedVid, player.currentPosition) }
+                if (ps.preparedVid.isNotEmpty() && ps.preparedIndex > 0) {
+                    runCatching { Store.markPos(ps.preparedVid, player.currentPosition) }
                 }
                 player.setMediaItem(MediaItem.fromUri(hit.proxy.url))
                 uriToEp[hit.proxy.url] = index
                 player.setPlaybackSpeed(speed)
                 player.prepare()
-                // 这一集之前看过（同一进程内）就接着看，否则从头
-                val resume = if (feed) 0L else Store.posOf(ep.vid).takeIf {
+                // 从历史/继续看进来时优先用历史行里的秒数（可能是另一台设备刚报的）；
+                // 同一进程内切集才用本机这一集的续播点。
+                val wantedAt = if (index == startIndex && startMs > 0L) startMs else Store.posOf(ep.vid)
+                val resume = if (feed) 0L else wantedAt.takeIf {
                     it > 2_000 && (hit.remote.total <= 0 || it < hit.remote.total - 5_000)
                 } ?: 0L
                 if (resume > 0) player.seekTo(resume)
@@ -700,25 +673,9 @@ fun PlayerScreen(
                     runCatching { p.stop() }
                     r.close()
                 }
-                preparedIndex = index
-                preparedVid = ep.vid
-                if (!feed) {
-                    Store.record(
-                        seriesId = seriesId,
-                        title = title,
-                        cover = DetailCache.get(seriesId)?.cover.orEmpty(),
-                        episode = index,
-                        total = episodes.size,
-                        allowRewind = true,
-                    )
-                    Api.historySyncAsync()
-                    scope.launch(Dispatchers.IO) {
-                        // 报「这次实际从哪儿开始播」，别再写死 0 —— 写 0 会把云端进度压没，
-                        // 手机端/Windows 端看到的就是「刚从头开始」
-                        runCatching { Api.reportProgress(seriesId, ep.vid, index, resume) }
-                    }
-                }
-                preparing = false
+                ps.preparedIndex = index
+                ps.preparedVid = ep.vid
+                ps.preparing = false
             }.isSuccess
             if (ok) return@LaunchedEffect
             // 预取的那一路万一已经坏了，退回正常流程重新取一遍，不要停在这
@@ -731,17 +688,16 @@ fun PlayerScreen(
         prefetchReady2?.let { dropReady(it) }
         prefetchReady2 = null
 
-        preparing = true
-        showSpinner = true
+        ps.preparing = true
+        ps.showSpinner = true
         // 同一切清晰度要保住播放进度；换集才从头开始
         // 刷剧是「预览连播」：每一部都从第一秒开始，不接上次进度
         val localPos = if (feed) 0L else Store.posOf(ep.vid)
-        val keepAt = if (feed) 0L else if (index == preparedIndex) {
+        val keepAt = if (feed) 0L else if (index == ps.preparedIndex) {
             runCatching { player.currentPosition }.getOrDefault(0L)
-        } else if (index == startIndex && startMs > 0L && localPos <= 2_000L) {
-            // 从历史点进来：这一集用云端「看到第几秒」。
-            // 本机已经有这一集的播放档案（localPos）时以本机为准——起播后
-            // 播放器上报的位置会写进档案，之后再 prepare 一次也不会被拉回 0。
+        } else if (index == startIndex && startMs > 0L) {
+            // 从历史/继续看进来：用历史行里的秒数。它可能是另一台设备刚写的，
+            // 比本机旧档案更新，所以不能再让 localPos 把它压掉。
             startMs
         } else {
             // 换集：回到这一集上次看到的位置（同一进程内看过才有），没有就从头
@@ -751,9 +707,9 @@ fun PlayerScreen(
         try {
             // 档位表一次拿全（含直链/编码），切清晰度直接用表里的地址，不再请求上游
             val ts = withContext(Dispatchers.IO) {
-                runCatching { Api.tiers(ep.vid) }.getOrDefault(emptyList())
+                runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
             }
-            tiers = ts
+            ps.tiers = ts
             val cap = if (defWant > 0) defWant else Store.maxHeight
             val playableTiers = ts.filter { it.playable }
             val picked = playableTiers.firstOrNull { it.height == cap }
@@ -763,8 +719,8 @@ fun PlayerScreen(
             // 刷剧：后面几部已经预载过（详情 + 档位 + 解密代理头部），直接接管
             val pre = if (feed) FeedPreload.take(seriesId) else null
             val info = pre?.info ?: picked?.toPlayInfo()
-                ?: withContext(Dispatchers.IO) { Api.play(ep.vid, 1004, defWant) }
-            curDef = info.height
+                ?: withContext(Dispatchers.IO) { PlaybackApi.play(ep.vid, 1004, defWant) }
+            ps.curDef = info.height
             // 注意：不要再按「历史标记」直接跳过这一集。
             // 标记只说明「某次、某个清晰度」确实解不了，不代表现在也解不了
             // （21 集曾被旧标记误判成 bvc2，VVC 页发现是 hvc1 又交回来，来回跳）。
@@ -774,10 +730,10 @@ fun PlayerScreen(
             val px = StreamProxy(rv)
             px.start()
             created = rv to px
-            duration = rv.total
+            ps.duration = rv.total
             // 同上：切集前先记住上一集看到哪儿
-            if (preparedVid.isNotEmpty() && preparedIndex > 0) {
-                runCatching { Store.markPos(preparedVid, player.currentPosition) }
+            if (ps.preparedVid.isNotEmpty() && ps.preparedIndex > 0) {
+                runCatching { Store.markPos(ps.preparedVid, player.currentPosition) }
             }
             // 手动换集/换清晰度会走到这里，播放列表会被整体替换：
             // 之前挂在队列里的那几集也就作废了，连同它们的本地代理一起关掉，
@@ -804,32 +760,16 @@ fun PlayerScreen(
                 r.close()
             }
 
-            preparedIndex = index
-            preparedVid = ep.vid
-            if (!feed) {
-                Store.record(
-                    seriesId = seriesId,
-                    title = title,
-                    // 之前写死空串，导致本地和云端的历史卡片全是空封面
-                    cover = DetailCache.get(seriesId)?.cover.orEmpty(),
-                    episode = index,
-                    total = episodes.size,
-                    allowRewind = true,
-                )
-                Api.historySyncAsync()
-                // 互通：把进度也报给官方，手机官方 App / Windows 版侧栏历史能看到
-                scope.launch(Dispatchers.IO) {
-                    runCatching { Api.reportProgress(seriesId, ep.vid, index, keepAt) }
-                }
-            }
-            preparing = false
+            ps.preparedIndex = index
+            ps.preparedVid = ep.vid
+            ps.preparing = false
         } catch (e: CancellationException) {
             throw e
         } catch (e: UnsupportedCodecException) {
             // 服务端已经把 VVC 集换成 H.265/H.264；走到这里说明兼容接口和转码都失败。
             // 不再进 VVC 软解页（控制条/播放器会和正常集不一致），直接给出可操作提示。
-            preparing = false
-            failed = "这一集片源暂不支持（${e.codec}），换一集试试"
+            ps.preparing = false
+            ps.failed = "这一集片源暂不支持（${e.codec}），换一集试试"
             val badVid = episodes.getOrNull(index - 1)?.vid.orEmpty()
             episodes.getOrNull(index - 1)?.let { Store.markUnsupported(it.vid) }
             Log.e("Playback", "unsupported codec vid=$badVid series=$seriesId title=$title ep=$index")
@@ -839,7 +779,7 @@ fun PlayerScreen(
             // 自动跳到下一部；连续失败 3 次才认为真的没网，停下来给提示。
             if (feed && msg.contains("取流") && onFeedStep != null && UiMemo.feedFailStreak < 2) {
                 UiMemo.feedFailStreak += 1
-                failed = null
+                ps.failed = null
                 runCatching {
                     android.widget.Toast.makeText(
                         context, "取流失败，已跳到下一部", android.widget.Toast.LENGTH_SHORT,
@@ -847,9 +787,9 @@ fun PlayerScreen(
                 }
                 onFeedStep.invoke(1)
             } else {
-                failed = msg
+                ps.failed = msg
             }
-            preparing = false
+            ps.preparing = false
         } finally {
             // 被下一集打断（或起播失败）时，本协程自己建的资源在这里关掉
             created?.let { (r, p) ->
@@ -866,9 +806,9 @@ fun PlayerScreen(
      * 全做完放在 [prefetchReady] 里，切集时直接 setMediaItem。
      * 不往前多备——每集都要多下 1MB 头部，顺带抢带宽，而用户绝大多数是顺序看。
      */
-    LaunchedEffect(index, preparedIndex, preparedVid, episodes.size, defWant, seamlessHandled, decodeGen) {
-        if (preparedIndex != index || preparedVid.isEmpty()) return@LaunchedEffect
-        Log.i("nextup", "scan index=$index prepared=$preparedIndex")
+    LaunchedEffect(index, ps.preparedIndex, ps.preparedVid, episodes.size, defWant, seamlessHandled, decodeGen) {
+        if (ps.preparedIndex != index || ps.preparedVid.isEmpty()) return@LaunchedEffect
+        Log.i("nextup", "scan index=$index prepared=${ps.preparedIndex}")
         // 起播后稍等一拍再动手，别跟首帧抢带宽；但也不能等太久——有的短剧一集只有 47 秒
         delay(1_500)
         // 提前准备后面 PREFETCH_AHEAD 集（= 2）：连看三集都不用等转圈。
@@ -958,36 +898,35 @@ fun PlayerScreen(
         while (true) {
             runCatching {
                 position = player.currentPosition
-                if (player.duration > 0) duration = player.duration
+                if (player.duration > 0) ps.duration = player.duration
                 playing = player.isPlaying
+                if (playing) playedThisEpisode += 400L
                 // 卡顿看门狗：进度 8 秒没动（且不在准备/切集/暂停）就重新取流。
                 // 只重试 2 次，避免坏片源无限重建代理；仍失败就把错误交给 UI。
                 val watchdogNow = System.currentTimeMillis()
-                if (position > 0 && position == lastTickPos) {
-                    if (lastTickAt == 0L) lastTickAt = watchdogNow
-                    else if (watchdogNow - lastTickAt > 8_000L && !preparing && !switching &&
-                        (player.isPlaying || player.playbackState == Player.STATE_BUFFERING)
-                    ) {
-                        lastTickAt = 0L
-                        if (stallRetries < 2) {
-                            stallRetries += 1
-                            Log.e("Playback", "stalled index=$index pos=$position retry=$stallRetries")
-                            // 第一次卡顿先降一档再重试：电视硬解 1080 偶发卡死，720 通常就正常
-                            if (stallRetries == 1 && Store.maxHeight > 720 && (defWant == 0 || defWant > 720)) {
-                                defWant = 720
-                                Log.e("Playback", "stall downgrade to 720p")
-                            }
-                            preparing = true
-                            failed = null
-                            attempt += 1
-                        } else {
-                            failed = "播放卡住了，点「重试」再试一次"
-                            preparing = false
+                when (watchdog.onTick(
+                    position = position,
+                    now = watchdogNow,
+                    active = player.isPlaying || player.playbackState == Player.STATE_BUFFERING,
+                    preparing = ps.preparing,
+                    switching = ps.switching,
+                )) {
+                    StallWatchdog.Decision.RETRY -> {
+                        Log.e("Playback", "stalled index=$index pos=$position retry=${watchdog.retryCount}")
+                        // 第一次卡顿先降一档再重试：电视硬解 1080 偶发卡死，720 通常就正常
+                        if (watchdog.retryCount == 1 && Store.maxHeight > 720 && (defWant == 0 || defWant > 720)) {
+                            defWant = 720
+                            Log.e("Playback", "stall downgrade to 720p")
                         }
+                        ps.preparing = true
+                        ps.failed = null
+                        ps.attempt += 1
                     }
-                } else {
-                    lastTickPos = position
-                    lastTickAt = 0L
+                    StallWatchdog.Decision.GIVE_UP -> {
+                        ps.failed = "播放卡住了，点「重试」再试一次"
+                        ps.preparing = false
+                    }
+                    StallWatchdog.Decision.NONE -> Unit
                 }
                 // 快播完时抓一帧备着（只抓不显示，等这一集真的结束再盖）。
                 // 抓得越晚越接近真正的末帧，所以窗口内每一拍都重抓一次、取最新的
@@ -1012,24 +951,36 @@ fun PlayerScreen(
                 // 写盘挪到 IO 线程：以前每 400ms 在主线程解析并回写整份历史 JSON，
                 // 条目越多越顿；同时把历史行回写从 4 秒放宽到 10 秒（暂停/切集/退出都会补写）
                 if (!feed) {
+                    val ep = episodes.getOrNull(index - 1)
                     withContext(Dispatchers.IO) {
-                        episodes.getOrNull(index - 1)?.let { ep -> Store.markPos(ep.vid, position) }
+                        ep?.let { Store.markPos(it.vid, position) }
                     }
-                    // 10 拍≈4 秒：写一次本地历史（退出播放页、切集、杀进程后能续上）
-                    if (reportTick % 10 == 0) {
-                        withContext(Dispatchers.IO) { Store.touchHistoryPos(seriesId, index, position) }
+                    // 历史 = 最近一次真实播放：真正播过 3 秒才写，点开马上退出不算。
+                    // 第一笔立即写，之后每 4 秒刷新当前集数/秒数；换到低集数也照实更新。
+                    if (ep != null && playedThisEpisode >= 3_000L && position > 0L &&
+                        (reportTick % 10 == 0 || !historyWritten)
+                    ) {
+                        val first = !historyWritten
+                        historyWritten = true
+                        val t = title
+                        val cover = DetailCache.get(seriesId)?.cover.orEmpty()
+                        withContext(Dispatchers.IO) {
+                            HistoryReporter.onPlayed(seriesId, t, cover, index, episodes.size, position)
+                        }
+                        // 本地第一笔就推一次云端；之后每 20 秒推一次（内部有 10 秒节流）
+                        if (first || reportTick % 50 == 0) HistoryReporter.sync()
                     }
                 }
                 // 50 拍≈20 秒：把秒级位置报给官方（互通的关键，手机端能看到看到第几秒）。
                 // 开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）；
                 // 上报走 IO，不能卡住这个 400ms 循环。
-                if (reportTick % 50 == 0) {
+                if (reportTick % 50 == 0 && playedThisEpisode >= 5_000L) {
                     val ep = episodes.getOrNull(index - 1)
                     val pos = position
-                    if (ep != null && pos > 5_000) {
+                    if (ep != null && pos > 0) {
                         launch(Dispatchers.IO) {
                             val ok = runCatching {
-                                Api.reportProgress(seriesId, ep.vid, index, pos)
+                                HistoryReporter.reportOfficial(seriesId, ep.vid, index, pos)
                             }.getOrDefault(false)
                             Log.d("PadReport", "ep=$index pos=${pos}ms ok=$ok")
                         }
@@ -1073,10 +1024,10 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(hint) {
-        if (hint != null) {
+    LaunchedEffect(ui.hint) {
+        if (ui.hint != null) {
             delay(2_200)
-            hint = null
+            ui.hint = null
         }
     }
 
@@ -1085,38 +1036,36 @@ fun PlayerScreen(
      *
      * 但**切集/缓冲也会让 playing 变 false**（ExoPlayer 换源那一瞬），
      * 原来不加判断，于是「上一集播完接下一集」必然弹一次控制条，
-     * 连播体验直接断掉。preparing 期间一律不弹。
+     * 连播体验直接断掉。ps.preparing 期间一律不弹。
      */
     /**
      * 换源那一秒 playing 会抖一下（STATE_ENDED → IDLE → BUFFERING → READY），
      * 期间一律不算「暂停」，否则连播必弹一次控制条。
      */
     LaunchedEffect(index) {
-        switching = true
-        stallRetries = 0
-        lastTickPos = -1L
-        lastTickAt = 0L
+        ps.switching = true
+        watchdog.reset()
         delay(1_000)
-        switching = false
+        ps.switching = false
     }
 
-    LaunchedEffect(playing, preparing, switching) {
-        if (playing || preparing || switching) return@LaunchedEffect
+    LaunchedEffect(playing, ps.preparing, ps.switching) {
+        if (playing || ps.preparing || ps.switching) return@LaunchedEffect
         // 不要「一停就亮」。换集瞬间 playing 会抖一串（ENDED → IDLE → BUFFERING → READY），
-        // 原来只靠上面那个 1 秒的 switching 挡着；新一集要是超过 1 秒才起来
+        // 原来只靠上面那个 1 秒的 ps.switching 挡着；新一集要是超过 1 秒才起来
         // （缓冲慢、片子大），这一秒一过就被判成「用户暂停了」，控制条闪出来一条。
         // 表现就是连播时偶尔闪一下、没规律（几十集里出现好几次）。
         // 现在改成：真停了以后再等 1.5 秒复核，确实还停着才亮。
         delay(1_500)
-        if (playing || preparing || switching) return@LaunchedEffect
+        if (playing || ps.preparing || ps.switching) return@LaunchedEffect
         // 电视上：用户刚按过 ←/→（快进会短暂缓冲）或确定（主动暂停），
         // 这时候 isPlaying 变 false 是「他要的效果」，不能顺手把控制条亮出来 ——
         // 一亮就把焦点抢进按钮行，第二下右键就变成移动焦点了。
-        val justActed = System.currentTimeMillis() - lastActionAt < 1_500L
+        val justActed = System.currentTimeMillis() - ui.lastActionAt < 1_500L
         // 刷剧模式没有控制台，暂停就只暂停，不亮条、不抢焦点
         if (!feed && !(isTv && justActed)) {
-            controlsVisible = true
-            lastActionAt = System.currentTimeMillis()
+            ui.controlsVisible = true
+            ui.lastActionAt = System.currentTimeMillis()
             Log.d("chrome", "auto show paused index=$index")
         }
     }
@@ -1125,31 +1074,31 @@ fun PlayerScreen(
      * 5 秒没操作才收起。
      *
      * 四个例外一律不收：暂停中、开着浮层（选集/倍速/清晰度/弹幕设置）、
-     * 正在输入弹幕、刚点过控制台上的任何东西（lastActionAt 会被重置，
+     * 正在输入弹幕、刚点过控制台上的任何东西（ui.lastActionAt 会被重置，
      * 这里靠它做 key 重新起跑计时）。
      */
-    LaunchedEffect(controlsVisible, menu, editing, lastActionAt, playing, chromeFocused) {
+    LaunchedEffect(ui.controlsVisible, ui.menu, ui.editing, ui.lastActionAt, playing, chromeFocused) {
         // 注意：这里**不能**因为「焦点在按钮行」就不收。
         // 以前加了 chromeFocused 这个免责条件，结果是用过选集/倍速之后焦点留在按钮行，
         // 控制条就再也不隐藏了——用户表现为「播着播着控制条一直挂着，要按两次返回才收」
         // （第一次返回清焦点标记，第二次才收条）。
         // 现在改成：只要没人在操作就收，收之前先把焦点还给全屏层，别让焦点悬空。
-        if (!controlsVisible || !playing || menu != PlayerMenu.None || editing) {
+        if (!ui.controlsVisible || !playing || ui.menu != PlayerMenu.None || ui.editing) {
             return@LaunchedEffect
         }
         delay(5000)
-        if (System.currentTimeMillis() - lastActionAt < 4900) return@LaunchedEffect
+        if (System.currentTimeMillis() - ui.lastActionAt < 4900) return@LaunchedEffect
         if (chromeFocused) {
             chromeFocused = false
             runCatching { focusManager.clearFocus() }
             runCatching { focus.requestFocus() }
         }
-        controlsVisible = false
+        ui.controlsVisible = false
     }
 
     // 控制条收起时焦点标记一起复位，否则下次唤出会误判成「还在按钮行」
-    LaunchedEffect(controlsVisible) {
-        if (!controlsVisible) chromeFocused = false
+    LaunchedEffect(ui.controlsVisible) {
+        if (!ui.controlsVisible) chromeFocused = false
     }
 
     /**
@@ -1157,14 +1106,14 @@ fun PlayerScreen(
      * 打开时直接请求面板首项，关闭时送回按钮行。这里只把「开着浮层」当作在控制台上，
      * 免得 5 秒计时把面板连同控制条一起收掉。
      */
-    LaunchedEffect(menu) {
-        if (menu != PlayerMenu.None) chromeFocused = true
+    LaunchedEffect(ui.menu) {
+        if (ui.menu != PlayerMenu.None) chromeFocused = true
     }
 
-    val mark = { lastActionAt = System.currentTimeMillis() }
+    val mark = { ui.lastActionAt = System.currentTimeMillis() }
 
     fun seekBy(deltaMs: Long) {
-        val max = (duration - 800).coerceAtLeast(0)
+        val max = (ps.duration - 800).coerceAtLeast(0)
         player.seekTo((player.currentPosition + deltaMs).coerceIn(0, max))
         mark()
     }
@@ -1190,7 +1139,7 @@ fun PlayerScreen(
     }
 
     fun enterChrome() {
-        controlsVisible = true
+        ui.controlsVisible = true
         mark()
         // 焦点交给 PlayerChrome：控制条这一帧才刚可见，按钮还没上屏，
         // 在这里 requestFocus 会抛「FocusRequester is not initialized」并被吞掉，
@@ -1283,9 +1232,9 @@ fun PlayerScreen(
 
     fun tvKeys(ev: KeyEvent): Boolean = tvNativeKeys(ev) || when (ev.key) {
         Key.Back -> when {
-            menu != PlayerMenu.None -> { menu = PlayerMenu.None; mark(); true }
+            ui.menu != PlayerMenu.None -> { ui.menu = PlayerMenu.None; mark(); true }
             chromeFocused -> { leaveChrome(); true }
-            controlsVisible -> { controlsVisible = false; mark(); true }
+            ui.controlsVisible -> { ui.controlsVisible = false; mark(); true }
             else -> { onBack(); true }
         }
         Key.DirectionCenter, Key.Enter, Key.Spacebar ->
@@ -1299,14 +1248,14 @@ fun PlayerScreen(
         Key.DirectionRight ->
             if (chromeFocused) false else { seekByKey(1); true }
         Key.DirectionDown ->
-            if (menu != PlayerMenu.None) false
+            if (ui.menu != PlayerMenu.None) false
             // 已经在按钮行：吃掉，别把焦点甩出控制台（甩出去就变成快进了，看着像坏了）
             else if (chromeFocused) true
             else { enterChrome(); true }
         Key.DirectionUp ->
-            if (menu != PlayerMenu.None) false
+            if (ui.menu != PlayerMenu.None) false
             else if (chromeFocused) { leaveChrome(); true }
-            else if (!controlsVisible) { controlsVisible = true; mark(); true }
+            else if (!ui.controlsVisible) { ui.controlsVisible = true; mark(); true }
             else false
         else -> false
     }
@@ -1314,12 +1263,12 @@ fun PlayerScreen(
     /** Pad 键位（触屏为主，这里只服务外接键盘/鼠标，保持原有手感）。 */
     fun padKeys(ev: KeyEvent): Boolean = when (ev.key) {
         Key.Back -> when {
-            menu != PlayerMenu.None -> { menu = PlayerMenu.None; true }
-            controlsVisible -> { controlsVisible = false; true }
+            ui.menu != PlayerMenu.None -> { ui.menu = PlayerMenu.None; true }
+            ui.controlsVisible -> { ui.controlsVisible = false; true }
             else -> { onBack(); true }
         }
         Key.DirectionCenter, Key.Enter -> {
-            if (controlsVisible) {
+            if (ui.controlsVisible) {
                 false // 控制条显示时，确定键交给聚焦的按钮
             } else {
                 if (player.isPlaying) player.pause() else player.play()
@@ -1327,11 +1276,11 @@ fun PlayerScreen(
             }
         }
         Key.DirectionLeft ->
-            if (controlsVisible) false else { seekByKey(-1); true }
+            if (ui.controlsVisible) false else { seekByKey(-1); true }
         Key.DirectionRight ->
-            if (controlsVisible) false else { seekByKey(1); true }
+            if (ui.controlsVisible) false else { seekByKey(1); true }
         Key.DirectionUp, Key.DirectionDown ->
-            if (!controlsVisible) { controlsVisible = true; true } else false
+            if (!ui.controlsVisible) { ui.controlsVisible = true; true } else false
         else -> false
     }
 
@@ -1340,8 +1289,8 @@ fun PlayerScreen(
      * 不显式还焦点的话，关面板后遥控器方向键/确定全部失灵（只剩返回可用）。
      */
     fun closeComments() {
-        if (!commentsOpen) return
-        commentsOpen = false
+        if (!ui.commentsOpen) return
+        ui.commentsOpen = false
         focusManager.clearFocus()
         runCatching { focus.requestFocus() }
     }
@@ -1356,7 +1305,7 @@ fun PlayerScreen(
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 // 评论面板打开时：返回先关面板，其它键交给面板（焦点在列表/输入框上）
-                if (commentsOpen) {
+                if (ui.commentsOpen) {
                     if (ev.key == Key.Back) {
                         closeComments()
                         return@onPreviewKeyEvent true
@@ -1388,10 +1337,10 @@ fun PlayerScreen(
                             // 刷剧模式没有控制台：单击 = 播放/暂停（和 PC 刷剧页一致）
                             if (feed) {
                                 if (player.isPlaying) player.pause() else player.play()
-                            } else if (menu != PlayerMenu.None) {
-                                menu = PlayerMenu.None
+                            } else if (ui.menu != PlayerMenu.None) {
+                                ui.menu = PlayerMenu.None
                             } else {
-                                controlsVisible = !controlsVisible
+                                ui.controlsVisible = !ui.controlsVisible
                             }
                             mark()
                         },
@@ -1453,20 +1402,20 @@ fun PlayerScreen(
         DanmakuLayer(
             player = player,
             items = dmItems,
-            enabled = dmOn && !preparing,
+            enabled = dmOn && !ps.preparing,
             opacity = dmOpacity,
             fontScale = dmFont,
             density = dmDensity,
             area = dmArea,
         )
 
-        if (preparing && showSpinner) {
+        if (ps.preparing && ps.showSpinner) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 LoadingBlock("正在取流…")
             }
         }
 
-        failed?.let { msg ->
+        ps.failed?.let { msg ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(msg, color = TextMain, fontSize = 15.sp)
@@ -1474,14 +1423,14 @@ fun PlayerScreen(
                     Box(
                         Modifier
                             .background(PanelHi, RoundedCornerShape(10.dp))
-                            .clickable { attempt++ }
+                            .clickable { ps.attempt++ }
                             .padding(horizontal = 22.dp, vertical = 10.dp),
                     ) { Text("重试", color = TextMain, fontSize = 14.sp) }
                 }
             }
         }
 
-        if (controlsVisible) {
+        if (ui.controlsVisible) {
             // 顶部：返回胶囊 + 标题/集数 + 详情胶囊（原版播放页形态）
             Row(
                 Modifier
@@ -1537,23 +1486,23 @@ fun PlayerScreen(
 
         // 控制台（与 Windows 版同一套：细进度条 + 图标行 + 右侧功能组）
         PlayerChrome(
-            menu = menu,
+            menu = ui.menu,
             // ↑ 只亮控制条（不抢焦点，左右键照常快进）；↓ 进来时才把焦点交给按钮行
             focusOnShow = chromeFocused,
             // 评论面板是模态的：它开着时控制条不许再 requestFocus（会从面板手里抢焦点）
-            modalOpen = commentsOpen,
+            modalOpen = ui.commentsOpen,
             onMenu = {
-                menu = it
+                ui.menu = it
                 // 浮层关闭也算一次操作，否则关完立刻开始倒计时
-                if (it == PlayerMenu.None) lastActionAt = System.currentTimeMillis()
+                if (it == PlayerMenu.None) ui.lastActionAt = System.currentTimeMillis()
             },
-            visible = controlsVisible,
+            visible = ui.controlsVisible,
             position = position,
-            duration = duration,
+            duration = ps.duration,
             playing = playing,
             speed = speed,
-            definitions = tiers.filter { it.playable }.map { it.height },
-            definition = curDef,
+            definitions = ps.tiers.filter { it.playable }.map { it.height },
+            definition = ps.curDef,
             episodes = episodes,
             index = index,
             danmakuOn = dmOn,
@@ -1611,8 +1560,8 @@ fun PlayerScreen(
             onSendDanmaku = { text ->
                 val ep = episodes.getOrNull(index - 1)
                 when {
-                    ep == null -> hint = "这一集还没准备好"
-                    !Store.loggedIn -> hint = "登录后才能发弹幕"
+                    ep == null -> ui.hint = "这一集还没准备好"
+                    !Store.loggedIn -> ui.hint = "登录后才能发弹幕"
                     else -> {
                         val at = runCatching { player.currentPosition }.getOrDefault(0L)
                         scope.launch {
@@ -1620,13 +1569,13 @@ fun PlayerScreen(
                                 runCatching { Api.sendDanmaku(ep.vid, seriesId, text, at) }
                                     .getOrDefault(false)
                             }
-                            hint = if (ok) "弹幕已发送" else "弹幕发送失败"
+                            ui.hint = if (ok) "弹幕已发送" else "弹幕发送失败"
                         }
                     }
                 }
                 mark()
             },
-            onEditingChange = { editing = it },
+            onEditingChange = { ui.editing = it },
             isTv = isTv,
             playFocus = if (isTv) playFocus else null,
             // 控制条最右侧的「详情」：电视上这是唯一入口（顶部胶囊遥控器够不到）；
@@ -1639,10 +1588,10 @@ fun PlayerScreen(
             onToggleFav = {
                 val target = !fav
                 scope.launch {
-                    withContext(Dispatchers.IO) { runCatching { Api.collectSeries(seriesId, target) } }
+                    withContext(Dispatchers.IO) { runCatching { ShelfRepository.toggle(ShelfKind.Favorite, seriesId, target) } }
                     if (Store.contains("favorite", seriesId) != target) Store.toggle("favorite", seriesId)
                     withContext(Dispatchers.Main) { fav = target }
-                    hint = if (target) "已收藏" else "已取消收藏"
+                    ui.hint = if (target) "已收藏" else "已取消收藏"
                     mark()
                 }
             },
@@ -1651,23 +1600,23 @@ fun PlayerScreen(
                 val vid = episodes.getOrNull(index - 1)?.vid.orEmpty()
                 scope.launch {
                     withContext(Dispatchers.IO) {
-                        if (vid.isNotBlank()) runCatching { Api.diggVideo(vid, seriesId, target) }
+                        if (vid.isNotBlank()) runCatching { ShelfRepository.toggle(ShelfKind.Like, seriesId, target, vid) }
                     }
                     if (Store.contains("like", seriesId) != target) Store.toggle("like", seriesId)
                     withContext(Dispatchers.Main) { liked = target }
-                    hint = if (target) "已点赞" else "已取消点赞"
+                    ui.hint = if (target) "已点赞" else "已取消点赞"
                     mark()
                 }
             },
             onComments = {
-                commentsOpen = true
+                ui.commentsOpen = true
                 // 面板自己会拿焦点；控制条这边先退出焦点态，5 秒后自动收起
                 chromeFocused = false
             },
         )
 
         // 单集评论面板：盖在播放器上，TV 只读、Pad 可发
-        if (commentsOpen) {
+        if (ui.commentsOpen) {
             val vid = episodes.getOrNull(index - 1)?.vid.orEmpty()
             if (vid.isNotBlank()) {
                 EpisodeCommentsPanel(
@@ -1714,7 +1663,7 @@ fun PlayerScreen(
                     Modifier.fillMaxWidth().height(2.dp)
                         .background(Color.White.copy(alpha = 0.18f)),
                 ) {
-                    val frac = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+                    val frac = if (ps.duration > 0) (position.toFloat() / ps.duration).coerceIn(0f, 1f) else 0f
                     Box(
                         Modifier.fillMaxWidth(frac).height(2.dp)
                             .background(Color(0xCCFF4A3D)),
@@ -1732,7 +1681,7 @@ fun PlayerScreen(
         }
 
         // 提示条（发送结果之类）：控制条上方居中的小胶囊
-        hint?.let { msg ->
+        ui.hint?.let { msg ->
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
@@ -1747,64 +1696,7 @@ fun PlayerScreen(
     }
 }
 
-// ---------------- 下一集预取 ----------------
-
-/**
- * 预取好的一集：档位表、解密后的样本表、已监听的本地代理，起播要的东西都在这里，
- * 切过去只差一句 setMediaItem。
- */
-internal class ReadyEpisode(
-    val index: Int,
-    val vid: String,
-    val defWant: Int,
-    val tiers: List<PlayTier>,
-    val remote: RemoteVideo,
-    val proxy: StreamProxy,
-    val def: Int,
-)
-
-private fun dropReady(r: ReadyEpisode) {
-    runCatching { r.proxy.stop() }
-    runCatching { r.remote.close() }
-}
-
-internal fun buildReady(
-    index: Int,
-    ep: Episode,
-    defWant: Int,
-    keepVids: Set<String> = emptySet(),
-    alive: () -> Boolean,
-): ReadyEpisode? {
-    if (!alive()) return null
-    val ts = Api.tiers(ep.vid)
-    if (!alive()) return null
-    val cap = if (defWant > 0) defWant else Store.maxHeight
-    val playable = ts.filter { it.playable }
-    val picked = playable.firstOrNull { it.height == cap }
-        ?: playable.firstOrNull { it.height <= cap }
-        ?: playable.firstOrNull()
-    val info = picked?.toPlayInfo() ?: Api.play(ep.vid, 1004, defWant)
-    val rv = RemoteVideo(info)
-    try {
-        rv.prepare(warmLastBlock = false)
-    } catch (e: UnsupportedCodecException) {
-        rv.close()
-        Log.w("nextup", "next ep$index unsupported codec=${e.codec}（服务端转码失败）")
-        return null
-    }
-    if (!alive()) {
-        rv.close()
-        return null
-    }
-    val px = StreamProxy(rv)
-    px.start()
-    if (!alive()) {
-        px.stop()
-        rv.close()
-        return null
-    }
-    return ReadyEpisode(index, ep.vid, defWant, ts, rv, px, info.height)
-}
+// 预取/选源（ReadyEpisode / buildReady）见 PlaybackSourcePlanner.kt
 
 /**
  * 粗略判断一帧是不是全黑。

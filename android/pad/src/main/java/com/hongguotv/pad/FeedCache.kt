@@ -17,6 +17,7 @@ import java.io.File
 object FeedCache {
     private const val FILE = "feed-cache.json"
     private const val TTL_MS = 24 * 60 * 60 * 1000L
+    private const val SCHEMA = 2
 
     private var file: File? = null
 
@@ -28,6 +29,7 @@ object FeedCache {
         val f = file ?: return
         runCatching {
             val root = if (f.exists()) JSONObject(f.readText()) else JSONObject()
+            root.put("_schema", SCHEMA)
             val arr = JSONArray()
             cards.forEach { arr.put(it.toJson()) }
             root.put(
@@ -42,7 +44,9 @@ object FeedCache {
         val f = file ?: return emptyList()
         if (!f.exists()) return emptyList()
         return runCatching {
-            val node = JSONObject(f.readText()).optJSONObject(key) ?: return emptyList()
+            val root = JSONObject(f.readText())
+            if (root.optInt("_schema", 0) != SCHEMA) return emptyList()
+            val node = root.optJSONObject(key) ?: return emptyList()
             if (System.currentTimeMillis() - node.optLong("at") > TTL_MS) return emptyList()
             val arr = node.optJSONArray("cards") ?: return emptyList()
             (0 until arr.length()).mapNotNull { i ->

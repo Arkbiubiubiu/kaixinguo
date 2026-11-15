@@ -52,6 +52,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hongguotv.pad.ShelfKind
+import com.hongguotv.pad.ShelfRepository
+import com.hongguotv.pad.SeasonService
 import com.hongguotv.pad.Api
 import com.hongguotv.pad.ReviewPage
 import com.hongguotv.pad.RelatedGroup
@@ -115,7 +118,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                 relatedLoaded = true
             }
             launch {
-                seasons = withContext(Dispatchers.IO) { runCatching { Api.seasons(seriesId) }.getOrDefault(emptyList()) }
+                seasons = withContext(Dispatchers.IO) { runCatching { SeasonService.list(seriesId) }.getOrDefault(emptyList()) }
             }
         }
         loadDone = true
@@ -274,7 +277,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                             Text("即将上线", color = Palette.accent, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                             SecondaryButton(if (d.onlineSubscribed) "已预约" else "预约", icon = if (d.onlineSubscribed) Icons.Filled.Check else Icons.Filled.Add) {
                                 scope.launch(Dispatchers.IO) {
-                                    val ok = runCatching { Api.reserveToggle(seriesId, !d.onlineSubscribed) }.getOrDefault(false)
+                                    val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, seriesId, !d.onlineSubscribed) }.getOrDefault(false)
                                     withContext(Dispatchers.Main) {
                                         message = if (ok) (if (d.onlineSubscribed) "已取消预约" else "预约成功，上线提醒你") else "操作失败（需要登录）"
                                         if (ok) detail = d.copy(onlineSubscribed = !d.onlineSubscribed)
@@ -292,7 +295,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                                 val target = !fav
                                 scope.launch(Dispatchers.IO) {
                                     // 收藏要落到账号上（云端），本地只做离线镜像
-                                    val ok = runCatching { Api.collectSeries(seriesId, target) }.getOrDefault(false)
+                                    val ok = runCatching { ShelfRepository.toggle(ShelfKind.Favorite, seriesId, target) }.getOrDefault(false)
                                     withContext(Dispatchers.Main) {
                                         if (ok) {
                                             fav = PcStore.toggle("favorite", seriesId) == target
@@ -309,7 +312,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                                 if (likeVid.isEmpty()) return@SecondaryButton
                                 val target = !liked
                                 scope.launch(Dispatchers.IO) {
-                                    val ok = runCatching { Api.diggVideo(likeVid, seriesId, target) }.getOrDefault(false)
+                                    val ok = runCatching { ShelfRepository.toggle(ShelfKind.Like, seriesId, target, likeVid) }.getOrDefault(false)
                                     withContext(Dispatchers.Main) {
                                         if (ok) liked = target
                                         message = if (ok) (if (target) "已点赞" else "已取消点赞") else "操作失败（需要登录）"
@@ -321,7 +324,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                                 SecondaryButton(if (followed) "已追更" else "追更", icon = if (followed) Icons.Filled.Check else Icons.Filled.Add) {
                                     val target = !followed
                                     scope.launch(Dispatchers.IO) {
-                                        val ok = runCatching { Api.followToggle(seriesId, target) }.getOrDefault(false)
+                                        val ok = runCatching { ShelfRepository.toggle(ShelfKind.Follow, seriesId, target) }.getOrDefault(false)
                                         // 追更成功立刻把更新提醒基线记成当前集数
                                         // （旧版 follow_service 同口径：从现在起出新集才提示）
                                         if (ok && target) {
@@ -635,7 +638,7 @@ private fun RelatedBlock(
                                     .border(1.dp, if (reserved) Palette.line else Palette.accent, Radius.chip)
                                     .clickable {
                                         scope.launch(Dispatchers.IO) {
-                                            val ok = runCatching { Api.reserveToggle(card.seriesId, !reserved) }.getOrDefault(false)
+                                            val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, card.seriesId, !reserved) }.getOrDefault(false)
                                             withContext(Dispatchers.Main) { if (ok) reserved = !reserved }
                                         }
                                     }

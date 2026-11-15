@@ -1,5 +1,6 @@
 package com.kaixinguo.pc
 
+import com.hongguotv.pad.PassportClient
 import com.hongguotv.pad.Api
 import org.json.JSONArray
 import org.json.JSONObject
@@ -313,7 +314,7 @@ object PcLogin {
     }
 
     private fun call(path: String, pairs: List<Pair<String, String>>, cookie: String, query: JSONArray): Api.RawResp =
-        Api.passportPost(path, encodeForm(pairs), cookie, query)
+        PassportClient.post(path, encodeForm(pairs), cookie, query)
             ?: throw IllegalStateException("签名服务不可用（检查设置里的签名服务地址）")
 
     private fun encodeMobile(mobile: String) = xor05Hex("+86$mobile")

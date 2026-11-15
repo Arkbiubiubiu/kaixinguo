@@ -188,22 +188,13 @@ object Updater {
             if (conn.responseCode !in 200..299) error("清单 HTTP ${conn.responseCode}")
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             val o = JSONObject(text)
-            // 按 CPU 架构选包（清单里的 abis 节点）：arm64 / v7a / x86_64 各一份，
-            // 设备自己认；没有匹配或清单没写 abis 时回落到通用包 path（老清单兼容）。
-            val abis = o.optJSONObject("abis")
-            val abiKey = Build.SUPPORTED_ABIS.firstOrNull { abis?.has(it) == true }
-            val abiNode = abiKey?.let { abis?.optJSONObject(it) }
-            val path = abiNode?.optString("path")?.takeIf { it.isNotEmpty() } ?: o.optString("path")
+            // 按 CPU 架构选包：清单解析统一在 shared UpdateManifest
+            val sel = UpdateManifest.select(o, base, Build.SUPPORTED_ABIS.toList())
+                ?: error("清单缺少下载地址")
+            val abiKey = sel.abi
+            val path = sel.path
+            val full = sel.url
             android.util.Log.i("PadUpdater", "abi=${abiKey ?: "universal"} path=$path")
-            // 选中了具体架构包时，下载地址/大小/校验都以该节点为准：
-            // 清单顶层的 url/size/sha256 是给老客户端用的通用包，混用会校验失败。
-            val full = if (abiNode != null) {
-                if (path.isNotEmpty()) "$base/$path" else ""
-            } else {
-                o.optString("url").takeIf { it.startsWith("http") }
-                    ?: if (path.isNotEmpty()) "$base/$path" else ""
-            }
-            if (full.isEmpty()) error("清单缺少下载地址")
             // 下载镜像：优先用服务器下发的发现列表（樱花四线 + cpolar，不含 CF/局域网），
             // 拿不到才退回清单源本身。这样下载永远走最快的公网通道，与外部用户体验一致。
             val mirrorBases = discoveredMirrors.ifEmpty { BASES.map { it.first } }
@@ -217,8 +208,8 @@ object Updater {
                 versionCode = o.optInt("versionCode", 0),
                 versionName = o.optString("versionName"),
                 url = full,
-                size = abiNode?.optLong("size", 0L)?.takeIf { it > 0L } ?: o.optLong("size", 0L),
-                sha256 = abiNode?.optString("sha256")?.takeIf { it.isNotEmpty() } ?: o.optString("sha256"),
+                size = sel.size,
+                sha256 = sel.sha256,
                 notes = o.optString("notes"),
                 urls = mirrors,
             )

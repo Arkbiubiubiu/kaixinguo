@@ -2,6 +2,7 @@
 
 import androidx.compose.runtime.mutableStateOf
 import com.hongguotv.pad.AccountState
+import com.hongguotv.pad.HistoryRepository
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -15,14 +16,41 @@ import java.util.Properties
  */
 object PcStore : AccountState {
 
-    private val dir: File by lazy {
+    internal val dir: File by lazy {
         File(System.getenv("APPDATA") ?: ".", "KaixinguoPC").apply { mkdirs() }
     }
 
     private val file = File(dir, "prefs.properties")
 
-    private val props = Properties().apply {
+    internal val props = Properties().apply {
         if (file.exists()) runCatching { file.reader(Charsets.UTF_8).use { load(it) } }
+    }
+
+    private val HISTORY_SCHEMA = HistoryRepository.SCHEMA
+
+    init { migrateHistorySchema() }
+
+    /** 历史行结构版本：清脏行、补齐秒数/时间字段；只跑一次。 */
+    private fun migrateHistorySchema() {
+        if (str("history_schema", "0").toIntOrNull() ?: 0 >= HISTORY_SCHEMA) return
+        runCatching {
+            val arr = JSONArray(str("history", "[]"))
+            val out = JSONArray()
+            for (i in 0 until arr.length()) {
+                val row = arr.optJSONObject(i) ?: continue
+                val id = row.optString("seriesId")
+                val ep = row.optInt("episode", 0)
+                if (id.isEmpty() || ep <= 0) continue
+                row.put("episode", ep)
+                    .put("total", maxOf(0, row.optInt("total", 0)))
+                    .put("positionMs", maxOf(0L, row.optLong("positionMs", 0L)))
+                    .put("at", maxOf(0L, row.optLong("at", 0L)))
+                out.put(row)
+            }
+            props.setProperty("history", out.toString())
+            props.setProperty("history_schema", HISTORY_SCHEMA.toString())
+            save()
+        }
     }
 
     /**
@@ -37,7 +65,7 @@ object PcStore : AccountState {
     private val prefetchState = mutableStateOf(str("prefetch_eps", "0").toIntOrNull()?.coerceIn(0, 10) ?: 0)
     private val maxHeightState = mutableStateOf(str("max_height", "1080").toIntOrNull() ?: 1080)
 
-    private fun save() {
+    internal fun save() {
         runCatching {
             file.writer(Charsets.UTF_8).use { w ->
                 props.stringPropertyNames().sorted().forEach { k -> w.write("$k=${props.getProperty(k)}\n") }
@@ -45,8 +73,8 @@ object PcStore : AccountState {
         }
     }
 
-    private fun str(key: String, def: String = ""): String = props.getProperty(key) ?: def
-    private fun put(key: String, value: String) {
+    internal fun str(key: String, def: String = ""): String = props.getProperty(key) ?: def
+    internal fun put(key: String, value: String) {
         props.setProperty(key, value); save()
     }
 
@@ -168,85 +196,26 @@ object PcStore : AccountState {
 
     // ---------------- 追更更新提醒（旧版 follow_service 同口径，本地基线比对） ----------------
 
-    private val noticesFile = File(dir, "follow_notices.json")
+    // ---------------- 追更通知（实现见 PcNoticeStore.kt） ----------------
 
     /** 已读状态的通知列表（新→旧）。字段：id/seriesId/title/detail/at/read */
-    private var noticesCache: MutableList<JSONObject>? = null
+    fun followNotices(): List<JSONObject> = PcNoticeStore.followNotices()
 
-    private fun notices(): MutableList<JSONObject> {
-        noticesCache?.let { return it }
-        val list = mutableListOf<JSONObject>()
-        runCatching {
-            if (noticesFile.exists()) {
-                val arr = JSONArray(noticesFile.readText(Charsets.UTF_8))
-                for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { list.add(it) }
-            }
-        }
-        noticesCache = list
-        return list
-    }
-
-    private fun saveNotices() {
-        runCatching {
-            val arr = JSONArray()
-            notices().forEach { arr.put(it) }
-            noticesFile.writeText(arr.toString(), Charsets.UTF_8)
-        }
-    }
-
-    fun followNotices(): List<JSONObject> = notices().sortedByDescending { it.optLong("at", 0L) }
-
-    fun unreadNoticeCount(): Int = notices().count { !it.optBoolean("read", false) }
+    fun unreadNoticeCount(): Int = PcNoticeStore.unreadNoticeCount()
 
     /** 一轮更新检查：服务端集数 > 基线 → 落通知；首次见到的只记基线。返回新增数。 */
-    fun checkFollowUpdates(): Int {
-        val page = com.hongguotv.pad.Api.followUpdates()
-        if (page.items.isEmpty()) return 0
-        var added = 0
-        val now = System.currentTimeMillis()
-        page.items.forEach { item ->
-            val key = "fb_${item.seriesId}"
-            val baseline = str(key, "").toIntOrNull()
-            if (baseline == null) {
-                put(key, item.episodeCount.toString())
-                return@forEach
-            }
-            if (item.episodeCount <= baseline) return@forEach
-            put(key, item.episodeCount.toString())
-            val notice = JSONObject()
-                .put("id", now + added)
-                .put("seriesId", item.seriesId)
-                .put("title", item.title.ifBlank { "追更更新" })
-                .put("episode", item.episodeCount)
-                .put("detail", "追的剧更新了，新增 ${item.episodeCount - baseline} 集（共 ${item.episodeCount} 集）")
-                .put("at", now)
-                .put("read", false)
-            notices().add(0, notice)
-            added++
-        }
-        if (added > 0) saveNotices()
-        return added
-    }
+    fun checkFollowUpdates(): Int = PcNoticeStore.checkFollowUpdates()
 
     /** 追更时立刻把基线记成当前集数（避免「刚追完就报更新」）。 */
-    fun seedFollowBaseline(seriesId: String, episodeCount: Int) {
-        if (episodeCount > 0) put("fb_$seriesId", episodeCount.toString())
-    }
+    fun seedFollowBaseline(seriesId: String, episodeCount: Int) =
+        PcNoticeStore.seedFollowBaseline(seriesId, episodeCount)
 
-    fun markNoticeRead(id: Long) {
-        notices().firstOrNull { it.optLong("id", -1L) == id }?.put("read", true)
-        saveNotices()
-    }
+    fun markNoticeRead(id: Long) = PcNoticeStore.markNoticeRead(id)
 
-    fun markAllNoticesRead() {
-        notices().forEach { it.put("read", true) }
-        saveNotices()
-    }
+    fun markAllNoticesRead() = PcNoticeStore.markAllNoticesRead()
 
-    fun clearNotices() {
-        notices().clear()
-        saveNotices()
-    }
+    fun clearNotices() = PcNoticeStore.clearNotices()
+
 
     /** 「开箱即用」新手提示是否已经看过（只弹一次，别每次冷启动都挡首屏） */
     var setupTipSeen: Boolean
@@ -319,120 +288,28 @@ object PcStore : AccountState {
             put("dm_area", c.toString())
         }
 
+    // ---------------- 观看历史（实现见 PcHistoryStore.kt） ----------------
+
     override fun contains(key: String, seriesId: String): Boolean = readSet(key).contains(seriesId)
 
-    override fun history(): List<JSONObject> = runCatching {
-        val arr = JSONArray(str("history", "[]"))
-        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-            .groupBy { it.optString("seriesId") }
-            .values
-            .mapNotNull { same -> same.maxWithOrNull(compareBy({ it.optInt("episode", 0) }, { it.optLong("at") })) }
-            .sortedByDescending { it.optLong("at") }
-    }.getOrDefault(emptyList())
+    override fun history(): List<JSONObject> = PcHistoryStore.history()
 
-    override fun mergeHistory(remote: List<JSONObject>): List<JSONObject> {
-        val merged = LinkedHashMap<String, JSONObject>()
-        (history() + remote).forEach { row ->
-            val id = row.optString("seriesId")
-            if (id.isEmpty()) return@forEach
-            val old = merged[id]
-            if (old == null) {
-                merged[id] = row
-            } else {
-                // 进度优先：集数大 > 同集秒数大 > 时间戳新（与服务端 history_merge 同规则）
-                val re = row.optInt("episode", 0)
-                val oe = old.optInt("episode", 0)
-                val rp = row.optLong("positionMs", 0)
-                val op = old.optLong("positionMs", 0)
-                val rowBetter = when {
-                    re != oe -> re > oe
-                    rp != op -> rp > op
-                    else -> row.optLong("at") > old.optLong("at")
-                }
-                val win = if (rowBetter) row else old
-                val lose = if (rowBetter) old else row
-                if (win.optString("cover").isEmpty()) win.put("cover", lose.optString("cover"))
-                if (win.optString("title").isEmpty()) win.put("title", lose.optString("title"))
-                merged[id] = win
-            }
-        }
-        val list = merged.values.sortedByDescending { it.optLong("at") }.take(500)
-        val arr = JSONArray()
-        list.forEach { arr.put(it) }
-        put("history", arr.toString())
-        list.forEach { put("progress_${it.optString("seriesId")}", it.optInt("episode").toString()) }
-        return list
-    }
+    override fun mergeHistory(remote: List<JSONObject>): List<JSONObject> = PcHistoryStore.mergeHistory(remote)
 
-    override fun updateHistoryCover(seriesId: String, cover: String) {
-        val arr = JSONArray()
-        history().forEach { r ->
-            if (r.optString("seriesId") == seriesId) r.put("cover", cover)
-            arr.put(r)
-        }
-        put("history", arr.toString())
-    }
+    override fun updateHistoryCover(seriesId: String, cover: String) =
+        PcHistoryStore.updateHistoryCover(seriesId, cover)
 
-    // ---------------- 额外：播放进度 / 收藏追更 ----------------
+    fun recordPlayback(seriesId: String, title: String, cover: String, episode: Int, total: Int, positionMs: Long) =
+        PcHistoryStore.recordPlayback(seriesId, title, cover, episode, total, positionMs)
 
-    /** 记一条观看历史（进度只增不减）。 */
-    fun record(seriesId: String, title: String, cover: String, episode: Int, total: Int, allowRewind: Boolean = false, positionMs: Long = 0L) {
-        val rows = history()
-        val oldEp = rows.firstOrNull { it.optString("seriesId") == seriesId }?.optInt("episode", 0) ?: 0
-        val keep = if (allowRewind) episode else maxOf(oldEp, episode)
-        val list = rows.filter { it.optString("seriesId") != seriesId }.toMutableList()
-        list.add(
-            0,
-            JSONObject()
-                .put("seriesId", seriesId).put("title", title).put("cover", cover)
-                .put("episode", keep).put("total", total).put("at", System.currentTimeMillis())
-                // 本地也存「这一集看到第几秒」，历史页位置徽标与跨端续播同源
-                .put("positionMs", positionMs),
-        )
-        val arr = JSONArray()
-        list.take(200).forEach { arr.put(it) }
-        put("history", arr.toString())
-        put("progress_$seriesId", keep.toString())
-    }
+    fun posOf(vid: String): Long = PcHistoryStore.posOf(vid)
 
-    /**
-     * 播放中刷新历史行的「看到第几秒」+ at。
-     * 原来 positionMs 只在进入播放器时写一次，历史页永远显示刚点进去的位置。
-     */
-    fun touchHistoryPos(seriesId: String, episode: Int, positionMs: Long) {
-        if (positionMs <= 0) return
-        val rows = history()
-        val row = rows.firstOrNull { it.optString("seriesId") == seriesId } ?: return
-        if (row.optInt("episode") != episode) return
-        row.put("positionMs", positionMs).put("at", System.currentTimeMillis())
-        val arr = JSONArray()
-        rows.take(200).forEach { arr.put(it) }
-        put("history", arr.toString())
-    }
+    fun markPos(vid: String, positionMs: Long) = PcHistoryStore.markPos(vid, positionMs)
 
-    fun posOf(vid: String): Long = str("pos_$vid", "0").toLongOrNull() ?: 0L
+    fun removeHistory(seriesId: String) = PcHistoryStore.removeHistory(seriesId)
 
-    /** 记「这一集看到第几秒」：换集/重进播放器时续播用。每 5 秒才落一次盘。 */
-    fun markPos(vid: String, positionMs: Long) {
-        if (vid.isEmpty() || positionMs <= 0L) return
-        val saved = str("pos_$vid", "0").toLongOrNull() ?: 0L
-        if (kotlin.math.abs(positionMs - saved) >= 5_000L) put("pos_$vid", positionMs.toString())
-    }
+    fun clearHistory() = PcHistoryStore.clearHistory()
 
-    fun removeHistory(seriesId: String) {
-        val arr = JSONArray()
-        history().filter { it.optString("seriesId") != seriesId }.forEach { arr.put(it) }
-        put("history", arr.toString())
-        props.remove("progress_$seriesId")
-        save()
-    }
-
-    fun clearHistory() {
-        props.remove("history")
-        props.keys.filter { it.toString().startsWith("progress_") || it.toString().startsWith("pos_") }
-            .forEach { props.remove(it) }
-        save()
-    }
 
     fun toggle(key: String, seriesId: String): Boolean {
         val set = readSet(key)

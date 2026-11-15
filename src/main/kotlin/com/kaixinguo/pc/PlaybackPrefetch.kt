@@ -1,6 +1,7 @@
 package com.kaixinguo.pc
 
 import com.hongguotv.pad.Api
+import com.hongguotv.pad.PlaybackApi
 import com.hongguotv.pad.Episode
 import com.hongguotv.pad.Log
 import com.hongguotv.pad.PlayInfo
@@ -144,10 +145,20 @@ object PlaybackPrefetch {
     }
 
     private fun build(vid: String, maxHeight: Int, prepareHead: Boolean): Entry? = runCatching {
-        val tiers = Api.tiers(vid)
+        var tiers = PlaybackApi.tiers(vid)
+        // 全 VVC 的集：非优先级请求会返回 202 并排进服务端转码 job。
+        // 下一集（要预热头部的那集）值得等 job 完成后再取档位；
+        // 后面的集只短等，别把串行预取队列堵死。
+        if (tiers.isEmpty()) {
+            val job = PlaybackApi.pendingJob(vid)
+            if (job != null && PlaybackApi.awaitTranscode(job, if (prepareHead) 90_000L else 8_000L)) {
+                PlaybackApi.clearPendingJob(vid)
+                tiers = PlaybackApi.tiers(vid)
+            }
+        }
         val picked = tiers.filter { it.height <= maxHeight }.maxByOrNull { it.height }
             ?: tiers.maxByOrNull { it.height }
-        val info = picked?.toPlayInfo() ?: Api.play(vid, 1004, maxHeight)
+        val info = picked?.toPlayInfo() ?: PlaybackApi.play(vid, 1004, maxHeight)
         if (!prepareHead) {
             return@runCatching Entry(
                 vid, info.height, info, tiers, null, null, System.currentTimeMillis(),

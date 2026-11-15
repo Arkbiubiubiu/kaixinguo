@@ -139,7 +139,6 @@ object Api {
     private val PLAY_BASES: List<String> get() = App.playBases
 
     /** 本机直连取流开关：上游要求签名头之后这条路已失效，默认关闭（见 play() 注释）。 */
-    private const val LOCAL_DIRECT_PLAY = false
     @Volatile
     private var preferredBase: String? = null
 
@@ -502,9 +501,9 @@ object Api {
      * 取播放地址：先让服务器代取（服务器签名 + 固定设备身份，命中率高），
      * 拿不到才本机直连。
      */
-    fun play(vid: String, contentType: Int = 1004, want: Int = 0): PlayInfo {
+    fun play(vid: String, contentType: Int = 1004, want: Int = 0, priority: Boolean = false): PlayInfo {
         Log.d("PadPlayer", "play() vid=$vid ct=$contentType want=$want")
-        playFromServer(vid, want)?.let {
+        playFromServer(vid, want, priority)?.let {
             Log.d("PadPlayer", "playFromServer ok ${it.definition} ${it.size}")
             return it
         }
@@ -516,78 +515,8 @@ object Api {
         // （X-Argus/X-Gorgon/X-Ladon），OkHttp 在这里发多少次都是 HTTP 200 空包，
         // 唯一的效果是让用户白等 30 秒连接+读超时才看到报错。
         // 服务器那边的签名通道已经接管，这里直接快速失败；留开关是为了上游哪天放开能一键恢复。
-        if (!LOCAL_DIRECT_PLAY) {
-            Log.d("PadPlayer", "playFromServer miss，本机直连已停用")
-            error("取流失败（${lastPlayError ?: "网络异常"}），请稍后重试")
-        }
-        Log.d("PadPlayer", "playFromServer miss，走本机直连")
-
-        val payload = JSONObject()
-            .put(
-                "biz_param",
-                JSONObject()
-                    .put("detail_page_version", 0).put("device_level", 1)
-                    .put("disable_digg_stat", false).put("need_all_video_definition", false)
-                    .put("need_mp4_align", false).put("use_os_player", false)
-                    .put("use_server_dns", false).put("video_platform", 1024),
-            )
-            .put(
-                "mixed_video_id_map",
-                JSONObject().put(if (contentType > 0) contentType.toString() else "1004", JSONArray().put(vid)),
-            )
-            .toString()
-
-        val url = MULTI_URL
-
-        val data = JSONObject(request(url, payload, PLAY_UA)).optJSONObject("data")
-            ?: error("取流返回为空（该集可能已下线）")
-        var model = data.optJSONObject(vid)
-            ?: data.optJSONObject(data.keys().next())
-            ?: error("取流返回为空")
-        if (model.optString("video_model").startsWith("{")) {
-            model = JSONObject(model.getString("video_model"))
-        }
-        val list = model.optJSONArray("video_list") ?: error("没有可播放档位")
-
-        // 选不高于「清晰度上限」的最高一档
-        var best: JSONObject? = null
-        var bestH = -1
-        val cap = if (want > 0) want else App.state.maxHeight
-        for (i in 0 until list.length()) {
-            val v = list.optJSONObject(i) ?: continue
-            val meta = v.optJSONObject("video_meta")
-            val h = meta?.optString("definition")?.trimEnd('p')?.toIntOrNull()
-                ?: meta?.optInt("vheight", 0) ?: 0
-            if (h in 1..cap && h > bestH) {
-                bestH = h
-                best = v
-            }
-        }
-        if (best == null) {
-            for (i in 0 until list.length()) {
-                val v = list.optJSONObject(i) ?: continue
-                val meta = v.optJSONObject("video_meta")
-                val h = meta?.optString("definition")?.trimEnd('p')?.toIntOrNull() ?: 0
-                if (h > bestH) {
-                    bestH = h
-                    best = v
-                }
-            }
-        }
-        val chosen = best ?: error("没有可播放档位")
-        val meta = chosen.optJSONObject("video_meta")
-        val spade = chosen.optJSONObject("encrypt_info")?.optString("spade_a").orEmpty()
-        val key = spade.takeIf { it.isNotEmpty() }
-            ?.let { runCatching { MediaCrypto.deriveKey(it) }.getOrNull() }
-        return PlayInfo(
-            url = chosen.optString("main_url"),
-            backupUrl = chosen.optString("backup_url"),
-            key = key,
-            definition = meta?.optString("definition").orEmpty().ifEmpty { "${bestH}p" },
-            height = if (bestH > 0) bestH else 720,
-            duration = model.optDouble("video_duration", 0.0).toInt(),
-            size = meta?.optLong("size", 0L) ?: 0L,
-        )
+        Log.d("PadPlayer", "playFromServer miss，本机直连已停用")
+        error("取流失败（${lastPlayError ?: "网络异常"}），请稍后重试")
     }
 
     /**
@@ -601,24 +530,104 @@ object Api {
     var lastPlayError: String? = null
         private set
 
-    private fun playInfoData(vid: String, want: String): JSONObject? {
+    /** vid → 服务端异步转码 job id：预取拿到 202 后由这里转交轮询。 */
+    private val pendingJobs = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun pendingJob(vid: String): String? = pendingJobs[vid]
+
+    fun clearPendingJob(vid: String) {
+        pendingJobs.remove(vid)
+    }
+
+    /** 查询转码 job 状态：queued/running/done/failed；查询失败返回 null。 */
+    fun transcodeStatus(jobId: String): String? {
+        val enc = java.net.URLEncoder.encode(jobId, "UTF-8")
+        for (base in serverBases()) {
+            val got = runCatching {
+                val conn = URL(base.trimEnd('/') + "/api/transcode/status?id=" + enc)
+                    .openConnection() as HttpURLConnection
+                try {
+                    conn.requestMethod = "GET"
+                    conn.setRequestProperty("X-Token", PLAY_TOKEN)
+                    conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 5_000
+                    conn.readTimeout = 8_000
+                    if (conn.responseCode !in 200..299) return@runCatching null
+                    JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                        .optJSONObject("job")?.optString("state")
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+            if (got != null) return got
+        }
+        return null
+    }
+
+    /** 阻塞等 job 完成（仅限后台预取线程调用）。 */
+    fun awaitTranscode(jobId: String, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            when (transcodeStatus(jobId)) {
+                "done" -> return true
+                "failed" -> return false
+            }
+            Thread.sleep(1_200)
+        }
+        return false
+    }
+
+    /**
+     * 拉服务端功能开关。失败就沿用当前值（默认全 false），不阻塞启动。
+     * 只用于渐进式改造：新实现必须通过 flag 才切换，默认旧路径。
+     */
+    fun fetchFlags(): Map<String, Boolean> {
+        for (base in serverBases()) {
+            val got = runCatching {
+                val conn = URL(base.trimEnd('/') + "/api/flags").openConnection() as HttpURLConnection
+                try {
+                    conn.requestMethod = "GET"
+                    conn.setRequestProperty("X-Token", PLAY_TOKEN)
+                    conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 6_000
+                    conn.readTimeout = 8_000
+                    if (conn.responseCode !in 200..299) return@runCatching null
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    val obj = JSONObject(text).optJSONObject("flags") ?: return@runCatching null
+                    val out = LinkedHashMap<String, Boolean>()
+                    obj.keys().forEach { k -> out[k] = obj.optBoolean(k, false) }
+                    out
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull() ?: continue
+            App.flags = got
+            return got
+        }
+        return App.flags
+    }
+
+    private fun playInfoData(vid: String, want: String, priority: Boolean): JSONObject? {
         lastPlayError = null
+        pendingJobs.remove(vid)
         if (PLAY_BASES.isEmpty()) {
             Log.e("PadApi", "未配置播放信息服务地址")
             return null
         }
-        val body = JSONObject().put("vid", vid).put("want", want).toString()
+        val body = JSONObject().put("vid", vid).put("want", want).put("priority", priority).toString()
+        val rid = java.util.UUID.randomUUID().toString().take(8)
+        Log.d("PadPlayer", "playinfo rid=$rid vid=$vid want=$want")
         // 取流服务偶发 502（匿名设备轮换/上游抖动）：重试一次就够。
         // 以前重试 3 次、每次可能耗 6 秒以上，一次坏片源能把刷剧首屏拖成 20~40 秒；
         // 快速失败后交给上层「跳下一部」反而体感更好。
         for (attempt in 0 until 2) {
             var serverFault = false
             for (base in serverBases()) {
-                val data = requestPlayInfo(base, body)
+                val data = requestPlayInfo(base, body, rid)
                 if (data != null) {
                     preferredBase = base
                     return data
                 }
+                // 已排进转码 job：立即返回，让预取线程去轮询，不要在这里空转重试
+                if (pendingJobs.containsKey(vid)) return null
                 // 5xx 是服务器/上游自身故障：换地址、再重试都只会让用户多等，
                 // 记下原因立刻回去走本机直连兜底
                 if (lastPlayError?.startsWith("HTTP 5") == true) {
@@ -632,18 +641,39 @@ object Api {
         return null
     }
 
-    private fun requestPlayInfo(base: String, body: String): JSONObject? = runCatching {
+    private fun requestPlayInfo(base: String, body: String, rid: String): JSONObject? = runCatching {
         val conn = URL(base.trimEnd('/') + "/api/playinfo").open()
         try {
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("X-Token", PLAY_TOKEN)
+            conn.setRequestProperty("X-Request-Id", rid)
             conn.setRequestProperty("Accept-Encoding", "gzip")
             conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
             conn.readTimeout = 70_000
             conn.doOutput = true
             conn.outputStream.use { it.write(body.toByteArray()) }
             val code = conn.responseCode
+            if (code == 202) {
+                // 这一集正在服务端异步转码：记下 job，预取线程可以轮询等待
+                val text = runCatching {
+                    val raw202 = conn.inputStream
+                    val dec = if ((conn.contentEncoding ?: "").contains("gzip", true)) {
+                        GZIPInputStream(raw202)
+                    } else {
+                        raw202
+                    }
+                    dec.bufferedReader().use { it.readText() }
+                }.getOrDefault("")
+                val jobId = runCatching {
+                    JSONObject(text).optJSONObject("data")
+                        ?.optJSONObject("job")?.optString("id")
+                }.getOrNull()
+                val vid = runCatching { JSONObject(body).optString("vid") }.getOrDefault("")
+                if (!jobId.isNullOrEmpty()) pendingJobs[vid] = jobId
+                lastPlayError = "转码中"
+                return@runCatching null
+            }
             if (code !in 200..299) {
                 lastPlayError = "HTTP $code"
                 return@runCatching null
@@ -662,9 +692,9 @@ object Api {
     }.onFailure { lastPlayError = it.message?.take(80) }.getOrNull()
 
     /** 服务器代取播放地址（服务器签名 + 固定设备身份）。 */
-    private fun playFromServer(vid: String, want: Int = 0): PlayInfo? {
+    private fun playFromServer(vid: String, want: Int = 0, priority: Boolean = false): PlayInfo? {
         val target = if (want > 0) want else App.state.maxHeight
-        val data = playInfoData(vid, "${target}p") ?: run {
+        val data = playInfoData(vid, "${target}p", priority) ?: run {
             Log.d("PadPlayer", "playinfo miss want=${target}p")
             return null
         }
@@ -895,6 +925,8 @@ object Api {
     /** 列表首屏缓存：3 分钟内切走再回来直接返回（「换一批」调 clearListCache 强制刷新）。 */
     private val listCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Any>>()
     private const val LIST_TTL = 3 * 60_000L
+    /** 缓存结构版本：改解析字段/列表结构时 bump，旧进程缓存自然失效。 */
+    private const val CACHE_SCHEMA = "v2"
 
     fun clearListCache() {
         listCache.clear()
@@ -902,11 +934,12 @@ object Api {
 
     @Suppress("UNCHECKED_CAST")
     private fun <T : Any> listCached(key: String, block: () -> T?): T? {
-        listCache[key]?.let { (at, v) ->
+        val ck = "$CACHE_SCHEMA|$key"
+        listCache[ck]?.let { (at, v) ->
             if (System.currentTimeMillis() - at < LIST_TTL) return v as T
         }
         val v = block() ?: return null
-        listCache[key] = System.currentTimeMillis() to v
+        listCache[ck] = System.currentTimeMillis() to v
         return v
     }
 
@@ -3508,6 +3541,7 @@ object Api {
      * 永远好不了，只能杀进程。有效期比 URL 短一点最稳。
      */
     private val tierCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<PlayTier>>>()
+    private fun tierKey(vid: String) = "$CACHE_SCHEMA|$vid"
     private const val TIER_TTL_MS = 25 * 60 * 1000L
 
     /**
@@ -3519,7 +3553,7 @@ object Api {
      */
     /** 清掉某一集的档位缓存（直链过期/证书域名变更后用）。 */
     fun invalidateTiers(vid: String) {
-        tierCache.remove(vid)
+        tierCache.remove(tierKey(vid))
     }
 
     /** 整批清掉档位缓存（证书/域名变更导致旧直链不可用时用）。 */
@@ -3527,13 +3561,13 @@ object Api {
         tierCache.clear()
     }
 
-    fun tiers(vid: String): List<PlayTier> {
-        tierCache[vid]?.let { (at, list) ->
+    fun tiers(vid: String, priority: Boolean = false): List<PlayTier> {
+        tierCache[tierKey(vid)]?.let { (at, list) ->
             if (System.currentTimeMillis() - at < TIER_TTL_MS) return list
-            tierCache.remove(vid)
+            tierCache.remove(tierKey(vid))
         }
         val out = runCatching {
-            val list = playInfoData(vid, "all")?.optJSONArray("list")
+            val list = playInfoData(vid, "all", priority)?.optJSONArray("list")
                 ?: return@runCatching emptyList()
             (0 until list.length()).mapNotNull { i ->
                 val o = list.optJSONObject(i) ?: return@mapNotNull null
@@ -3551,7 +3585,7 @@ object Api {
                 )
             }.sortedByDescending { it.height }
         }.getOrDefault(emptyList())
-        if (out.isNotEmpty()) tierCache[vid] = System.currentTimeMillis() to out
+        if (out.isNotEmpty()) tierCache[tierKey(vid)] = System.currentTimeMillis() to out
         return out
     }
 

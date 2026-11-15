@@ -11,6 +11,8 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+    // PC/Android 共用核心：只保留一份源码
+    sourceSets["main"].kotlin.srcDir("../../shared/src/main/kotlin")
 }
 
 dependencies {

@@ -303,7 +303,7 @@ object LoginApi {
     }
 
     private fun call(path: String, pairs: List<Pair<String, String>>, cookie: String, query: JSONArray): Api.RawResp =
-        Api.passportPost(path, encodeForm(pairs), cookie, query)
+        PassportClient.post(path, encodeForm(pairs), cookie, query)
             ?: throw IllegalStateException("签名服务不可用，请检查网络后重试")
 
     private fun devicePairs(): List<Pair<String, String>> =

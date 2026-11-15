@@ -1,5 +1,7 @@
 ﻿package com.kaixinguo.pc
 
+import com.hongguotv.pad.UpdateManifest
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -135,17 +137,14 @@ object PcUpdater {
             if (conn.responseCode !in 200..299) return null
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             val o = JSONObject(text)
-            val path = o.optString("path")
-            val full = o.optString("url").takeIf { it.startsWith("http") }
-                ?: if (path.isNotEmpty()) "$root/$path" else ""
-            if (full.isEmpty()) return null
+            val sel = UpdateManifest.select(o, root, emptyList()) ?: return null
             return PcUpdate(
                 versionCode = o.optInt("versionCode", 0),
                 versionName = o.optString("versionName"),
-                url = full,
-                path = path,
-                size = o.optLong("size", 0L),
-                sha256 = o.optString("sha256"),
+                url = sel.url,
+                path = sel.path,
+                size = sel.size,
+                sha256 = sel.sha256,
                 notes = o.optString("notes"),
             )
         } finally {
@@ -337,4 +336,3 @@ fun UpdateRow() {
         }
     }
 }
-

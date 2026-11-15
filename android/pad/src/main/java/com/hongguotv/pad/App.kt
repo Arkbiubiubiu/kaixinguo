@@ -478,7 +478,14 @@ fun App() {
             when (current) {
                 is Screen.Home -> HomeScreen(
                     onOpen = { push(Screen.Detail(it.seriesId)) },
-                    onPlay = { push(Screen.Play(it.seriesId, 1)) },
+                    // 「继续看第 N 集」必须真的从第 N 集、上次秒数接着播；
+                    // 以前这里写死 1，按钮文字和实际起播集数对不上
+                    onPlay = { c ->
+                        val row = Store.history().firstOrNull { it.optString("seriesId") == c.seriesId }
+                        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+                        val pos = row?.optLong("positionMs", 0L) ?: 0L
+                        push(Screen.Play(c.seriesId, ep, pos))
+                    },
                 )
                 is Screen.Feed -> FeedScreen(
                     onOpenDetail = { push(Screen.Detail(it)) },
@@ -530,13 +537,23 @@ fun App() {
                 is Screen.Follow -> FollowReserveScreen(
                     0,
                     onOpen = { push(Screen.Detail(it)) },
-                    onPlay = { id -> push(Screen.Play(id, (Store.progress(id) + 1).coerceAtLeast(1))) },
+                    onPlay = { id ->
+                        val row = Store.history().firstOrNull { it.optString("seriesId") == id }
+                        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+                        val pos = row?.optLong("positionMs", 0L) ?: 0L
+                        push(Screen.Play(id, ep, pos))
+                    },
                     onLogin = { push(Screen.Login) },
                 )
                 is Screen.Reserve -> FollowReserveScreen(
                     1,
                     onOpen = { push(Screen.Detail(it)) },
-                    onPlay = { id -> push(Screen.Play(id, (Store.progress(id) + 1).coerceAtLeast(1))) },
+                    onPlay = { id ->
+                        val row = Store.history().firstOrNull { it.optString("seriesId") == id }
+                        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+                        val pos = row?.optLong("positionMs", 0L) ?: 0L
+                        push(Screen.Play(id, ep, pos))
+                    },
                     onLogin = { push(Screen.Login) },
                 )
                 is Screen.Account -> AccountScreen(
@@ -552,13 +569,13 @@ fun App() {
                     // 从播放页点「详情」再点某一集时，栈里已经有一层同剧的播放页了，
                     // 直接 push 会变成 播放1 → 详情 → 播放2，返回要按好几次，
                     // 而且中间那层每次都重新起播。这里先退回到已有的播放页再改参数。
-                    onPlay = { id, index ->
+                    onPlay = { id, index, startMs ->
                         val existing = stack.indexOfLast { it is Screen.Play && it.seriesId == id }
                         if (existing >= 0) {
                             while (stack.size > existing + 1) stack.removeAt(stack.lastIndex)
-                            stack[existing] = Screen.Play(id, index)
+                            stack[existing] = Screen.Play(id, index, startMs)
                         } else {
-                            push(Screen.Play(id, index))
+                            push(Screen.Play(id, index, startMs))
                         }
                     },
                     onCreator = { push(Screen.Creator(it)) },
