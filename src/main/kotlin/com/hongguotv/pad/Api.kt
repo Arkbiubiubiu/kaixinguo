@@ -611,7 +611,7 @@ object Api {
                     conn.setRequestProperty("X-Token", PLAY_TOKEN)
                     conn.setRequestProperty("Accept-Encoding", "gzip")
                     conn.connectTimeout = if (base.contains("192.168.")) 2_500 else 8_000
-                    conn.readTimeout = 25_000
+                    conn.readTimeout = 70_000
                     conn.doOutput = true
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode

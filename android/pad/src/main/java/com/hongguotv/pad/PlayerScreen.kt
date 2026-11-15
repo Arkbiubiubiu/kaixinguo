@@ -490,14 +490,19 @@ fun PlayerScreen(
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 val msg = error.message.orEmpty()
                 Log.e("Playback", "player error index=$curIndex code=${error.errorCode} $msg")
-                // 旧档位缓存里可能还是自签证书域名（frp-bar.com）的转码地址，
-                // ExoPlayer 默认不信任自签证书 → Trust anchor 报错。
-                // 清掉档位缓存并自动重取一次，服务端现在返回的是有效证书域名 dl.fabao.xin。
-                if ((msg.contains("Trust anchor", true) || msg.contains("CertPath", true)) &&
-                    stallRetries < 2
-                ) {
+                // 证书错误/直链 404/旧地址：旧档位缓存可能还是自签证书域名或过期直链。
+                // 清掉档位缓存、清空 ExoPlayer 队列（防止它自己连跳几集），重取一次。
+                val recoverable = msg.contains("Trust anchor", true) ||
+                    msg.contains("CertPath", true) ||
+                    msg.contains("Source error", true) ||
+                    msg.contains("HTTP", true) ||
+                    msg.contains("404", true) ||
+                    msg.contains("unexpected", true)
+                if (recoverable && stallRetries < 2) {
                     stallRetries += 1
                     Api.clearTierCache()
+                    runCatching { player.clearMediaItems() }
+                    setEpisodeIndex(curIndex)
                     preparing = true
                     failed = null
                     attempt += 1
