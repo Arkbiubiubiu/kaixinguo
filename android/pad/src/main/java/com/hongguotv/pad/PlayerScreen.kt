@@ -238,6 +238,10 @@ fun PlayerScreen(
     var position by remember { mutableStateOf(0L) }
     var duration by remember { mutableStateOf(0L) }
     var playing by remember { mutableStateOf(true) }
+    // 卡顿看门狗：画面/进度 8 秒不动就重新取一次流，别让用户对着黑屏干等
+    var lastTickPos by remember { mutableStateOf(-1L) }
+    var lastTickAt by remember { mutableStateOf(0L) }
+    var stallRetries by remember { mutableStateOf(0) }
 
     val focus = remember { FocusRequester() }
     val playFocus = remember { FocusRequester() }
@@ -481,6 +485,12 @@ fun PlayerScreen(
                     )
                     Api.historySyncAsync()
                 }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e("Playback", "player error index=$curIndex code=${error.errorCode} ${error.message}")
+                preparing = false
+                failed = "播放出错了，点「重试」再试一次"
             }
 
             override fun onRenderedFirstFrame() {
@@ -931,6 +941,35 @@ fun PlayerScreen(
                 position = player.currentPosition
                 if (player.duration > 0) duration = player.duration
                 playing = player.isPlaying
+                // 卡顿看门狗：进度 8 秒没动（且不在准备/切集/暂停）就重新取流。
+                // 只重试 2 次，避免坏片源无限重建代理；仍失败就把错误交给 UI。
+                val watchdogNow = System.currentTimeMillis()
+                if (position > 0 && position == lastTickPos) {
+                    if (lastTickAt == 0L) lastTickAt = watchdogNow
+                    else if (watchdogNow - lastTickAt > 8_000L && !preparing && !switching &&
+                        (player.isPlaying || player.playbackState == Player.STATE_BUFFERING)
+                    ) {
+                        lastTickAt = 0L
+                        if (stallRetries < 2) {
+                            stallRetries += 1
+                            Log.e("Playback", "stalled index=$index pos=$position retry=$stallRetries")
+                            // 第一次卡顿先降一档再重试：电视硬解 1080 偶发卡死，720 通常就正常
+                            if (stallRetries == 1 && Store.maxHeight > 720 && (defWant == 0 || defWant > 720)) {
+                                defWant = 720
+                                Log.e("Playback", "stall downgrade to 720p")
+                            }
+                            preparing = true
+                            failed = null
+                            attempt += 1
+                        } else {
+                            failed = "播放卡住了，点「重试」再试一次"
+                            preparing = false
+                        }
+                    }
+                } else {
+                    lastTickPos = position
+                    lastTickAt = 0L
+                }
                 // 快播完时抓一帧备着（只抓不显示，等这一集真的结束再盖）。
                 // 抓得越晚越接近真正的末帧，所以窗口内每一拍都重抓一次、取最新的
                 val total = player.duration
@@ -1035,6 +1074,9 @@ fun PlayerScreen(
      */
     LaunchedEffect(index) {
         switching = true
+        stallRetries = 0
+        lastTickPos = -1L
+        lastTickAt = 0L
         delay(1_000)
         switching = false
     }
