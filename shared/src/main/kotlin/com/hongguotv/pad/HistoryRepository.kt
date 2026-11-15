@@ -16,7 +16,15 @@ import org.json.JSONObject
  */
 object HistoryRepository {
     const val SCHEMA = 3
-    const val LIMIT = 500
+    const val LIMIT = 1500
+
+    /**
+     * 「试看保护」：低集数 + 短播放（<60 秒）的行视为点开试试，不允许顶掉
+     * 更高集数的真实进度。2026-11-15 事故：TV 连播看了几十集，一次 18 秒的
+     * 低集数写入（上报时集号卡在旧值）把整份进度顶回第 4 集。
+     * 真的跳回低集数看（≥60 秒）仍然照实更新——与「低集数正常看也如实记录」不冲突。
+     */
+    const val SHORT_WATCH_MS = 60_000L
 
     fun merge(
         local: List<JSONObject>,
@@ -47,6 +55,10 @@ object HistoryRepository {
                 // 0 秒行只有“集数更高且时间更新”才算后续进度；同集/更低集数让真实秒数赢
                 rp <= 0L && op > 0L -> re > oe && ra > oa
                 op <= 0L && rp > 0L -> !(oe > re && oa > ra)
+                // 试看保护：低集数 + 短播放不顶掉高集数真实行（双向对称）。
+                // 只看「来犯的行」是不是短播放，旧行本身秒数长短不影响保护。
+                re < oe && rp in 1..SHORT_WATCH_MS && op > 0L -> false
+                oe < re && op in 1..SHORT_WATCH_MS && rp > 0L -> true
                 ra != oa -> ra > oa
                 re != oe -> re > oe
                 else -> rp > op

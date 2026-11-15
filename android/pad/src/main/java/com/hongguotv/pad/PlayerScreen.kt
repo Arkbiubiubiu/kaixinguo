@@ -205,6 +205,10 @@ fun PlayerScreen(
     val curCount by rememberUpdatedState(episodes.size)
     val curSeries by rememberUpdatedState(seriesId)
     val curSwitch by rememberUpdatedState(onSwitch)
+    // 剧集列表同样会被换季/换剧重建：历史写入和官方上报必须拿到「当前那份」，
+    // 否则无缝连播会把「上一集的集号 + 这一集的秒数」写进历史（2.2.190 实测复现：
+    // 连播到第 3 集时上报的还是 ep=2，整个连播期间历史都卡在会话开场的那一集）。
+    val curEpisodes by rememberUpdatedState(episodes)
 
     // 内部换集（自动连播/VVC 页交回/手动上下集）之后，把导航栈顶的集号同步掉。
     // 不同步的话：从 245 交回到 244 时栈顶还记着 245，244 播完自动下一集
@@ -951,7 +955,11 @@ fun PlayerScreen(
                 // 写盘挪到 IO 线程：以前每 400ms 在主线程解析并回写整份历史 JSON，
                 // 条目越多越顿；同时把历史行回写从 4 秒放宽到 10 秒（暂停/切集/退出都会补写）
                 if (!feed) {
-                    val ep = episodes.getOrNull(index - 1)
+                    // 必须 curIndex/curEpisodes：index 是 remember(startIndex) 的状态对象，
+                    // 首次导航栈同步后 startIndex 变化会重建一份新的；这个循环是
+                    // LaunchedEffect(player) 启动的，手里攥着旧的那份。用旧值写历史
+                    // 就是「连播看了几十集、历史一直停在开场那一集」的根因。
+                    val ep = curEpisodes.getOrNull(curIndex - 1)
                     withContext(Dispatchers.IO) {
                         ep?.let { Store.markPos(it.vid, position) }
                     }
@@ -963,9 +971,9 @@ fun PlayerScreen(
                         val first = !historyWritten
                         historyWritten = true
                         val t = title
-                        val cover = DetailCache.get(seriesId)?.cover.orEmpty()
+                        val cover = DetailCache.get(curSeries)?.cover.orEmpty()
                         withContext(Dispatchers.IO) {
-                            HistoryReporter.onPlayed(seriesId, t, cover, index, episodes.size, position)
+                            HistoryReporter.onPlayed(curSeries, t, cover, curIndex, curCount, position)
                         }
                         // 本地第一笔就推一次云端；之后每 20 秒推一次（内部有 10 秒节流）
                         if (first || reportTick % 50 == 0) HistoryReporter.sync()
@@ -975,14 +983,14 @@ fun PlayerScreen(
                 // 开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）；
                 // 上报走 IO，不能卡住这个 400ms 循环。
                 if (reportTick % 50 == 0 && playedThisEpisode >= 5_000L) {
-                    val ep = episodes.getOrNull(index - 1)
+                    val ep = curEpisodes.getOrNull(curIndex - 1)
                     val pos = position
                     if (ep != null && pos > 0) {
                         launch(Dispatchers.IO) {
                             val ok = runCatching {
-                                HistoryReporter.reportOfficial(seriesId, ep.vid, index, pos)
+                                HistoryReporter.reportOfficial(curSeries, ep.vid, curIndex, pos)
                             }.getOrDefault(false)
-                            Log.d("PadReport", "ep=$index pos=${pos}ms ok=$ok")
+                            Log.d("PadReport", "ep=$curIndex pos=${pos}ms ok=$ok")
                         }
                     }
                 }
