@@ -185,6 +185,10 @@ fun PlayerScreen(
     var detailFailed by remember(seriesId) { mutableStateOf(false) }
     // 取流重试计数：失败卡片上的「重试」把它 +1，起播 effect 会重跑
     var playAttempt by remember(seriesId) { mutableStateOf(0) }
+    // 播放卡顿看门狗：进度 8 秒不动就重新取流，最多 2 次
+    var pcLastPos by remember { mutableStateOf(-1L) }
+    var pcLastAt by remember { mutableStateOf(0L) }
+    var pcStallRetries by remember { mutableStateOf(0) }
     // 播放中断（不是自然播完）：断流时解码进程退出，以前被当成「播完」自动跳下一集
     var interrupted by remember(seriesId) { mutableStateOf(false) }
     // 每一集只自动重试一次：按 (seriesId, index) 记住，切集自动重置
@@ -648,12 +652,39 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(index) {
+        pcLastPos = -1L
+        pcLastAt = 0L
+        pcStallRetries = 0
+    }
+
     // 位置轮询 + 弹幕续窗
     LaunchedEffect(engine) {
         while (true) {
             val e = engine
             if (e != null) {
                 tick = e.positionMs
+                val nowMs = System.currentTimeMillis()
+                if (e.playing && tick > 0) {
+                    if (tick == pcLastPos) {
+                        if (pcLastAt == 0L) pcLastAt = nowMs
+                        else if (nowMs - pcLastAt > 8_000L && !loading) {
+                            pcLastAt = 0L
+                            if (pcStallRetries < 2) {
+                                pcStallRetries += 1
+                                Log.e("Player", "stalled index=$index pos=$tick retry=$pcStallRetries")
+                                loading = true
+                                playAttempt += 1
+                            } else {
+                                failed = "播放卡住了，点「重试」再试一次"
+                                loading = false
+                            }
+                        }
+                    } else {
+                        pcLastPos = tick
+                        pcLastAt = 0L
+                    }
+                }
                 if (dmMore && danmakuOn && danmaku.isNotEmpty() && tick > danmaku.last().offsetMs - 2_000) {
                     dmMore = false
                     val ep = episodes.getOrNull(index - 1)
