@@ -1,7 +1,7 @@
 # 开心果 · 架构世界树
 
 > 基线：2026-11-15
-> PC 1.2.80 · Android 2.2.193（Pad/TV 同一套源码）· 服务端 8080(static/admin)/8082(api)/8081(dual)/9110/9118
+> PC 1.2.81 · Android 2.2.193（Pad/TV 同一套源码）· 服务端 8080(static/admin)/8082(api)/8081(dual)/9110/9118
 >
 > HTML 由 `docs/build_tech_tree.py` 生成；改完节点/边后运行它重新生成 `tech-tree.html`。
 > 修复顺序见 `docs/REMEDIATION_PLAN.md`，线上在运行看板「架构世界树 → 修复顺序」。
