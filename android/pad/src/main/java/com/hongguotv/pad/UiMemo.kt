@@ -3,6 +3,8 @@ package com.hongguotv.pad
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 
 /**
  * 跨页面保留的浏览状态：从列表/刷剧进详情、播放，再返回时回到原来的位置。
@@ -40,6 +42,28 @@ object UiMemo {
 
     /** 历史页当前页签（0 历史 / 1 收藏 / 2 点赞）：从详情返回时别再跳回历史 */
     var recordsTab: Int = -1
+
+    // ---- 新剧页（推荐 / 日历）：从详情返回要回到原分类、原日期、原位置 ----
+    // 各页面按需组合，局部 remember 一进详情就全丢；这里把「你在哪、看到哪」存下来。
+    var newTab: Int = 0          // 0 新剧推荐 / 1 上新日历
+    var newGender: Int = 0       // 0 全部 / 1 男频 / 2 女频
+    var newSession: String = ""
+    var newOffset: Int = 0
+    var newHasMore: Boolean = true
+    /** 已加载的首屏 key（tab|gender）：返回时命中就不重新拉第一页，保留分页进度 */
+    var newKey: String = ""
+    /** 首屏拉取时间：超过 10 分钟再回页才刷新，避免每次返回都重拉 */
+    var newAt: Long = 0L
+    val newCards = mutableStateListOf<SeriesCard>()
+
+    var calSelected: String = ""
+    /** 日历首屏拉取时间：返回时 5 分钟内不重拉，保住用户选的那一天 */
+    var calAt: Long = 0L
+    val calDays = mutableStateListOf<String>()
+    internal val calByDay = mutableStateMapOf<String, MutableList<CalendarItem>>()
+    val calMore = mutableStateMapOf<String, Pair<Int, String>>()
+    /** 上次因「切日期」而滚到顶部的日期：从详情返回同一日期时不能再滚，否则位置丢失 */
+    var calScrollDate: String = ""
 
     /** 详情页的滚动位置与页签：从播放返回时回到第 80 集那一段 */
     val detailScroll = ScrollState(0)

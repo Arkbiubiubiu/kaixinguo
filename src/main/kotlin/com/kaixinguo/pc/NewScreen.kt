@@ -107,10 +107,12 @@ import kotlin.math.roundToInt
 @Composable
 internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     // 旧版双视图：推荐（firstonlinetime_new 倒序流）/ 上新日历（按日期）
-    var view by remember { mutableStateOf(0) }
-    var gender by remember { mutableStateOf(0) }
-    var page by remember { mutableStateOf<FeedPage?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    // 状态从 PageMemo 恢复：进详情页会离开组合，局部 remember 全丢，
+    // 返回后就会跳回「新剧推荐 · 全部」、日历回今天（2026-11-16 用户反馈）。
+    var view by remember { mutableStateOf(PageMemo.newView) }
+    var gender by remember { mutableStateOf(PageMemo.newGender) }
+    var page by remember { mutableStateOf(PageMemo.newPage) }
+    var loading by remember { mutableStateOf(page == null) }
     var moreLoading by remember { mutableStateOf(false) }
     // 推荐视图滚动容器（滚动近底部自动翻页）
     val newScroll = PageMemo.newScroll
@@ -121,28 +123,50 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     // 2. 切日期要带 target_date 重新请求，不能拿当天那批按天过滤（其它日期会全空）；
     // 3. 条目有两套 schema：当天批是嵌套 subscribe_data.*，其它日期是扁平 name/item_id；
     // 4. 发布时间 schedule_publish_time（秒）要连日期一起显示（MM-dd HH:mm）。
-    var calDays by remember { mutableStateOf<List<String>>(emptyList()) }
-    var calDate by remember { mutableStateOf("") }
-    var calByDay by remember { mutableStateOf<Map<String, List<CalendarItem>>>(emptyMap()) }
+    var calDays by remember { mutableStateOf(PageMemo.calDays) }
+    var calDate by remember { mutableStateOf(PageMemo.calDate) }
+    var calByDay by remember { mutableStateOf(PageMemo.calByDay) }
     /** date → (nextOffset, sessionId)；有值表示这天还能翻 */
-    var calMore by remember { mutableStateOf<Map<String, Pair<Int, String>>>(emptyMap()) }
+    var calMore by remember { mutableStateOf(PageMemo.calMore) }
     var calLoading by remember { mutableStateOf(false) }
     var calMoreLoading by remember { mutableStateOf(false) }
-    var calInit by remember { mutableStateOf(false) }
+    var calInit by remember { mutableStateOf(PageMemo.calDays.isNotEmpty()) }
     val calList = PageMemo.calList
     val dayFmt = remember { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.CHINA) }
 
     LaunchedEffect(view, gender) {
-        if (view == 0) {
-            loading = true
-            page = withContext(Dispatchers.IO) { runCatching { Api.newDramaCached(gender, 0, "") }.getOrNull() }
+        if (view != 0) return@LaunchedEffect
+        val key = "$view|$gender"
+        // 从详情返回且分类没变、数据还新鲜：保留分页进度和滚动位置，不重拉第一页
+        if (PageMemo.newKey == key && page != null &&
+            System.currentTimeMillis() - PageMemo.newAt < 10 * 60_000L
+        ) {
             loading = false
+            return@LaunchedEffect
         }
+        loading = true
+        val p = withContext(Dispatchers.IO) { runCatching { Api.newDramaCached(gender, 0, "") }.getOrNull() }
+        page = p
+        if (p != null) {
+            PageMemo.newPage = p
+            PageMemo.newKey = key
+            PageMemo.newAt = System.currentTimeMillis()
+            // 换分类/重新加载回到顶部；从详情返回走上面的提前 return，不会滚
+            runCatching { newScroll.scrollTo(0) }
+        }
+        loading = false
     }
 
     // 日历首屏（只跑一次）：日期表 + 当天条目
     LaunchedEffect(view) {
         if (view != 1 || calInit) return@LaunchedEffect
+        // 从详情返回且数据还新鲜：保留用户切到的那一天、分页和滚动位置，不重跑首屏
+        if (PageMemo.calDays.isNotEmpty() && PageMemo.calDate.isNotEmpty() &&
+            System.currentTimeMillis() - PageMemo.calAt < 5 * 60_000L
+        ) {
+            calLoading = false
+            return@LaunchedEffect
+        }
         calLoading = true
         val root = withContext(Dispatchers.IO) { runCatching { Api.calendar() }.getOrNull() }
         val data = root?.optJSONObject("data")
@@ -157,6 +181,8 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         calDays = days.ifEmpty { grouped.keys.sorted() }
         val def = schema?.optString("default_date").orEmpty()
         calDate = when {
+            // 上次看到的那一天优先（从详情返回保持日期）
+            PageMemo.calDate.isNotEmpty() && calDays.contains(PageMemo.calDate) -> PageMemo.calDate
             def.isNotEmpty() && calDays.contains(def) -> def
             calDays.contains(today) -> today
             else -> calDays.firstOrNull().orEmpty()
@@ -168,7 +194,23 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             }
         }
         calInit = true
+        PageMemo.calDays = calDays
+        PageMemo.calDate = calDate
+        PageMemo.calByDay = calByDay
+        PageMemo.calMore = calMore
+        PageMemo.calAt = System.currentTimeMillis()
         calLoading = false
+    }
+
+    // 日期切换：写回 PageMemo；只有真的换了日期才滚到顶部，
+    // 从详情返回同一天时保持原位置（比如停在《全家听见我心声》那一行）。
+    LaunchedEffect(calDate) {
+        if (calDate.isEmpty()) return@LaunchedEffect
+        PageMemo.calDate = calDate
+        if (PageMemo.calScrollDate != calDate) {
+            PageMemo.calScrollDate = calDate
+            runCatching { calList.requestScrollToItem(0) }
+        }
     }
 
     // 选中尚未拉过的日期：带 target_date 重新请求
@@ -184,6 +226,8 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         } else {
             calMore - calDate
         }
+        PageMemo.calByDay = calByDay
+        PageMemo.calMore = calMore
         calLoading = false
     }
 
@@ -210,6 +254,8 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 } else {
                     calMore - calDate
                 }
+                PageMemo.calByDay = calByDay
+                PageMemo.calMore = calMore
                 calMoreLoading = false
             }
     }
@@ -231,6 +277,7 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         } else {
             page = c.copy(hasMore = false)
         }
+        PageMemo.newPage = page
         moreLoading = false
     }
 
@@ -242,7 +289,7 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             listOf("新剧推荐", "上新日历").forEachIndexed { i, label ->
-                TabChip(label, view == i) { view = i }
+                TabChip(label, view == i) { view = i; PageMemo.newView = i }
             }
             Spacer(Modifier.weight(1f))
             Text(
@@ -258,7 +305,7 @@ internal fun NewPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 listOf("全部", "男频", "女频").forEachIndexed { i, label ->
-                    TabChip(label, gender == i) { gender = i }
+                    TabChip(label, gender == i) { gender = i; PageMemo.newGender = i }
                     Spacer(Modifier.width(8.dp))
                 }
             }

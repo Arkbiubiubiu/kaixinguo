@@ -1933,9 +1933,11 @@ object Api {
     }
 
     /** 新剧页：男女频两个 tab。 */
-    fun newDrama(gender: Int, offset: Int, sessionId: String): FeedPage = cellChange(
-        "/reading/bookapi/bookmall/cell/change/v1/",
-        linkedMapOf(
+    /** 新剧页：男女频两个 tab。
+     *  翻页必须带 session_id：实测（2026-11-16）只传 offset=18 时上游原样返回第 1 页
+     *  （17 张里 15 张重复），客户端去重后一张不剩，表现就是「下滑加载不出来」。 */
+    fun newDrama(gender: Int, offset: Int, sessionId: String): FeedPage {
+        val params = linkedMapOf(
             "cell_id" to NEW_CELL,
             "selected_items" to "firstonlinetime_new",
             "cell_gender" to gender.toString(),
@@ -1944,9 +1946,14 @@ object Api {
             "limit" to "18",
             "need_personal_recommend" to "1",
             "offset" to offset.toString(),
-        ),
-        allowEmptySession = true,
-    )
+        )
+        if (sessionId.isNotEmpty()) params["session_id"] = sessionId
+        return cellChange(
+            "/reading/bookapi/bookmall/cell/change/v1/",
+            params,
+            allowEmptySession = true,
+        )
+    }
 
     // ---------------- 历史同步 ----------------
 

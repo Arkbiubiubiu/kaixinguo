@@ -84,41 +84,65 @@ import org.json.JSONObject
 
 @Composable
 fun NewDramaScreen(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit = {}) {
-    var tab by remember { mutableStateOf(0) }      // 0 新剧推荐 1 上新日历
-    var gender by remember { mutableStateOf(0) }   // 0 全部 1 男频 2 女频（原版映射）
-    val cards = remember { mutableStateListOf<SeriesCard>() }
-    var loading by remember { mutableStateOf(true) }
+    // 页面状态放 UiMemo：进详情页时这个页面会离开组合，局部 remember 全丢，
+    // 返回后就会跳回「新剧推荐 · 全部」、滚动位置也归零（2026-11-16 用户反馈）。
+    var tab by remember { mutableStateOf(UiMemo.newTab) }      // 0 新剧推荐 1 上新日历
+    var gender by remember { mutableStateOf(UiMemo.newGender) }   // 0 全部 1 男频 2 女频（原版映射）
+    val cards = UiMemo.newCards
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
-    // 失败后点「重新加载」用：自增一次就重新拉一遍
+    // 失败后点「重新加载」用：自增一次就重新拉一遍（返回页面时保持 0，不触发重拉）
     var reload by remember { mutableStateOf(0) }
-    var session by remember { mutableStateOf("") }
-    var offset by remember { mutableStateOf(0) }
-    var hasMore by remember { mutableStateOf(true) }
+    var session by remember { mutableStateOf(UiMemo.newSession) }
+    var offset by remember { mutableStateOf(UiMemo.newOffset) }
+    var hasMore by remember { mutableStateOf(UiMemo.newHasMore) }
     var loadingMore by remember { mutableStateOf(false) }
     val grid = UiMemo.newGrid
 
-    LaunchedEffect(tab, gender) {
+    LaunchedEffect(tab, gender, reload) {
         if (tab != 0) return@LaunchedEffect
+        val key = "$tab|$gender"
+        // 从详情返回（reload=0）且分类没变、数据还新鲜：保留分页进度和滚动位置，不重拉第一页
+        if (reload == 0 && UiMemo.newKey == key && cards.isNotEmpty() &&
+            System.currentTimeMillis() - UiMemo.newAt < 10 * 60_000L
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
+        UiMemo.newKey = ""
         loading = true
         error = null
         hasMore = true
+        loadingMore = false
         var err: String? = null
         val page = withContext(Dispatchers.IO) {
             try { Api.newDramaCached(gender, 0, "") } catch (e: Exception) { err = e.message; null }
         }
         cards.clear()
+        // 换分类/重新加载：回到顶部（从详情返回走上面的提前 return，不会滚）
+        // 用 requestScrollToItem（非挂起）：此时列表还在 loading 分支、没进组合，
+        // scrollToItem 会一直等布局挂载，把整个加载流程挂死（实测 2.2.192 一直转圈）。
+        runCatching { grid.requestScrollToItem(0) }
         if (page != null && page.cards.isNotEmpty()) {
             cards.addAll(page.cards)
             session = page.sessionId
             offset = page.nextOffset
             hasMore = page.hasMore
+            UiMemo.newSession = page.sessionId
+            UiMemo.newOffset = page.nextOffset
+            UiMemo.newHasMore = page.hasMore
+            UiMemo.newKey = key
+            UiMemo.newAt = System.currentTimeMillis()
         } else {
             error = "新剧加载失败" + (err?.takeIf { it.isNotBlank() }?.let { "：$it" } ?: "")
         }
         loading = false
     }
 
-    LaunchedEffect(tab, gender, cards.size) {
+    // 不把 cards.size 放进 key：每加一页都会重启收集器，正在进行的翻页会被取消，
+    // loadingMore 卡在 true，表现就是「下滑一直加载、再也出不来」。
+    LaunchedEffect(tab, gender) {
+        if (tab != 0) return@LaunchedEffect
         snapshotFlow { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .debounce(300)
             .distinctUntilChanged()
@@ -126,19 +150,31 @@ fun NewDramaScreen(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit = {}) 
                 if (tab != 0 || loading || loadingMore || !hasMore || cards.isEmpty()) return@collect
                 if (last < cards.size - 6) return@collect
                 loadingMore = true
-                val page = withContext(Dispatchers.IO) {
-                    runCatching { Api.newDrama(gender, offset, session) }.getOrNull()
+                try {
+                    val g = gender
+                    val o = offset
+                    val s = session
+                    val page = withContext(Dispatchers.IO) {
+                        runCatching { Api.newDrama(g, o, s) }.getOrNull()
+                    }
+                    // 请求期间用户可能切了分类：只接收与发起时同一分类的结果
+                    if (tab != 0 || gender != g) return@collect
+                    if (page != null && page.cards.isNotEmpty()) {
+                        val known = cards.map { it.seriesId }.toSet()
+                        cards.addAll(page.cards.filter { it.seriesId !in known })
+                        session = page.sessionId
+                        offset = page.nextOffset
+                        hasMore = page.hasMore
+                        UiMemo.newSession = page.sessionId
+                        UiMemo.newOffset = page.nextOffset
+                        UiMemo.newHasMore = page.hasMore
+                    } else {
+                        hasMore = false
+                        UiMemo.newHasMore = false
+                    }
+                } finally {
+                    loadingMore = false
                 }
-                if (page != null && page.cards.isNotEmpty()) {
-                    val known = cards.map { it.seriesId }.toSet()
-                    cards.addAll(page.cards.filter { it.seriesId !in known })
-                    session = page.sessionId
-                    offset = page.nextOffset
-                    hasMore = page.hasMore
-                } else {
-                    hasMore = false
-                }
-                loadingMore = false
             }
     }
 
@@ -150,7 +186,7 @@ fun NewDramaScreen(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit = {}) 
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             listOf("新剧推荐", "上新日历").forEachIndexed { i, label ->
-                TvChip(label, selected = tab == i) { tab = i }
+                TvChip(label, selected = tab == i) { tab = i; UiMemo.newTab = i }
             }
         }
         if (tab == 0) {
@@ -160,7 +196,7 @@ fun NewDramaScreen(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit = {}) 
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 listOf("全部", "男频", "女频").forEachIndexed { i, label ->
-                    TvChip(label, selected = gender == i) { gender = i }
+                    TvChip(label, selected = gender == i) { gender = i; UiMemo.newGender = i }
                 }
             }
         }
@@ -220,17 +256,19 @@ internal data class CalendarItem(
 internal fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit) {
     val dayFmt = remember { java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.CHINA) }
     val stampFmt = remember { java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA) }
-    val days = remember { mutableStateListOf<String>() }
-    val byDay = remember { mutableStateMapOf<String, MutableList<CalendarItem>>() }
-    var selected by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(true) }
+    val days = UiMemo.calDays
+    val byDay = UiMemo.calByDay
+    // 选中的日期放 UiMemo：从详情返回时回到用户切到的那一天（比如 11-15），
+    // 而不是被首屏逻辑重置回「今天」。
+    var selected by remember { mutableStateOf(UiMemo.calSelected) }
+    var loading by remember { mutableStateOf(days.isEmpty()) }
     var dayLoading by remember { mutableStateOf(false) }
     // 日历首屏/单日失败要能重试：以前失败被当成「这天暂无上新」，用户以为真没内容
     var calFailed by remember { mutableStateOf(false) }
     var calRetry by remember { mutableStateOf(0) }
     var dayRetry by remember { mutableStateOf(0) }
     val dayError = remember { mutableStateMapOf<String, Boolean>() }
-    val more = remember { mutableStateMapOf<String, Pair<Int, String>>() }
+    val more = UiMemo.calMore
     val scope = rememberCoroutineScope()
 
     fun parseDay(j: JSONObject?): List<CalendarItem> {
@@ -287,6 +325,14 @@ internal fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit)
     }
 
     LaunchedEffect(calRetry) {
+        // 从详情返回（calRetry=0）且数据还新鲜：保留用户切到的那一天、已加载的分页和滚动位置。
+        // 以前返回会重跑首屏，把 selected 重置回「今天」，看起来就是「跳回新剧推荐全部」。
+        if (calRetry == 0 && days.isNotEmpty() &&
+            System.currentTimeMillis() - UiMemo.calAt < 5 * 60_000L
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
         calFailed = false
         val j = withContext(Dispatchers.IO) { runCatching { Api.calendar() }.getOrNull() }
         val data = j?.optJSONObject("data")
@@ -314,13 +360,28 @@ internal fun CalendarTab(onOpen: (SeriesCard) -> Unit, onPlay: (String) -> Unit)
         if (days.isNotEmpty()) {
             val today = dayFmt.format(java.util.Date())
             selected = when {
+                // 上次看到的那一天优先（从详情返回 / 重新进页面都保持）
+                UiMemo.calSelected.isNotEmpty() && days.contains(UiMemo.calSelected) -> UiMemo.calSelected
                 def.isNotEmpty() && days.contains(def) -> def
                 days.contains(today) -> today
                 else -> days.first()
             }
+            UiMemo.calSelected = selected
         }
         calFailed = days.isEmpty() && items.isEmpty()
+        UiMemo.calAt = System.currentTimeMillis()
         loading = false
+    }
+
+    // 日期切换：把选中日期记进 UiMemo；只有「真的换了日期」才把列表滚回顶部，
+    // 从详情返回同一天时保持原滚动位置（比如停在《全家听见我心声》那一行）。
+    LaunchedEffect(selected) {
+        if (selected.isEmpty()) return@LaunchedEffect
+        UiMemo.calSelected = selected
+        if (UiMemo.calScrollDate != selected) {
+            UiMemo.calScrollDate = selected
+            runCatching { UiMemo.calTabList.requestScrollToItem(0) }
+        }
     }
 
     // 选中没加载过的日期：带 target_date 重新请求（官方切日期的方式）

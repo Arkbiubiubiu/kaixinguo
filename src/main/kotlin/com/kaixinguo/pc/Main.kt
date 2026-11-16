@@ -143,6 +143,21 @@ internal object PageMemo {
     val newScroll = androidx.compose.foundation.ScrollState(0)
     val calList = androidx.compose.foundation.lazy.LazyListState(0, 0)
     val settingsScroll = androidx.compose.foundation.ScrollState(0)
+
+    // 新剧页：进详情会离开组合，局部 remember 全丢。这里保存视图/分类/分页/日期/滚动，
+    // 返回时回到「你在哪、看到哪」（2026-11-16 用户反馈：返回跳回推荐全部、日历回今天）。
+    var newView = 0
+    var newGender = 0
+    var newPage: FeedPage? = null
+    var newKey = ""
+    var newAt = 0L
+    var calDate = ""
+    var calDays: List<String> = emptyList()
+    var calByDay: Map<String, List<CalendarItem>> = emptyMap()
+    var calMore: Map<String, Pair<Int, String>> = emptyMap()
+    var calAt = 0L
+    /** 上次因切日期而滚到顶部的日期：从详情返回同一天时不能再滚 */
+    var calScrollDate = ""
 }
 
 /** 官网（设置页「关于」右侧：二维码 + 地址，扫码或点击打开）。 */

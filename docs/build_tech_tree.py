@@ -24,7 +24,7 @@ N = [
     dict(id="P-HOME", layer="L1", name="PC 首页", summary="推荐/漫剧/真人剧三 tab、hero、卡片流、换一批、继续看。", files=["HomeScreens.kt: HomePage"]),
     dict(id="P-FIND", layer="L1", name="PC 找剧 / 搜索", summary="搜索、联想、筛选、结果列表。", files=["FindScreen.kt: FindPage"]),
     dict(id="P-RANK", layer="L1", name="PC 排行榜", summary="榜单分类、筛选、月榜、演员榜。", files=["RankScreen.kt: RankPage"]),
-    dict(id="P-NEW", layer="L1", name="PC 新剧 / 日历", summary="新剧列表、上线日历。", files=["NewScreen.kt: NewPage"]),
+    dict(id="P-NEW", layer="L1", name="PC 新剧 / 日历", summary="新剧列表、上线日历；视图/分类/日期/滚动存 PageMemo，从详情返回保留现场。", files=["NewScreen.kt: NewPage"]),
     dict(id="P-HISTORY", layer="L1", name="PC 历史页", summary="本地/云端历史、筛选、管理、继续播。", files=["LibraryScreens.kt: HistoryPage"]),
     dict(id="P-LIBRARY", layer="L1", name="PC 追更/预约/我的", summary="追更提醒、预约、收藏/点赞入口、账号同步码。", files=["LibraryScreens.kt: FollowsPage/ReservePage/MinePage"]),
     dict(id="P-DETAIL", layer="L1", name="PC 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),
@@ -40,12 +40,12 @@ N = [
     dict(id="A-DETAIL", layer="L1", name="Android 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),
     dict(id="A-PLAYER", layer="L1", name="Android 播放页", summary="起播、队列、预取、无缝切集、看门狗、历史、进度上报。", files=["PlayerScreen.kt"]),
     dict(id="A-CHROME", layer="L1", name="Android 播放控制条", summary="进度条、播放/暂停、上下集、倍速、清晰度、选集、弹幕设置。", files=["PlayerChrome.kt"]),
-    dict(id="A-MISC", layer="L1", name="Android 其余页面", summary="找剧、排行、新剧、历史、收藏/点赞、追更、预约、我的、设置、演职员。", files=["FindScreens.kt", "RankScreens.kt", "NewScreens.kt", "RecordsScreens.kt", "FollowScreens.kt", "AccountScreens.kt", "SettingsScreen.kt", "CreatorScreens.kt"]),
+    dict(id="A-MISC", layer="L1", name="Android 其余页面", summary="找剧、排行、新剧、历史、收藏/点赞、追更、预约、我的、设置、演职员；新剧页视图/分类/日期/滚动存 UiMemo，返回不丢。", files=["FindScreens.kt", "RankScreens.kt", "NewScreens.kt", "RecordsScreens.kt", "FollowScreens.kt", "AccountScreens.kt", "SettingsScreen.kt", "CreatorScreens.kt"]),
     dict(id="A-SOCIAL", layer="L1", name="Android 评论/弹幕/打赏", summary="单集评论、剧评、弹幕窗口/发送、打赏码。", files=["CommentsPanel.kt", "Danmaku.kt", "DonateDialog.kt"]),
     dict(id="A-LOGIN", layer="L1", name="Android 登录/配对", summary="短信 MFA、账号 cookies、匹配码。", files=["Login.kt", "LoginScreen.kt: 账号区"]),
 
     # L2 domains
-    dict(id="D-CATALOG", layer="L2", name="内容目录", summary="首页/找剧/排行/新剧/日历的数据编排与缓存。", files=["HomeFeed.kt / FeedCache.kt", "Api.landpage/tab/search/rank/new"]),
+    dict(id="D-CATALOG", layer="L2", name="内容目录", summary="首页/找剧/排行/新剧/日历的数据编排与缓存；新剧翻页必须带 session_id（只传 offset 上游会重复第 1 页）。", files=["HomeFeed.kt / FeedCache.kt", "Api.landpage/tab/search/rank/new"]),
     dict(id="D-DETAIL", layer="L2", name="详情/选集/季", summary="详情、集数映射、季切换、相关推荐、剧评。", files=["DetailScreen.kt 两端", "Api.ensureDetail/seasons/reviews/related"]),
     dict(id="D-PLAY", layer="L2", name="播放编排", summary="选档、取流、预取、队列、无缝切集、看门狗、清晰度/倍速。", files=["PlayerScreen.kt / Player.kt", "PlaybackSession.kt", "PlaybackSourcePlanner.kt", "PlaybackGuard.kt", "PlayerUiState.kt", "PlaybackPrefetch.kt", "FeedPreload.kt"]),
     dict(id="D-HISTORY", layer="L2", name="历史 / 续播", summary="记录真实播放、续播秒数、跨端合并、历史页。合并策略已收口到 HistoryRepository（PC/Android 共用）。", files=["HistoryStore.kt / PcHistoryStore.kt", "HistoryRepository.kt", "Api.historySync/reportProgress"]),
