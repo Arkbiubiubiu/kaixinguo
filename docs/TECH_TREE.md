@@ -181,6 +181,8 @@
 | `I-STATE` | 服务端状态 | `/var/lib/hgtv-sync` | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token | `V-*` | 磁盘 |
 | `I-SYSTEMD` | 守护/备份 | systemd units、`mirror_watchdog`、`cloudflared_watchdog` | 服务常驻、镜像发现、隧道守护、备份 | 运维 | `V-*` |
 
+> **旁路验证（未接入生产，2026-11-17）**：`/opt/research/v5/v5resolver.js`，`127.0.0.1:9119`，纯 HTTP v5 签名（N3urda/aston314 GPL 实现）。7 个 vid 验证全部 5 档、0 空响应；1080P 为 HEVC 时可直接返回，为 VVC 时仍走 `R-TRANSCODE`。当前**不与 `R-STREAM`/`R-ORO` 建边**；切主时再新增 `R-V5`，把 oroplay 改为 v5 优先、`R-ORACLE` 兜底。
+
 ---
 
 ## 3. 关键数据流
