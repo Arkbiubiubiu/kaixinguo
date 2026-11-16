@@ -328,6 +328,7 @@ flowchart LR
 | 评论/弹幕 | `D-SOCIAL` → `C-API` → `U-CONTENT`；`A-SOCIAL`/`P-PLAYER` 渲染 | 未登录；发送；分页；时间轴；TV 焦点 |
 | 缓存/TTL | `V-RELAY`/`V-PLAYINFO`/`R-STREAM`/`V-HEAT`；`C-API.tierCache`/listCache；`DetailCache`；`FeedCache`；`X-*-STORE` 清理 | 命中/过期/负缓存；改 schema 必须换缓存 key/版本 |
 | 更新/发版 | `X-BUILD` → 构建产物 → `V-STATIC` 清单 → `D-UPDATE` → `S-WEB` | 版本号；sha256；ABI；签名；私有参数；下载 302 |
+| **跨端行为修复**（页面/播放/历史/更新语义） | 对应 `P-*`/`A-*` + **双端 `X-BUILD` 版本号** + `V-STATIC` 清单 + `D-UPDATE` | **双端都要有新版本产物并发布/装机**；跑 `tools/check_versions.py`；只编译不算完成；单端修复要说明原因 |
 | 服务地址/端口/证书 | `X-BUILD` 私有参数 → `C-STATE.playBases/historyBase` → `V-DUAL`/`V-SERVE` → `I-TUNNEL` → `V-STATIC` | 局域网/公网；证书；`/get` 302；旧客户端 |
 | 服务端状态/清理 | `V-HIST`/`V-HEAT`/`V-STATIC`/`V-ADMIN` → `I-STATE` | 备份；锁；墓碑；重启；磁盘 |
 | 日志/看板 | `D-LOG` → `V-SERVE /api/clientlog` → `I-STATE` → `V-ADMIN` | 脱敏；上传；设备识别；统计口径 |
