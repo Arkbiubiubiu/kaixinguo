@@ -61,15 +61,24 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun CreatorScreen(userId: String, onBack: () -> Unit, onPlaySeries: (String) -> Unit) {
-    var profile by remember(userId) { mutableStateOf<CreatorProfileInfo?>(null) }
-    var cards by remember(userId) { mutableStateOf<List<SeriesCard>>(emptyList()) }
+    val same = PageMemo.creatorId == userId
+    var profile by remember(userId) { mutableStateOf(if (same) PageMemo.creatorProfile else null) }
+    var cards by remember(userId) { mutableStateOf(if (same) PageMemo.creatorCards else emptyList()) }
     var cursor by remember { mutableStateOf("") }
     var hasMore by remember { mutableStateOf(false) }
-    var loading by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(profile == null && cards.isEmpty()) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(userId) {
+        // 详情 → 演职员 → 作品详情 → 返回：同一人且数据新鲜就直接复用
+        if (same && (profile != null || cards.isNotEmpty()) &&
+            System.currentTimeMillis() - PageMemo.creatorAt < PageMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
+        if (!same) runCatching { PageMemo.creatorScroll.scrollTo(0) }
         loading = true
         withContext(Dispatchers.IO) {
             profile = runCatching { Api.creatorProfile(userId) }.getOrNull()
@@ -79,9 +88,13 @@ fun CreatorScreen(userId: String, onBack: () -> Unit, onPlaySeries: (String) -> 
             hasMore = page?.hasMore == true
         }
         loading = false
+        PageMemo.creatorId = userId
+        PageMemo.creatorProfile = profile
+        PageMemo.creatorCards = cards
+        PageMemo.creatorAt = System.currentTimeMillis()
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxSize().verticalScroll(PageMemo.creatorScroll)) {
         Column(Modifier.padding(horizontal = 32.dp, vertical = 24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SecondaryButton(text = "返回", icon = Icons.Filled.ArrowBack, onClick = onBack)

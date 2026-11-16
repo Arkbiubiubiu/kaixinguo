@@ -158,6 +158,70 @@ internal object PageMemo {
     var calAt = 0L
     /** 上次因切日期而滚到顶部的日期：从详情返回同一天时不能再滚 */
     var calScrollDate = ""
+
+    // ---- 其余「列表 → 详情 → 返回」页面（2026-11-16 系统排查） ----
+    // 首页：已加载页、翻页游标、hero 当前序号
+    var homePage: FeedPage? = null
+    var homeCursor: FeedPage? = null
+    var homeHeroIndex = 0
+    var homeKey = ""
+    var homeAt = 0L
+
+    // 排行榜：大类/子榜/筛选/月榜 + 已加载列表/分页
+    var rankKey = ""
+    var rankAt = 0L
+    var rankMetaAt = 0L
+    var rankTabs: List<RankTabsel> = emptyList()
+    var rankTabIndex = 0
+    var rankSubIndex = 0
+    var rankPanel = ""
+    var rankMonth = ""
+    var rankCards: List<SeriesCard> = emptyList()
+    var rankSession = ""
+    var rankNextOffset = 0
+    var rankHasMore = false
+    var rankDataAt = 0L
+
+    // 收藏 / 点赞
+    var favoriteCards: List<SeriesCard> = emptyList()
+    var likeCards: List<SeriesCard> = emptyList()
+    var favoriteAt = 0L
+    var likeAt = 0L
+    val shelfScroll = androidx.compose.foundation.ScrollState(0)
+
+    // 历史：tab/筛选/搜索 + 滚动
+    var historyTab = 0
+    var historyFilter = 0
+    var historySearch = ""
+    val historyList = androidx.compose.foundation.lazy.LazyListState(0, 0)
+
+    // 追更：tab/列表 + 滚动
+    var followTab = 0
+    var followCards: List<SeriesCard> = emptyList()
+    var followAt = 0L
+    val followScroll = androidx.compose.foundation.ScrollState(0)
+
+    // 预约：tab/搜索/列表 + 滚动
+    var reserveTab = 0
+    var reserveSearch = ""
+    var reserveCards: List<SeriesCard> = emptyList()
+    var reserveAt = 0L
+    val reserveList = androidx.compose.foundation.lazy.LazyListState(0, 0)
+
+    // 演职员：资料/作品 + 滚动
+    var creatorId = ""
+    var creatorProfile: com.hongguotv.pad.CreatorProfileInfo? = null
+    var creatorCards: List<SeriesCard> = emptyList()
+    var creatorAt = 0L
+    val creatorScroll = androidx.compose.foundation.ScrollState(0)
+
+    // 详情页：tab/滚动（详情 → 演职员 → 返回时保持）
+    var detailTabSeries = ""
+    var detailTab = 0
+    val detailScroll = androidx.compose.foundation.ScrollState(0)
+
+    /** 「列表→详情→返回」状态复用窗口（与安卓 UiMemo.RETURN_TTL_MS 同口径）。 */
+    const val RETURN_TTL_MS = 5 * 60_000L
 }
 
 /** 官网（设置页「关于」右侧：二维码 + 地址，扫码或点击打开）。 */

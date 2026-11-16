@@ -946,6 +946,8 @@ fun PosterGrid(
     onCollect: (SeriesCard) -> Unit,
     modifier: Modifier = Modifier,
     scrollable: Boolean = true,
+    /** 外部滚动状态：列表页进详情返回时保留位置；不传则每次新建（旧行为）。 */
+    scrollState: androidx.compose.foundation.ScrollState? = null,
     coverBadge: (SeriesCard) -> String? = { null },
     metaLine: (SeriesCard) -> String? = { null },
     tagsLine: (SeriesCard) -> String? = { null },
@@ -963,7 +965,7 @@ fun PosterGrid(
         val gap = 16.dp
         val cell = (maxWidth - gap * (columns - 1)) / columns
         val contentModifier = if (scrollable) {
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            Modifier.fillMaxSize().verticalScroll(scrollState ?: rememberScrollState())
         } else {
             Modifier.fillMaxWidth()
         }

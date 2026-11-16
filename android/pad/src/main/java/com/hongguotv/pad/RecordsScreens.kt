@@ -90,7 +90,8 @@ fun RecordsScreen(
 ) {
     // 从详情/播放返回时保持原来的页签：以前回收藏列表就跳回「历史」
     var tab by remember { mutableStateOf(UiMemo.recordsTab.takeIf { it >= 0 } ?: initialTab) }  // 0 历史 1 收藏 2 点赞
-    var filter by remember { mutableStateOf(0) }        // 0 全部 1 未看完 2 已看完
+    // 筛选也存 UiMemo：以前返回就跳回「全部」，用户刚筛过的列表白筛了
+    var filter by remember { mutableStateOf(UiMemo.recordsFilter) }        // 0 全部 1 未看完 2 已看完
 
     Column(Modifier.fillMaxSize()) {
         // 标题 + 三 tab（原版标题固定「历史」）
@@ -105,7 +106,7 @@ fun RecordsScreen(
             }
         }
         when (tab) {
-            0 -> HistoryTab(filter, setFilter = { filter = it }, onPlay = onPlay)
+            0 -> HistoryTab(filter, setFilter = { filter = it; UiMemo.recordsFilter = it }, onPlay = onPlay)
             1 -> ShelfTab(Store.KEY_FAVORITE, onOpen)
             else -> ShelfTab(Store.KEY_LIKE, onOpen)
         }
@@ -114,14 +115,19 @@ fun RecordsScreen(
 
 @Composable
 internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, Int, Long) -> Unit) {
-    val rows = remember { mutableStateListOf<JSONObject>() }
-    var loading by remember { mutableStateOf(true) }
+    // 先同步读本地历史：列表立刻进组合，滚动位置才能恢复；
+    // 云端同步随后原地 diff，不重建列表（原来 loading 期间列表不在组合，滚动会归零）。
+    val rows = remember {
+        mutableStateListOf<JSONObject>().apply { runCatching { addAll(Store.history()) } }
+    }
+    var loading by remember { mutableStateOf(rows.isEmpty()) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
-        loading = true
-        rows.clear()
-        rows.addAll(Store.history())
+        if (rows.isEmpty()) {
+            loading = true
+            rows.addAll(Store.history())
+        }
         loading = false
         // 云端合并：historySync 内部是「拉云端 → mergeHistory（最近一次真实播放者胜）→ 回写」
         // 注意：这里两处都不能 rows.clear() + addAll()
@@ -147,7 +153,7 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
         // 筛选行：全部 / 未看完 / 已看完 + 搜索 + 清空 + 管理（多选删除）
         var managing by remember { mutableStateOf(false) }
         var picked by remember { mutableStateOf(setOf<String>()) }
-        var search by remember { mutableStateOf("") }
+        var search by remember { mutableStateOf(UiMemo.recordsSearch) }
         var confirmClear by remember { mutableStateOf(false) }
         Row(
             Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 10.dp),
@@ -161,7 +167,7 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
             // 搜索看过的剧（与 PC 历史页同一项；收藏/点赞 tab 不显示）
             BasicTextField(
                 value = search,
-                onValueChange = { search = it },
+                onValueChange = { search = it; UiMemo.recordsSearch = it },
                 textStyle = TextStyle(color = TextMain, fontSize = 14.sp),
                 cursorBrush = SolidColor(Red),
                 singleLine = true,
@@ -394,12 +400,23 @@ internal fun cardFromHistory(row: JSONObject): SeriesCard? {
 
 @Composable
 internal fun ShelfTab(key: String, onOpen: (String) -> Unit) {
-    val cards = remember { mutableStateListOf<SeriesCard>() }
-    var loading by remember { mutableStateOf(true) }
+    // 收藏/点赞按 key 缓存：从详情返回不再清空重拉，滚动位置才能保住
+    val cards = if (key == Store.KEY_FAVORITE) UiMemo.favoriteCards else UiMemo.likeCards
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var syncing by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
 
     LaunchedEffect(key, reload) {
+        val at = if (key == Store.KEY_FAVORITE) UiMemo.favoriteAt else UiMemo.likeAt
+        if (reload == 0 && cards.isNotEmpty() &&
+            System.currentTimeMillis() - at < UiMemo.RETURN_TTL_MS
+        ) {
+            // 在详情页取消收藏/点赞后返回：本地集合已经变了，列表同步剔除
+            val ids = Store.ids(key).toSet()
+            cards.retainAll { it.seriesId in ids }
+            loading = false
+            return@LaunchedEffect
+        }
         if (reload > 0) syncing = true
         loading = true
         cards.clear()
@@ -416,6 +433,10 @@ internal fun ShelfTab(key: String, onOpen: (String) -> Unit) {
         }
         loading = false
         syncing = false
+        if (cards.isNotEmpty()) {
+            if (key == Store.KEY_FAVORITE) UiMemo.favoriteAt = System.currentTimeMillis()
+            else UiMemo.likeAt = System.currentTimeMillis()
+        }
     }
 
     Column(Modifier.fillMaxSize()) {

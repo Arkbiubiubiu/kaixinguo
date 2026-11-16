@@ -89,25 +89,25 @@ fun RankScreen(
     onCreator: (String) -> Unit = {},
 ) {
     val tabs = remember { mutableStateListOf<RankTabsel>() }
-    // 初始化自 RankMemo：进详情/播放再返回，保持上次选的大类和子榜
+    // 初始化自 RankMemo/UiMemo：进详情/播放再返回，保持上次选的大类、子榜和滚动位置
     var tabIdx by remember { mutableStateOf(RankMemo.tabIdx) }
     var subIdx by remember { mutableStateOf(RankMemo.subIdx) }
-    val cards = remember { mutableStateListOf<SeriesCard>() }
+    val cards = UiMemo.rankCards
     // 演员榜返回的是「人」，结构和剧集榜完全不同，单独一条列表
-    val persons = remember { mutableStateListOf<RankPerson>() }
-    var loading by remember { mutableStateOf(true) }
+    val persons = UiMemo.rankPersons
+    var loading by remember { mutableStateOf(cards.isEmpty() && persons.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
-    var session by remember { mutableStateOf("") }
-    var offset by remember { mutableStateOf(0) }
-    var hasMore by remember { mutableStateOf(true) }
+    var session by remember { mutableStateOf(UiMemo.rankSession) }
+    var offset by remember { mutableStateOf(UiMemo.rankOffset) }
+    var hasMore by remember { mutableStateOf(UiMemo.rankHasMore) }
     var loadingMore by remember { mutableStateOf(false) }
     val rankList = UiMemo.rankList
     // 这一屏榜单数据真正的拉取时刻（0 = 还没拿到）。来自服务端返回的 age：
     // age 是「这份数据离从上游拉下来过去了多久」，所以真实时刻 = 现在 - age。
-    var dataAt by remember { mutableStateOf(0L) }
+    var dataAt by remember { mutableStateOf(UiMemo.rankDataAt) }
     // 榜单元数据（子榜的「N月N日已更新」）上次拉取时刻：挂着过夜时切榜要重拉，
     // 否则描述行一直停在昨天（PC 端同一时刻显示今天的日期，两端对不上）
-    var metaAt by remember { mutableStateOf(0L) }
+    var metaAt by remember { mutableStateOf(UiMemo.rankMetaAt) }
     // 服务器下发的筛选项与月榜。空串 = 不加这两个参数（等价于「总榜」/「当前榜」）
     var panelSel by remember { mutableStateOf(RankMemo.panelSel) }
     var monthSel by remember { mutableStateOf(RankMemo.monthSel) }
@@ -161,6 +161,26 @@ fun RankScreen(
     var rankRetry by remember { mutableStateOf(0) }
     LaunchedEffect(tabIdx, subIdx, tabs.size, panelSel, monthSel, rankRetry) {
         if (tabs.isEmpty()) return@LaunchedEffect
+        // 分类表刚加载/上游改榜：先等钳位 effect 把越界下标改回来
+        val ti = tabIdx.coerceIn(tabs.indices)
+        val subsNow = tabs[ti].subs
+        val si = if (subsNow.isEmpty()) 0 else subIdx.coerceIn(subsNow.indices)
+        if (ti != tabIdx || si != subIdx) {
+            tabIdx = ti
+            subIdx = si
+            RankMemo.tabIdx = ti
+            RankMemo.subIdx = si
+            return@LaunchedEffect
+        }
+        val key = "$tabIdx|$subIdx|$panelSel|$monthSel"
+        // 从详情/播放返回且榜单没变、数据还新鲜：保留列表、分页和滚动，不重拉
+        if (rankRetry == 0 && UiMemo.rankKey == key &&
+            (cards.isNotEmpty() || persons.isNotEmpty()) &&
+            System.currentTimeMillis() - UiMemo.rankAt < UiMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
         // 挂着过夜再切榜：元数据超过 1 分钟就重拉一次，描述行别停在昨天
         if (System.currentTimeMillis() - metaAt > 60_000) {
             val fresh = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
@@ -168,18 +188,24 @@ fun RankScreen(
                 tabs.clear()
                 tabs.addAll(fresh)
                 metaAt = System.currentTimeMillis()
+                UiMemo.rankMetaAt = metaAt
             }
         }
+        val changed = UiMemo.rankKey != key
         loading = true
         error = null
         hasMore = true
         session = ""
         offset = 0
         dataAt = 0L
-        // 换筛选/换月榜都是「换一份榜单」，从第 1 名看起。
+        // 换筛选/换月榜都是「换一份榜单」，从第 1 名看起；返回页面时不滚。
         // 必须用 requestScrollToItem：此刻页面还在 loading、列表根本不在组合里，
         // 用挂起版 scrollToItem 会一直等列表挂载，而列表又要等这次加载结束 —— 互相卡死。
-        runCatching { rankList.requestScrollToItem(0) }
+        if (changed) {
+            cards.clear()
+            persons.clear()
+            runCatching { rankList.requestScrollToItem(0) }
+        }
         // 演员大类走人员榜接口，别用解析剧集的那套（那样永远是空的，就是之前的「榜单加载失败」）
         if (tab?.id == "ranklist_celebrity") {
             val list = withContext(Dispatchers.IO) {
@@ -189,7 +215,13 @@ fun RankScreen(
             persons.clear()
             persons.addAll(list)
             if (persons.isEmpty()) error = "榜单加载失败"
+            dataAt = System.currentTimeMillis()
             loading = false
+            if (persons.isNotEmpty()) {
+                UiMemo.rankKey = key
+                UiMemo.rankAt = System.currentTimeMillis()
+                UiMemo.rankDataAt = dataAt
+            }
             return@LaunchedEffect
         }
         persons.clear()
@@ -203,6 +235,12 @@ fun RankScreen(
             offset = page.nextOffset
             hasMore = page.hasMore
             dataAt = System.currentTimeMillis() - (page.dataAgeSec * 1000).toLong()
+            UiMemo.rankKey = key
+            UiMemo.rankAt = System.currentTimeMillis()
+            UiMemo.rankSession = session
+            UiMemo.rankOffset = offset
+            UiMemo.rankHasMore = hasMore
+            UiMemo.rankDataAt = dataAt
         } else {
             error = "榜单加载失败"
         }
@@ -226,8 +264,12 @@ fun RankScreen(
                     session = page.sessionId
                     offset = page.nextOffset
                     hasMore = page.hasMore
+                    UiMemo.rankSession = session
+                    UiMemo.rankOffset = offset
+                    UiMemo.rankHasMore = hasMore
                 } else {
                     hasMore = false
+                    UiMemo.rankHasMore = false
                 }
                 loadingMore = false
             }

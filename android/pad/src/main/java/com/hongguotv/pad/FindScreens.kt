@@ -117,6 +117,11 @@ object FindMemo {
     var searchId: String = ""
     var offset: Int = 0
     var hasMore: Boolean = false
+    // 普通筛选列表单独一份（不能和搜索结果共用 cards，否则从详情返回会串）
+    var listCards: List<SeriesCard> = emptyList()
+    var listSession: String = ""
+    var listOffset: Int = 0
+    var listHasMore: Boolean = false
     // 筛选条件也要记住：只记结果不记条件，从详情返回会看到「列表还是上次的、
     // 条件却清空了」的错位状态。
     var selected: List<Pair<String, String>> = emptyList()
@@ -171,7 +176,7 @@ fun FindScreen(
     val cards = remember {
         mutableStateListOf<SeriesCard>().apply {
             // 从详情返回时先把上次的结果顶上，避免闪一下空白
-            if (FindMemo.searchQuery != null) addAll(FindMemo.cards)
+            addAll(if (FindMemo.searchQuery != null) FindMemo.cards else FindMemo.listCards)
         }
     }
     var loading by remember { mutableStateOf(true) }
@@ -179,9 +184,9 @@ fun FindScreen(
     var error by remember { mutableStateOf<String?>(null) }
     // 「重试」自增一次就重跑加载
     var retryTick by remember { mutableStateOf(0) }
-    var session by remember { mutableStateOf("") }
-    var offset by remember { mutableStateOf(0) }
-    var hasMore by remember { mutableStateOf(true) }
+    var session by remember { mutableStateOf(FindMemo.listSession) }
+    var offset by remember { mutableStateOf(FindMemo.listOffset) }
+    var hasMore by remember { mutableStateOf(FindMemo.listHasMore) }
     // 从 FindMemo 恢复：从详情返回时关键词和结果都还在
     // 用 TextFieldValue（而不是 String）是为了自己掌握**光标位置**：
     // 遥控器上没有方向键挪光标，光标必须落在文字末尾，否则退回删除键删不掉
@@ -207,9 +212,10 @@ fun FindScreen(
     // 焦点进去后屏幕上毫无提示，用户会以为焦点丢了
     var searchFocused by remember { mutableStateOf(false) }
     // 搜索分页（对齐 Windows：offset + search_id 续页）与联想候选
-    var searchOffset by remember { mutableStateOf(0) }
-    var searchId by remember { mutableStateOf("") }
-    var searchHasMore by remember { mutableStateOf(false) }
+    // 搜索分页也恢复：否则从详情返回后滑到底会从 offset=0 重拉，去重后一条不加
+    var searchOffset by remember { mutableStateOf(FindMemo.offset) }
+    var searchId by remember { mutableStateOf(FindMemo.searchId) }
+    var searchHasMore by remember { mutableStateOf(FindMemo.hasMore) }
     val suggest = remember { mutableStateListOf<String>() }
     val grid = UiMemo.findGrid
 
@@ -250,7 +256,12 @@ fun FindScreen(
     LaunchedEffect(selectedMap) { FindMemo.selected = selected.toList() }
 
     // 从详情返回：条件 + 结果都还在，就不要再拉一次（否则会清空列表、跳回顶部）
-    var restoredOnce by remember { mutableStateOf(FindMemo.cards.isNotEmpty()) }
+    var restoredOnce by remember {
+        mutableStateOf(
+            if (FindMemo.searchQuery != null) FindMemo.cards.isNotEmpty()
+            else FindMemo.listCards.isNotEmpty()
+        )
+    }
 
     LaunchedEffect(selectedMap, retryTick) {
         if (searchQuery != null) return@LaunchedEffect
@@ -266,6 +277,10 @@ fun FindScreen(
             session = page.sessionId
             offset = page.nextOffset
             hasMore = page.hasMore
+            FindMemo.listCards = page.cards
+            FindMemo.listSession = page.sessionId
+            FindMemo.listOffset = page.nextOffset
+            FindMemo.listHasMore = page.hasMore
             if (page.cards.isEmpty()) error = "这个组合没有内容，换个筛选试试"
         } else {
             error = "加载失败，稍后再试"
@@ -367,6 +382,10 @@ fun FindScreen(
                                 searchOffset = page.nextOffset
                                 searchId = page.sessionId
                                 searchHasMore = page.hasMore
+                                FindMemo.cards = cards.toList()
+                                FindMemo.offset = searchOffset
+                                FindMemo.searchId = searchId
+                                FindMemo.hasMore = searchHasMore
                             } else {
                                 searchHasMore = false
                             }
@@ -385,8 +404,13 @@ fun FindScreen(
                             session = page.sessionId
                             offset = page.nextOffset
                             hasMore = page.hasMore
+                            FindMemo.listCards = cards.toList()
+                            FindMemo.listSession = session
+                            FindMemo.listOffset = offset
+                            FindMemo.listHasMore = hasMore
                         } else {
                             hasMore = false
+                            FindMemo.listHasMore = false
                         }
                         listLoading = false
                     }

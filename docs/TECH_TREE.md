@@ -1,7 +1,7 @@
 # 开心果 · 架构世界树
 
 > 基线：2026-11-15
-> PC 1.2.81 · Android 2.2.193（Pad/TV 同一套源码）· 服务端 8080(static/admin)/8082(api)/8081(dual)/9110/9118
+> PC 1.2.82 · Android 2.2.194（Pad/TV 同一套源码）· 服务端 8080(static/admin)/8082(api)/8081(dual)/9110/9118
 >
 > HTML 由 `docs/build_tech_tree.py` 生成；改完节点/边后运行它重新生成 `tech-tree.html`。
 > 修复顺序见 `docs/REMEDIATION_PLAN.md`，线上在运行看板「架构世界树 → 修复顺序」。
@@ -83,9 +83,9 @@
 | ID | 节点 | 关键文件 | 职责 | 上游 | 下游 |
 |---|---|---|---|---|---|
 | `P-SHELL` | 应用壳/侧栏/路由 | `Main.kt` 的 `AppShell`、`RouteHolder`、`Route` | 窗口、侧栏、页面切换、返回栈、打赏浮层 | `S-PC` | `P-HOME`…`P-LOGIN` |
-| `P-HOME` | 首页 | `HomeScreens.kt` 的 `HomePage` | 推荐/漫剧/真人剧三 tab、hero、卡片流、换一批 | `P-SHELL` | `D-CATALOG`, `D-DETAIL`, `D-PLAY` |
-| `P-FIND` | 找剧/搜索 | `FindScreen.kt` 的 `FindPage` | 搜索、联想、筛选、结果 | `P-SHELL` | `D-CATALOG` |
-| `P-RANK` | 排行榜 | `RankScreen.kt` 的 `RankPage` | 榜单分类、筛选、月榜、演员榜 | `P-SHELL` | `D-CATALOG` |
+| `P-HOME` | 首页 | `HomeScreens.kt` 的 `HomePage` | 推荐/漫剧/真人剧三 tab、hero、卡片流、换一批；tab/列表/hero/滚动存 `PageMemo` | `P-SHELL` | `D-CATALOG`, `D-DETAIL`, `D-PLAY` |
+| `P-FIND` | 找剧/搜索 | `FindScreen.kt` 的 `FindPage` | 搜索、联想、筛选、结果；条件/结果/分页/滚动存 `PageMemo` | `P-SHELL` | `D-CATALOG` |
+| `P-RANK` | 排行榜 | `RankScreen.kt` 的 `RankPage` | 榜单分类、筛选、月榜、演员榜；大类/子榜/筛选/列表/分页/滚动全部记忆 | `P-SHELL` | `D-CATALOG` |
 | `P-NEW` | 新剧/日历 | `NewScreen.kt` 的 `NewPage` | 新剧列表、上线日历；视图/分类/日期/滚动存 `PageMemo`，从详情返回保留现场 | `P-SHELL` | `D-CATALOG` |
 | `P-HISTORY` | 历史页 | `LibraryScreens.kt` 的 `HistoryPage` | 本地/云端历史、筛选、管理、继续播 | `P-SHELL` | `D-HISTORY`, `D-ACCOUNT` |
 | `P-LIBRARY` | 追更/预约/我的 | `LibraryScreens.kt` 的 `FollowsPage`、`ReservePage`、`MinePage` | 追更提醒、预约、收藏/点赞入口、账号同步码 | `P-SHELL` | `D-ACCOUNT` |
@@ -105,7 +105,7 @@
 | `A-DETAIL` | 详情页 | `DetailScreen.kt` | 详情、选集、季、剧评、相关推荐、继续看 | `A-HOME` 等 | `D-DETAIL`, `D-PLAY` |
 | `A-PLAYER` | 播放页 | `PlayerScreen.kt` | 起播、队列、预取、无缝切集、看门狗、历史、进度上报 | `A-DETAIL`, `A-HOME` | `D-PLAY`, `D-HISTORY`, `X-AN-EXO` |
 | `A-CHROME` | 播放控制条 | `PlayerChrome.kt` | 进度条、播放/暂停、上下集、倍速、清晰度、选集、弹幕设置 | `A-PLAYER` | `D-PLAY`, `D-SOCIAL` |
-| `A-MISC` | 其余页面 | `FindScreens.kt`、`RankScreens.kt`、`NewScreens.kt`、`RecordsScreens.kt`、`FollowScreens.kt`、`AccountScreens.kt`、`SettingsScreen.kt`、`CreatorScreens.kt` | 找剧、排行、新剧、历史、收藏/点赞、追更、预约、我的、设置、演职员；新剧页视图/分类/日期/滚动存 `UiMemo` | `A-SHELL` | `D-CATALOG`, `D-HISTORY`, `D-ACCOUNT`, `D-SETTINGS` |
+| `A-MISC` | 其余页面 | `FindScreens.kt`、`RankScreens.kt`、`NewScreens.kt`、`RecordsScreens.kt`、`FollowScreens.kt`、`AccountScreens.kt`、`SettingsScreen.kt`、`CreatorScreens.kt` | 找剧、排行、新剧、历史、收藏/点赞、追更、预约、我的、设置、演职员；新剧/首页/排行/历史/收藏/点赞/追更/预约/演职员的 tab、筛选、分页与滚动都存 `UiMemo`，详情返回保留现场 | `A-SHELL` | `D-CATALOG`, `D-HISTORY`, `D-ACCOUNT`, `D-SETTINGS` |
 | `A-SOCIAL` | 评论/弹幕/打赏 | `CommentsPanel.kt`, `Danmaku.kt`, `DonateDialog.kt` | 单集评论、剧评、弹幕窗口/发送、打赏码 | `A-PLAYER`, `A-MISC` | `D-SOCIAL` |
 | `A-LOGIN` | 登录/配对 | `Login.kt`, `LoginScreen.kt` 账号区 | 短信 MFA、账号 cookies、匹配码 | `A-MISC` | `D-ACCOUNT`, `C-API` |
 
@@ -329,6 +329,7 @@ flowchart LR
 | 缓存/TTL | `V-RELAY`/`V-PLAYINFO`/`R-STREAM`/`V-HEAT`；`C-API.tierCache`/listCache；`DetailCache`；`FeedCache`；`X-*-STORE` 清理 | 命中/过期/负缓存；改 schema 必须换缓存 key/版本 |
 | 更新/发版 | `X-BUILD` → 构建产物 → `V-STATIC` 清单 → `D-UPDATE` → `S-WEB` | 版本号；sha256；ABI；签名；私有参数；下载 302 |
 | **跨端行为修复**（页面/播放/历史/更新语义） | 对应 `P-*`/`A-*` + **双端 `X-BUILD` 版本号** + `V-STATIC` 清单 + `D-UPDATE` | **双端都要有新版本产物并发布/装机**；跑 `tools/check_versions.py`；只编译不算完成；单端修复要说明原因 |
+| **列表页 → 详情 → 返回** | 对应 `P-*`/`A-*` + `UiMemo`/`PageMemo` + `D-CATALOG` | tab/筛选/搜索/分页游标/已加载数据/滚动全部恢复；`RETURN_TTL_MS` 内不重拉首屏；新增列表页或钻取层级必须同时补 memo |
 | 服务地址/端口/证书 | `X-BUILD` 私有参数 → `C-STATE.playBases/historyBase` → `V-DUAL`/`V-SERVE` → `I-TUNNEL` → `V-STATIC` | 局域网/公网；证书；`/get` 302；旧客户端 |
 | 服务端状态/清理 | `V-HIST`/`V-HEAT`/`V-STATIC`/`V-ADMIN` → `I-STATE` | 备份；锁；墓碑；重启；磁盘 |
 | 日志/看板 | `D-LOG` → `V-SERVE /api/clientlog` → `I-STATE` → `V-ADMIN` | 脱敏；上传；设备识别；统计口径 |

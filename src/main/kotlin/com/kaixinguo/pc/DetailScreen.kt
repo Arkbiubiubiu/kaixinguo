@@ -79,7 +79,18 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
     var seasons by remember { mutableStateOf<List<com.hongguotv.pad.SeasonRef>>(emptyList()) }
     // key 带 initialTab：从播放器点「评论」进来要直接落在剧评 tab
     // （仅 remember 不带 key 时，同一详情实例复用时不会重读初值）
-    var tab by remember(seriesId, initialTab) { mutableStateOf(initialTab.coerceIn(0, 2)) }
+    val sameSeries = PageMemo.detailTabSeries == seriesId
+    // 详情 → 演职员/播放 → 返回：同一部剧保持原来的页签和滚动位置
+    var tab by remember(seriesId, initialTab) {
+        mutableStateOf(if (sameSeries) PageMemo.detailTab.coerceIn(0, 2) else initialTab.coerceIn(0, 2))
+    }
+    LaunchedEffect(seriesId) {
+        if (!sameSeries) runCatching { PageMemo.detailScroll.scrollTo(0) }
+    }
+    LaunchedEffect(tab, seriesId) {
+        PageMemo.detailTabSeries = seriesId
+        PageMemo.detailTab = tab
+    }
     var fav by remember { mutableStateOf(PcStore.contains("favorite", seriesId)) }
     var followed by remember { mutableStateOf(false) }
     var liked by remember { mutableStateOf(false) }
@@ -156,7 +167,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                 SecondaryButton("返回", onClick = onBack)
             }
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(PageMemo.detailScroll).padding(24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SecondaryButton(text = "返回", icon = Icons.Filled.ArrowBack, onClick = onBack)
             }

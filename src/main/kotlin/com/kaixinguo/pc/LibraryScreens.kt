@@ -109,12 +109,12 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
     var rows by remember { mutableStateOf(PcStore.history()) }
     var cloudRows by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var syncing by remember { mutableStateOf(false) }
-    var search by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(0) }
+    var search by remember { mutableStateOf(PageMemo.historySearch) }
+    var filter by remember { mutableStateOf(PageMemo.historyFilter) }
     var confirmClear by remember { mutableStateOf(false) }
     var manageOpen by remember { mutableStateOf(false) }
     // 与安卓历史页对齐的三个 tab：历史 / 收藏 / 点赞（收藏、点赞复用海报墙）
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(PageMemo.historyTab) }
 
     fun reload() {
         rows = PcStore.history()
@@ -174,9 +174,9 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabChip("历史", tab == 0) { tab = 0 }
-            TabChip("收藏", tab == 1) { tab = 1 }
-            TabChip("点赞", tab == 2) { tab = 2 }
+            TabChip("历史", tab == 0) { tab = 0; PageMemo.historyTab = 0 }
+            TabChip("收藏", tab == 1) { tab = 1; PageMemo.historyTab = 1 }
+            TabChip("点赞", tab == 2) { tab = 2; PageMemo.historyTab = 2 }
         }
         if (tab != 0) {
             Spacer(Modifier.height(12.dp))
@@ -192,17 +192,17 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
             Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabChip("全部", filter == 0) { filter = 0 }
+            TabChip("全部", filter == 0) { filter = 0; PageMemo.historyFilter = 0 }
             Spacer(Modifier.width(8.dp))
-            TabChip("未看完", filter == 1) { filter = 1 }
+            TabChip("未看完", filter == 1) { filter = 1; PageMemo.historyFilter = 1 }
             Spacer(Modifier.width(8.dp))
-            TabChip("已看完", filter == 2) { filter = 2 }
+            TabChip("已看完", filter == 2) { filter = 2; PageMemo.historyFilter = 2 }
             if (syncing) {
                 Spacer(Modifier.width(10.dp))
                 Text("正在同步云端历史…", color = Palette.dim, fontSize = 12.sp)
             }
             Spacer(Modifier.weight(1f))
-            ListSearchBox(search, { search = it }, "搜索看过的剧")
+            ListSearchBox(search, { search = it; PageMemo.historySearch = it }, "搜索看过的剧")
             Spacer(Modifier.width(8.dp))
             OutlineButton("管理") { manageOpen = !manageOpen }
         }
@@ -221,6 +221,7 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
             )
             else -> androidx.compose.foundation.lazy.LazyColumn(
                 Modifier.fillMaxSize(),
+                state = PageMemo.historyList,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
             ) {
@@ -284,12 +285,24 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
 
 @Composable
 internal fun ShelfPage(key: String, onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
-    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    // 收藏/点赞分开缓存：进详情返回不再清空重拉，滚动位置才能保住
+    val cached = if (key == "favorite") PageMemo.favoriteCards else PageMemo.likeCards
+    var cards by remember { mutableStateOf(cached) }
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var syncing by remember { mutableStateOf(false) }
     var tick by remember { mutableStateOf(0) }
 
     LaunchedEffect(key, tick, PcStore.loggedIn) {
+        val at = if (key == "favorite") PageMemo.favoriteAt else PageMemo.likeAt
+        if (tick == 0 && cards.isNotEmpty() &&
+            System.currentTimeMillis() - at < PageMemo.RETURN_TTL_MS
+        ) {
+            // 在详情页取消收藏/点赞后返回：按本地集合剔除
+            val ids = PcStore.ids(key).toSet()
+            cards = cards.filter { it.seriesId in ids }
+            loading = false
+            return@LaunchedEffect
+        }
         syncing = tick > 0
         loading = true
         // 收藏以云端为准：先拉云端（1 跳）；只有未登录/云端失败才回落到本地逐条补详情。
@@ -309,6 +322,10 @@ internal fun ShelfPage(key: String, onOpen: (String) -> Unit, onPlay: (String) -
         cards = list
         loading = false
         syncing = false
+        if (cards.isNotEmpty()) {
+            if (key == "favorite") { PageMemo.favoriteCards = cards; PageMemo.favoriteAt = System.currentTimeMillis() }
+            else { PageMemo.likeCards = cards; PageMemo.likeAt = System.currentTimeMillis() }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -330,6 +347,7 @@ internal fun ShelfPage(key: String, onOpen: (String) -> Unit, onPlay: (String) -
             )
             else -> PosterGrid(
                 cards = cards,
+                scrollState = PageMemo.shelfScroll,
                 onOpen = { onOpen(it.seriesId) },
                 onPlay = { onPlay(it.seriesId) },
                 onCollect = { c ->
@@ -428,9 +446,9 @@ internal fun FollowsPage(
     onPlayEp: (String, Int) -> Unit = { id, _ -> onPlay(id) },
     onLogin: () -> Unit = {},
 ) {
-    var tab by remember { mutableStateOf(0) }
-    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var tab by remember { mutableStateOf(PageMemo.followTab) }
+    var cards by remember { mutableStateOf(PageMemo.followCards) }
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     // 更新提醒（本地通知：服务端集数 vs 本地基线，旧版 follow_service 同口径）
     var notices by remember { mutableStateOf(PcStore.followNotices()) }
@@ -438,11 +456,21 @@ internal fun FollowsPage(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
+        if (cards.isNotEmpty() &&
+            System.currentTimeMillis() - PageMemo.followAt < PageMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         val result = withContext(Dispatchers.IO) { runCatching { Api.followList() } }
         cards = result.getOrDefault(emptyList())
         error = result.exceptionOrNull()?.message
         loading = false
+        if (cards.isNotEmpty()) {
+            PageMemo.followCards = cards
+            PageMemo.followAt = System.currentTimeMillis()
+        }
     }
 
     fun refreshNotices() { notices = PcStore.followNotices() }
@@ -452,10 +480,10 @@ internal fun FollowsPage(
             Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabChip("追更的剧", tab == 0) { tab = 0 }
+            TabChip("追更的剧", tab == 0) { tab = 0; PageMemo.followTab = 0 }
             Spacer(Modifier.width(8.dp))
             val unread = notices.count { !it.optBoolean("read", false) }
-            TabChip(if (unread > 0) "更新提醒 $unread" else "更新提醒", tab == 1) { tab = 1 }
+            TabChip(if (unread > 0) "更新提醒 $unread" else "更新提醒", tab == 1) { tab = 1; PageMemo.followTab = 1 }
             if (tab == 1) {
                 Spacer(Modifier.weight(1f))
                 SecondaryButton(if (checking) "检查中…" else "检查更新", icon = Icons.Filled.Refresh) {
@@ -503,6 +531,7 @@ internal fun FollowsPage(
                 )
                 else -> PosterGrid(
                     cards = cards,
+                    scrollState = PageMemo.followScroll,
                     onOpen = { onOpen(it.seriesId) },
                     onPlay = { onPlay(it.seriesId) },
                     onCollect = { PcStore.toggle("favorite", it.seriesId) },
@@ -586,15 +615,25 @@ internal fun NoticesList(
 
 @Composable
 internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
-    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var tab by remember { mutableStateOf(0) } // 0=已上线（旧版默认 tab）
-    var search by remember { mutableStateOf("") }
+    var cards by remember { mutableStateOf(PageMemo.reserveCards) }
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
+    var tab by remember { mutableStateOf(PageMemo.reserveTab) } // 0=已上线（旧版默认 tab）
+    var search by remember { mutableStateOf(PageMemo.reserveSearch) }
 
     LaunchedEffect(Unit) {
+        if (cards.isNotEmpty() &&
+            System.currentTimeMillis() - PageMemo.reserveAt < PageMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         cards = withContext(Dispatchers.IO) { runCatching { Api.reserveListCached() }.getOrDefault(emptyList()) }
         loading = false
+        if (cards.isNotEmpty()) {
+            PageMemo.reserveCards = cards
+            PageMemo.reserveAt = System.currentTimeMillis()
+        }
     }
 
     val online = cards.filter { !it.upcoming }
@@ -609,11 +648,11 @@ internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabChip("已上线 $onlineCount", tab == 0) { tab = 0 }
+            TabChip("已上线 $onlineCount", tab == 0) { tab = 0; PageMemo.reserveTab = 0 }
             Spacer(Modifier.width(8.dp))
-            TabChip("待上线 $upcomingCount", tab == 1) { tab = 1 }
+            TabChip("待上线 $upcomingCount", tab == 1) { tab = 1; PageMemo.reserveTab = 1 }
             Spacer(Modifier.weight(1f))
-            ListSearchBox(search, { search = it }, "搜索预约的剧")
+            ListSearchBox(search, { search = it; PageMemo.reserveSearch = it }, "搜索预约的剧")
         }
         when {
             loading -> CenterLoading()
@@ -624,6 +663,7 @@ internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             // 行卡形态（旧版 38 图：横向行卡 + 行尾播放/详情，非海报墙）
             else -> androidx.compose.foundation.lazy.LazyColumn(
                 Modifier.fillMaxSize(),
+                state = PageMemo.reserveList,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
             ) {

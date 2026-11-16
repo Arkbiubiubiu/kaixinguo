@@ -88,13 +88,29 @@ fun CreatorScreen(
     onBack: () -> Unit,
     onOpen: (String) -> Unit,
 ) {
-    var profile by remember { mutableStateOf<CreatorProfileInfo?>(null) }
-    val works = remember { mutableStateListOf<SeriesCard>() }
-    var loading by remember { mutableStateOf(true) }
+    // 详情 → 演职员 → 作品详情 → 返回：资料/作品/滚动都放 UiMemo，回页不重拉
+    val same = UiMemo.creatorId == userId
+    var profile by remember { mutableStateOf(if (same) UiMemo.creatorProfile else null) }
+    val works = remember {
+        mutableStateListOf<SeriesCard>().apply { if (same) addAll(UiMemo.creatorWorks) }
+    }
+    var loading by remember { mutableStateOf(profile == null && works.isEmpty()) }
     // 接口异常（不是"没有作品"）：要区分开，别把失败显示成空列表
     var loadError by remember { mutableStateOf(false) }
 
     LaunchedEffect(userId) {
+        if (same && (profile != null || works.isNotEmpty()) &&
+            System.currentTimeMillis() - UiMemo.creatorAt < UiMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
+        val changed = !same
+        if (changed) {
+            works.clear()
+            profile = null
+            runCatching { UiMemo.creatorGrid.requestScrollToItem(0) }
+        }
         loading = true
         val p = withContext(Dispatchers.IO) { runCatching { Api.creatorProfile(userId) }.getOrNull() }
         profile = p
@@ -130,6 +146,10 @@ fun CreatorScreen(
         works.addAll(w)
         loadError = failed && w.isEmpty()
         loading = false
+        UiMemo.creatorId = userId
+        UiMemo.creatorProfile = p
+        UiMemo.creatorWorks = works.toList()
+        UiMemo.creatorAt = System.currentTimeMillis()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -150,6 +170,7 @@ fun CreatorScreen(
             )
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(5),
+                state = UiMemo.creatorGrid,
                 contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),

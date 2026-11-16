@@ -113,15 +113,17 @@ internal fun HomePage(
     onOpen: (String) -> Unit,
     onPlay: (String) -> Unit,
 ) {
-    var page by remember { mutableStateOf<FeedPage?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    val memoKey = "$tab|$refresh"
+    val restored = PageMemo.homeKey == memoKey
+    var page by remember { mutableStateOf(if (restored) PageMemo.homePage else null) }
+    var loading by remember { mutableStateOf(page == null) }
     var error by remember { mutableStateOf<String?>(null) }
     var heroDetail by remember { mutableStateOf<SeriesDetail?>(null) }
     /** 上一页的游标：cellId/planId/sessionId/offset 都在里面，翻页要用 */
-    var cursor by remember { mutableStateOf<FeedPage?>(null) }
+    var cursor by remember { mutableStateOf(if (restored) PageMemo.homeCursor else null) }
     var moreLoading by remember { mutableStateOf(false) }
     // 不跟 page 绑定：数据刷新（热度补齐等）不能把 hero 拉回第一张
-    var heroIndex by remember { mutableStateOf(0) }
+    var heroIndex by remember { mutableStateOf(if (restored) PageMemo.homeHeroIndex else 0) }
     val scope = rememberCoroutineScope()
     /** 推荐墙的滚动状态：滚到靠底就自动续拉，不再放按钮 */
     val wallScroll = PageMemo.homeWall
@@ -131,12 +133,19 @@ internal fun HomePage(
     val tabTypes = listOf("16", "36", "39")
 
     LaunchedEffect(tab, refresh) {
-        // 只有切 tab / 换一批才回到墙顶；从详情返回时保留原来的滚动位置
-        val resetWall = PageMemo.homeTab != tab || PageMemo.homeRefresh != refresh
+        // 从详情返回且 tab/换一批计数没变、数据还新鲜：保留列表、hero 和滚动位置
+        if (PageMemo.homeKey == memoKey && page != null &&
+            System.currentTimeMillis() - PageMemo.homeAt < PageMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
+        // 只有切 tab / 换一批才回到墙顶；从详情返回不会走到这里
+        val resetWall = PageMemo.homeKey != memoKey
         PageMemo.homeTab = tab
         PageMemo.homeRefresh = refresh
         loading = true
-        heroIndex = 0
+        if (resetWall) heroIndex = 0
         val result = withContext(Dispatchers.IO) {
             runCatching { Api.firstPageCached(tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]) }.getOrNull()
         }
@@ -169,6 +178,13 @@ internal fun HomePage(
         cursor = cur
         error = if (cur == null || cur.cards.isEmpty()) "暂时没能加载出来 · 检查网络后重试" else null
         loading = false
+        if (cur != null && cur.cards.isNotEmpty()) {
+            PageMemo.homePage = cur
+            PageMemo.homeCursor = cur
+            PageMemo.homeKey = memoKey
+            PageMemo.homeAt = System.currentTimeMillis()
+            PageMemo.homeHeroIndex = heroIndex
+        }
         // 换 tab / 换一批回到墙顶（滚动状态是常驻的，不重置会停在上一次的底部）
         if (resetWall) runCatching { wallScroll.scrollTo(0) }
     }
@@ -239,6 +255,9 @@ internal fun HomePage(
             } else {
                 cursor = c.copy(hasMore = false)
             }
+            PageMemo.homePage = page
+            PageMemo.homeCursor = cursor
+            PageMemo.homeAt = System.currentTimeMillis()
             moreLoading = false
         }
     }
@@ -281,7 +300,10 @@ internal fun HomePage(
                                 onDetail = { onOpen(hero.seriesId) },
                                 position = safeHeroIndex,
                                 count = cards.size,
-                                onNavigate = { d -> heroIndex = (safeHeroIndex + d + cards.size) % cards.size },
+                                onNavigate = { d ->
+                                    heroIndex = (safeHeroIndex + d + cards.size) % cards.size
+                                    PageMemo.homeHeroIndex = heroIndex
+                                },
                                 height = heroHeight,
                             )
                             Spacer(Modifier.height(20.dp))

@@ -90,22 +90,28 @@ fun FollowReserveScreen(
     onLogin: () -> Unit = {},
 ) {
     val mode = initialMode
-    val cards = remember { mutableStateListOf<SeriesCard>() }
-    var loading by remember { mutableStateOf(true) }
+    // 追更/预约的列表、tab、搜索词都存 UiMemo：进详情返回不再跳回第一个 tab / 清空搜索
+    val cards = if (mode == 0) UiMemo.followCards else UiMemo.reserveCards
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     // 失败后点「重新加载」用：自增一次就重新拉一遍
     var reload by remember { mutableStateOf(0) }
     // 0 = 第一个 tab（追更的剧 / 已上线），1 = 第二个（更新提醒 / 待上线）
-    var tab by remember { mutableStateOf(0) }
-    var query by remember { mutableStateOf("") }
+    var tab by remember { mutableStateOf(if (mode == 0) UiMemo.followTab else UiMemo.reserveTab) }
+    var query by remember { mutableStateOf(if (mode == 0) UiMemo.followQuery else UiMemo.reserveQuery) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(mode, reload) {
+        val at = if (mode == 0) UiMemo.followAt else UiMemo.reserveAt
+        if (Store.loggedIn && reload == 0 && cards.isNotEmpty() &&
+            System.currentTimeMillis() - at < UiMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         error = null
         cards.clear()
-        tab = 0
-        query = ""
         if (!Store.loggedIn) {
             error = if (mode == 0) "追更跟着账号走，请先到「我的」用手机号登录"
             else "预约跟着账号走，请先到「我的」用手机号登录"
@@ -122,6 +128,10 @@ fun FollowReserveScreen(
             error = if (mode == 0) "追更列表没加载出来" else "预约列表没加载出来"
         }
         loading = false
+        if (cards.isNotEmpty()) {
+            if (mode == 0) UiMemo.followAt = System.currentTimeMillis()
+            else UiMemo.reserveAt = System.currentTimeMillis()
+        }
     }
 
     // 追更：未看集数 > 0 的算「有更新」；预约：按 is_online 分两栏
@@ -160,7 +170,7 @@ fun FollowReserveScreen(
                 // 预约页带搜索（对齐 Windows：搜索预约的剧）
                 BasicTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = { query = it; if (mode == 0) UiMemo.followQuery = it else UiMemo.reserveQuery = it },
                     textStyle = TextStyle(color = TextMain, fontSize = 14.sp),
                     cursorBrush = SolidColor(Red),
                     singleLine = true,
@@ -198,7 +208,7 @@ fun FollowReserveScreen(
                         .height(30.dp)
                         .clip(RoundedCornerShape(15.dp))
                         .background(if (sel) Red else PanelHi)
-                        .clickable { tab = i }
+                        .clickable { tab = i; if (mode == 0) UiMemo.followTab = i else UiMemo.reserveTab = i }
                         .padding(horizontal = 16.dp),
                     contentAlignment = Alignment.Center,
                 ) {

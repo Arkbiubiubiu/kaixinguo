@@ -69,4 +69,57 @@ object UiMemo {
     val detailScroll = ScrollState(0)
     var detailTabSeries: String = ""
     var detailTab: Int = 0
+
+    // ---- 其余「列表 → 详情 → 返回」页面（2026-11-16 系统排查） ----
+    // 统一存「你在哪、看到哪、已加载到哪一页」；返回时同一 key 且在 TTL 内
+    // 就直接复用，不重拉首屏、不重置滚动。
+    // 首页：三 tab + 卡片墙 + 翻页游标 + hero 当前剧
+    var homeTabName: String = ""
+    var homeKey: String = ""
+    var homeAt: Long = 0L
+    var homeHasMore: Boolean = true
+    var homeCursor: FeedPage? = null
+    var homeHeroId: String = ""
+    val homeCards = mutableStateListOf<SeriesCard>()
+
+    // 排行榜：大类/子榜/筛选/月榜（RankMemo）+ 已加载列表与翻页
+    var rankKey: String = ""
+    var rankAt: Long = 0L
+    var rankMetaAt: Long = 0L
+    var rankSession: String = ""
+    var rankOffset: Int = 0
+    var rankHasMore: Boolean = true
+    var rankDataAt: Long = 0L
+    val rankCards = mutableStateListOf<SeriesCard>()
+    val rankPersons = mutableStateListOf<RankPerson>()
+
+    // 收藏 / 点赞：卡片墙（分 key 存）
+    val favoriteCards = mutableStateListOf<SeriesCard>()
+    val likeCards = mutableStateListOf<SeriesCard>()
+    var favoriteAt: Long = 0L
+    var likeAt: Long = 0L
+
+    // 历史：筛选（全部/未看完/已看完）与搜索词
+    var recordsFilter: Int = 0
+    var recordsSearch: String = ""
+
+    // 追更 / 预约：tab 与搜索词、卡片
+    var followTab: Int = 0
+    var followQuery: String = ""
+    var followAt: Long = 0L
+    val followCards = mutableStateListOf<SeriesCard>()
+    var reserveTab: Int = 0
+    var reserveQuery: String = ""
+    var reserveAt: Long = 0L
+    val reserveCards = mutableStateListOf<SeriesCard>()
+
+    // 演职员页（详情 → 演职员 → 作品详情 → 返回）：资料、作品、滚动
+    var creatorId: String = ""
+    var creatorAt: Long = 0L
+    var creatorProfile: CreatorProfileInfo? = null
+    var creatorWorks: List<SeriesCard> = emptyList()
+    val creatorGrid = LazyGridState(0, 0)
+
+    /** 「列表→详情→返回」状态复用窗口：超过这个时间才重新拉首屏。 */
+    const val RETURN_TTL_MS = 5 * 60_000L
 }

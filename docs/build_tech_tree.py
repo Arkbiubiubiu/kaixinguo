@@ -21,10 +21,10 @@ N = [
 
     # L1 PC
     dict(id="P-SHELL", layer="L1", name="PC 应用壳 / 路由", summary="窗口、侧栏、页面切换、返回栈、打赏浮层。所有 PC 页面从这里进入。", files=["Main.kt: AppShell", "Main.kt: RouteHolder", "Main.kt: Route"]),
-    dict(id="P-HOME", layer="L1", name="PC 首页", summary="推荐/漫剧/真人剧三 tab、hero、卡片流、换一批、继续看。", files=["HomeScreens.kt: HomePage"]),
-    dict(id="P-FIND", layer="L1", name="PC 找剧 / 搜索", summary="搜索、联想、筛选、结果列表。", files=["FindScreen.kt: FindPage"]),
-    dict(id="P-RANK", layer="L1", name="PC 排行榜", summary="榜单分类、筛选、月榜、演员榜。", files=["RankScreen.kt: RankPage"]),
-    dict(id="P-NEW", layer="L1", name="PC 新剧 / 日历", summary="新剧列表、上线日历；视图/分类/日期/滚动存 PageMemo，从详情返回保留现场。", files=["NewScreen.kt: NewPage"]),
+    dict(id="P-HOME", layer="L1", name="PC 首页", summary="推荐/漫剧/真人剧三 tab、hero、卡片流、换一批、继续看；tab/列表/hero/滚动存 UiMemo，详情返回保留现场。", files=["HomeScreens.kt: HomePage"]),
+    dict(id="P-FIND", layer="L1", name="PC 找剧 / 搜索", summary="搜索、联想、筛选、结果列表；条件/结果/分页/滚动存 FindMemo+UiMemo，详情返回不丢。", files=["FindScreen.kt: FindPage"]),
+    dict(id="P-RANK", layer="L1", name="PC 排行榜", summary="榜单分类、筛选、月榜、演员榜；大类/子榜/筛选/列表/分页/滚动全部记忆，详情返回保留。", files=["RankScreen.kt: RankPage"]),
+    dict(id="P-NEW", layer="L1", name="PC 新剧 / 日历", summary="新剧列表、上线日历；视图/分类/日期/分页/滚动存 PageMemo，从详情返回保留现场。", files=["NewScreen.kt: NewPage"]),
     dict(id="P-HISTORY", layer="L1", name="PC 历史页", summary="本地/云端历史、筛选、管理、继续播。", files=["LibraryScreens.kt: HistoryPage"]),
     dict(id="P-LIBRARY", layer="L1", name="PC 追更/预约/我的", summary="追更提醒、预约、收藏/点赞入口、账号同步码。", files=["LibraryScreens.kt: FollowsPage/ReservePage/MinePage"]),
     dict(id="P-DETAIL", layer="L1", name="PC 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),

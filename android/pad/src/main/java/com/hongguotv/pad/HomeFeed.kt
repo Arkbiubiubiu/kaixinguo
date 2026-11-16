@@ -88,13 +88,21 @@ fun HomeScreen(
     onOpen: (SeriesCard) -> Unit,
     onPlay: (SeriesCard) -> Unit,
 ) {
-    var tab by remember { mutableStateOf(HomeTab.Comic) }   // 三端默认漫剧
-    val cards = remember { mutableStateListOf<SeriesCard>() }
-    var loading by remember { mutableStateOf(true) }
+    // 页面状态放 UiMemo：进详情时首页会离开组合，局部 remember 全丢。
+    // 返回后要回到原来的 tab、卡片墙和滚动位置（2026-11-16 系统排查）。
+    var tab by remember {
+        mutableStateOf(
+            UiMemo.homeTabName.takeIf { it.isNotEmpty() }
+                ?.let { n -> runCatching { HomeTab.valueOf(n) }.getOrNull() }
+                ?: HomeTab.Comic
+        )
+    }
+    val cards = UiMemo.homeCards
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loadingMore by remember { mutableStateOf(false) }
-    var hasMore by remember { mutableStateOf(true) }
-    var cursor by remember { mutableStateOf<FeedPage?>(null) }
+    var hasMore by remember { mutableStateOf(UiMemo.homeHasMore) }
+    var cursor by remember { mutableStateOf(UiMemo.homeCursor) }
     val grid = UiMemo.homeGrid
     val scope = rememberCoroutineScope()
     // hero：焦点跟随（PC 端同款信息的 TV 形态）——焦点在网格哪张卡上，
@@ -102,7 +110,9 @@ fun HomeScreen(
     // 数据 Api.ensureDetail（DetailCache LRU 60 与详情页共享）；焦点快速
     // 移动时 LaunchedEffect 自动取消上一个请求，天然防抖；数据未到时用
     // 卡片快照（标题/封面）撑住版面，不白屏。
-    var heroCard by remember { mutableStateOf<SeriesCard?>(null) }
+    var heroCard by remember {
+        mutableStateOf(cards.firstOrNull { it.seriesId == UiMemo.homeHeroId } ?: cards.firstOrNull())
+    }
     // 平板有左右箭头（和 PC 一样手动切 hero），TV 不加：
     // TV 的「切换」就是方向键在下面网格里移动焦点（hero 焦点跟随）。
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
@@ -118,6 +128,7 @@ fun HomeScreen(
     /** 「换一批」计数：变化时强制重拉首屏（跳过缓存） */
     var refreshNonce by remember { mutableStateOf(0) }
     LaunchedEffect(heroCard?.seriesId) {
+        UiMemo.homeHeroId = heroCard?.seriesId.orEmpty()
         val id = heroCard?.seriesId
         if (id == null) {
             heroDetail = null
@@ -152,6 +163,13 @@ fun HomeScreen(
     LaunchedEffect(tab, refreshNonce) {
         if (refreshNonce > 0) Api.clearListCache()   // 换一批：作废列表缓存
         val key = "home_${tab.name}"
+        // 从详情返回且 tab 没变、数据还新鲜：直接复用卡片墙和滚动位置，不重拉首屏
+        if (refreshNonce == 0 && UiMemo.homeKey == key && cards.isNotEmpty() &&
+            System.currentTimeMillis() - UiMemo.homeAt < UiMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
         val cachedRaw = withContext(Dispatchers.IO) { FeedCache.load(key) }
         // 缓存里的热度可能是旧口径；先按服务器 heat 补齐再上屏，避免「先错后改」
         val cached = withContext(Dispatchers.IO) {
@@ -168,10 +186,9 @@ fun HomeScreen(
         error = null
         hasMore = true
         cursor = null
-        // 只有「切了 tab」才回到顶部；从详情返回时保持原来的滚动位置
-        if (cached.isNotEmpty() && UiMemo.homeTab != tab.name) {
-            runCatching { grid.scrollToItem(0) }
-            UiMemo.homeTab = tab.name
+        // 只有「切了 tab」才回到顶部；从详情返回走上面的提前 return，不会滚
+        if (cached.isNotEmpty() && UiMemo.homeKey != key) {
+            runCatching { grid.requestScrollToItem(0) }
         }
 
         // 首屏最多试 3 次：服务器忙/上游风控时退避重试。
@@ -214,8 +231,17 @@ fun HomeScreen(
         }
         if (cursor == null && cached.isEmpty()) error = "首页没加载出来（网络问题）"
         loading = false
+        // 记下这一屏，返回时直接复用（分页游标/是否还有更多也一起存）
+        if (cards.isNotEmpty()) {
+            UiMemo.homeTabName = tab.name
+            UiMemo.homeKey = key
+            UiMemo.homeAt = System.currentTimeMillis()
+            UiMemo.homeCursor = cursor
+            UiMemo.homeHasMore = hasMore
+        }
         // hero 默认主角：切 tab 后无条件回到本 tab 第一张（焦点未动时也翻面）
         heroCard = cards.firstOrNull()
+        UiMemo.homeHeroId = heroCard?.seriesId.orEmpty()
     }
 
     // 焦点移到末尾附近就续一页。debounce 防止一路划到底时连发多次。
@@ -253,6 +279,8 @@ fun HomeScreen(
                 } else {
                     hasMore = false
                 }
+                UiMemo.homeCursor = cursor
+                UiMemo.homeHasMore = hasMore
                 loadingMore = false
             }
     }

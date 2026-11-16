@@ -106,24 +106,25 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
-    var tabs by remember { mutableStateOf<List<RankTabsel>>(emptyList()) }
-    var tabIndex by remember { mutableStateOf(0) }
-    var subIndex by remember { mutableStateOf(0) }
-    var panel by remember { mutableStateOf("") }
+    // 状态从 PageMemo 恢复：进详情返回时不再跳回「全部 + 推荐榜 + 顶部」
+    var tabs by remember { mutableStateOf(PageMemo.rankTabs) }
+    var tabIndex by remember { mutableStateOf(PageMemo.rankTabIndex) }
+    var subIndex by remember { mutableStateOf(PageMemo.rankSubIndex) }
+    var panel by remember { mutableStateOf(PageMemo.rankPanel) }
     var filterOpen by remember { mutableStateOf(false) }
     // 月榜（安卓一直有，PC 按用户要求补回）：空 = 当前榜，非空 = 服务器下发的某个月份
-    var month by remember { mutableStateOf("") }
+    var month by remember { mutableStateOf(PageMemo.rankMonth) }
     var monthOpen by remember { mutableStateOf(false) }
-    var cards by remember { mutableStateOf<List<SeriesCard>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var cards by remember { mutableStateOf(PageMemo.rankCards) }
+    var loading by remember { mutableStateOf(cards.isEmpty()) }
     /** 这一页榜单数据到底是什么时候拉下来的（描述行的兜底时间，别装成「今天刚更新」） */
-    var dataAt by remember { mutableStateOf(0L) }
+    var dataAt by remember { mutableStateOf(PageMemo.rankDataAt) }
     /** 榜单元数据（含各子榜的「N月N日已更新」）上次拉取时刻；超过 1 分钟再进/切榜就重拉 */
-    var metaAt by remember { mutableStateOf(0L) }
+    var metaAt by remember { mutableStateOf(PageMemo.rankMetaAt) }
     /** 榜单翻页：上游一页 10 条，滚到底继续要下一页（以前只拉第一页，所以永远只有 10 名） */
-    var session by remember { mutableStateOf("") }
-    var nextOffset by remember { mutableStateOf(0) }
-    var hasMore by remember { mutableStateOf(false) }
+    var session by remember { mutableStateOf(PageMemo.rankSession) }
+    var nextOffset by remember { mutableStateOf(PageMemo.rankNextOffset) }
+    var hasMore by remember { mutableStateOf(PageMemo.rankHasMore) }
     var loadingMore by remember { mutableStateOf(false) }
     val rankList = PageMemo.rankList
 
@@ -132,14 +133,28 @@ internal fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var metaError by remember { mutableStateOf(false) }
     var metaAttempt by remember { mutableStateOf(0) }
     LaunchedEffect(metaAttempt) {
-        val list = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
-        if (list.isEmpty()) {
-            metaError = true
-            loading = false
-        } else {
-            tabs = list
+        // 从详情返回且元数据还新鲜：直接用 PageMemo 里的分类表，不重复拉
+        if (tabs.isNotEmpty() && System.currentTimeMillis() - metaAt < 60_000) {
             metaError = false
-            metaAt = System.currentTimeMillis()
+        } else {
+            val list = withContext(Dispatchers.IO) { runCatching { Api.rankMeta() }.getOrDefault(emptyList()) }
+            if (list.isEmpty()) {
+                metaError = true
+                loading = false
+            } else {
+                tabs = list
+                metaError = false
+                metaAt = System.currentTimeMillis()
+                PageMemo.rankTabs = list
+                PageMemo.rankMetaAt = metaAt
+                PageMemo.rankTabIndex = tabIndex.coerceIn(list.indices)
+                tabIndex = PageMemo.rankTabIndex
+                val subs = list.getOrNull(tabIndex)?.subs.orEmpty()
+                if (subIndex !in subs.indices) {
+                    subIndex = 0
+                    PageMemo.rankSubIndex = 0
+                }
+            }
         }
     }
 
@@ -148,6 +163,15 @@ internal fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
 
     LaunchedEffect(tab?.id, sub?.id, panel, month) {
         val t = tab ?: return@LaunchedEffect
+        val key = "$tabIndex|$subIndex|$panel|$month"
+        // 从详情返回且榜单没变、数据还新鲜：保留列表、分页和滚动，不重拉
+        if (PageMemo.rankKey == key && cards.isNotEmpty() &&
+            System.currentTimeMillis() - PageMemo.rankAt < PageMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
+        }
+        val changed = PageMemo.rankKey != key
         // 榜单元数据（子榜的「N月N日已更新」）只在进页面时拉一次的话，
         // 挂着过夜就会一直显示昨天。切榜/换筛选时顺手刷新一下（1 分钟内不重复拉）。
         if (System.currentTimeMillis() - metaAt > 60_000) {
@@ -178,10 +202,24 @@ internal fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
         hasMore = page.hasMore
         dataAt = System.currentTimeMillis()
         loading = false
+        PageMemo.rankKey = key
+        PageMemo.rankAt = System.currentTimeMillis()
+        PageMemo.rankTabIndex = tabIndex
+        PageMemo.rankSubIndex = subIndex
+        PageMemo.rankPanel = panel
+        PageMemo.rankMonth = month
+        PageMemo.rankCards = cards
+        PageMemo.rankSession = session
+        PageMemo.rankNextOffset = nextOffset
+        PageMemo.rankHasMore = hasMore
+        PageMemo.rankDataAt = dataAt
+        PageMemo.rankMetaAt = metaAt
         // 换榜回到顶部：必须等 loading=false 之后（列表重新组合出来再滚，
         // 在列表还没挂上时调 scrollToItem 会一直挂起，页面就卡在转圈）
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-            runCatching { rankList.scrollToItem(0) }
+        if (changed) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                runCatching { rankList.scrollToItem(0) }
+            }
         }
     }
 
@@ -205,6 +243,11 @@ internal fun RankPage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 } else {
                     hasMore = false
                 }
+                PageMemo.rankCards = cards
+                PageMemo.rankSession = session
+                PageMemo.rankNextOffset = nextOffset
+                PageMemo.rankHasMore = hasMore
+                PageMemo.rankAt = System.currentTimeMillis()
                 loadingMore = false
             }
         }

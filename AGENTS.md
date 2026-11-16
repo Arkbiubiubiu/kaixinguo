@@ -61,6 +61,12 @@
 - 跨端节点（页面/播放/历史/更新语义）的修复，PC 与 Android 都要发布对应新版本；确实只改单端时，回复里必须写明原因，并用 `python tools/check_versions.py --platform pc|android` 留证。
 - 任何发版/装机结束后必须跑 `python tools/check_versions.py`，看到 `OK：源码版本、服务器清单、本机安装版本一致` 才能结束。
 
+### 页面状态（列表 → 详情/播放 → 返回）
+
+- 任何「列表 → 详情/播放 → 返回」的页面，必须把 **tab / 筛选 / 搜索词 / 分页游标 / 已加载数据 / 滚动位置** 存 `UiMemo`（安卓）或 `PageMemo`（PC）；返回时同一 key 且在 `RETURN_TTL_MS` 内直接复用，不重拉首屏。
+- 新增列表页、或给现有页面加一层钻取（详情→演职员、榜单→详情等），默认按这条做；只改页面不改 memo = 返回必丢现场。
+- 滚动复位只在「真的切 tab/筛选/日期」时做，并且用 `requestScrollToItem`/`scrollTo` 的非阻塞形式；在列表未进组合时用挂起版 `scrollToItem` 会卡死加载。
+
 ### 验证
 
 - 真机验证只用 LDPlayer `emulator-5554`，绝不装到用户的电视/平板。
