@@ -55,7 +55,7 @@
 │   dual_server(8081) / serve.py(8080) / relay 缓存 / playinfo / 热度 / 历史 / 静态包 / 看板
 │
 ├─ L6 解析、转码与上游
-│   streamsrv(9110) → oroplay(9118) → Android 官方 App oracle(9120) → 1080p；旧主接口/兼容接口/转码兜底
+│   streamsrv(9110) → oroplay(9118) → v5 sidecar(9119) → 1080p；失败自动回 oracle(9120)；兼容 fallback/VVC 转码兜底
 │   番茄内容 API、播放模型、CDN、登录、图片；樱花/CF/cpolar 隧道；状态目录；systemd
 │
 └─ 横切约束：三端一致、历史语义、私有参数、缓存失效、发版清单、测试设备
@@ -169,19 +169,20 @@
 | ID | 节点 | 关键位置 | 职责 | 上游 | 下游 |
 |---|---|---|---|---|---|
 | `R-STREAM` | 签名取流服务 | `/opt/research/streamsrv`，9110，Go | `/play` 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；`/transcode` 代理 job 查询 | `V-PLAYINFO` | `R-ORO`, `R-SIGN`, `U-PLAY` |
-| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **优先调 `R-ORACLE`** 按 vid 取全部清晰度；`bytevc1`（HEVC）直接透传，只有 `bytevc2`/AV1 才转码；旧匿名身份/video_tab 通道保留兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
-| `R-ORACLE` | Android 官方 App oracle | `/opt/research/oracle_parent.py` + `resolve_one.py` + `oracle_resolver.js`，9120；redroid Android 13 容器 + 官方红果 App + Frida | oroplay 优先调它：按 vid 让官方 App 用自己的签名/TTNet 取模型，返回 1080p/720p 等全部档位；容器/systemd 开机自启 | `R-ORO` | `U-PLAY`, `U-CDN` |
+| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **v5 优先**：先调 `R-V5`，失败/空/超时回 `R-ORACLE`；`bytevc1`（HEVC）直接透传；VVC/AV1 先取 `fallback_api` 兼容档（1080P HEVC/H.265），最后才转码；返回前强制过滤 `bytevc2`；旧 video_tab 仅诊断兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-V5`, `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
+| `R-V5` | v5 纯 HTTP 签名 | `/opt/research/v5/v5resolver.js`，127.0.0.1:9119；`playback-v5-sign.js`、`mobile-playback-v5.js` 等 | 匿名设备注册 + Android `v04.10.03` v5 签名 + gzip mobile 模型；VVC/AV1 集调 `fallback_api` 的 `codec_type=3/1` 取 1080P HEVC/H.265；单设备、1.2s 间隔、空响应 90s 冷却 | `R-ORO` | `U-PLAY` |
+| `R-ORACLE` | Android 官方 App oracle | `/opt/research/oracle_parent.py` + `resolve_one.py` + `oracle_resolver.js`，9120；redroid Android 13 容器 + 官方红果 App + Frida | oroplay 的**兜底**：v5 失败/空/超时时按 vid 让官方 App 用自己的签名/TTNet 取模型，返回 1080p/720p 等全部档位；容器/systemd 开机自启 | `R-ORO` | `U-PLAY`, `U-CDN` |
 | `R-SIGN` | 签名/设备池 | 9100/9101/9099，`playback-sign.js`, `playback-device.js`, `sign-server.jar` | 上游签名、设备身份注册/轮换、Argus/Ladon | `C-API`, `V-RELAY`, `R-ORO` | `U-PASSPORT`/上游 |
-| `R-TRANSCODE` | VVC 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → `/transcode/*_v3.mp4`；优先 `h264_vaapi` 核显，失败回退 x264 ultrafast | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
+| `R-TRANSCODE` | VVC/AV1 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；VAAPI 优先、x264 兜底；输出必须 ffprobe 有视频轨，否则删除报错，绝不返回音频-only | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
 | `U-CONTENT` | 番茄内容接口 | `api5-normal-lq.fqnovel.com` 等 | 首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员 | `C-API`, `V-RELAY` | — |
-| `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO` | — |
+| `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO`, `R-V5` | — |
 | `U-CDN` | 视频/图片 CDN | 字节 CDN | 加密 MP4、封面、头像 | `C-PROXY`, 转码下载 | — |
 | `U-PASSPORT` | 登录/MFA | 番茄 passport | 短信登录、MFA、cookies | `D-ACCOUNT`, `C-SIGN` | — |
 | `I-TUNNEL` | 公网通道 | 樱花 frpc（44468）、Cloudflare、cpolar | 把 8081/8080 暴露到公网；`/get` 302 下载 | 客户端 | `V-DUAL` |
 | `I-STATE` | 服务端状态 | `/var/lib/hgtv-sync` | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token | `V-*` | 磁盘 |
 | `I-SYSTEMD` | 守护/备份 | systemd units、`mirror_watchdog`、`cloudflared_watchdog` | 服务常驻、镜像发现、隧道守护、备份 | 运维 | `V-*` |
 
-> **旁路验证（未接入生产，2026-11-17）**：`/opt/research/v5/v5resolver.js`，`127.0.0.1:9119`，纯 HTTP v5 签名（N3urda/aston314 GPL 实现）。7 个 vid 验证全部 5 档、0 空响应；1080P 为 HEVC 时可直接返回，为 VVC 时仍走 `R-TRANSCODE`。当前**不与 `R-STREAM`/`R-ORO` 建边**；切主时再新增 `R-V5`，把 oroplay 改为 v5 优先、`R-ORACLE` 兜底。
+> **v5 主路径已切换（2026-11-17）**：`oroplay` 先调 `R-V5`（9119），失败/空/超时回 `R-ORACLE`（9120），旧 video_tab 仅诊断。VVC/AV1 集不硬转：先用模型 `fallback_api` 的 `codec_type=3/1` 取 1080P HEVC/H.265；4 个历史音频-only AV1 缓存已隔离，`R-TRANSCODE` 增加“输出必须有视频轨”校验。实测 7 部常规 + 4 个 AV1 集全部 5 档、0 空响应、无 `bytevc2` 返回。
 
 ---
 
@@ -231,8 +232,9 @@ flowchart TB
 
 **不可破坏的约束**：
 
-- 服务端永远不要把 `bvc2` 直接返回给客户端；`streamsrv` 的 `hasPlayable` 会剔除。
-- `bytevc1` 是标准 HEVC（`hvc1`），PC 的 FFmpeg 内核和安卓/TV 的 MediaCodec 都能直接解，**不要转码**；只有 `bytevc2`/`bvc2`/AV1 才是客户端已移除的私有封装，由 `R-TRANSCODE` 转 H.264。
+- 服务端永远不要把 `bvc2` 直接返回给客户端；`streamsrv` 的 `hasPlayable` 会剔除，`oroplay` 返回前还会强制过滤一次。
+- `bytevc1` 是标准 HEVC（`hvc1`），PC 的 FFmpeg 内核和安卓/TV 的 MediaCodec 都能直接解，**不要转码**；`bytevc2`/`bvc2`/AV1 先取模型 `fallback_api` 的 `codec_type=3`（HEVC）或 `1`（H.265），拿到兼容 1080P 就直接用；只有兼容接口也无解才由 `R-TRANSCODE` 转 H.264。
+- 转码输出必须 `ffprobe` 能看到视频轨；AV1 源不要把裸流喂 `-f av1`（会只写出 AAC、音频-only），H.264/HEVC/AV1 直接用解密后的 MP4。没有视频轨就删除并报错，绝不返回音频-only。
 - 转码输出 URL 必须走有效证书域名（`dl.fabao.xin:44468` / `kxg.fabao.xin`），不要再用自签 `frp-bar.com`。
 - 客户端 `/api/playinfo` 读超时 70s，给 1080 转码/排队留时间；5xx 立即换地址/回退，不反复等。
 - 预取只备后面 3 集档位/头部；`PREFETCH_AHEAD=3`；播放队列按集号判重，不能按代理地址判重。
@@ -387,8 +389,8 @@ flowchart LR
    - `playinfo` 30min、`streamsrv` 25min、`heat` 6h、`relay` 120s~1800s。
 
 8. **转码是重资源路径**
-   - `R-ORO` 转码队列：当前播放优先（最多 2 个），预取最多占 1 个，预取不会堵住当前集；`bytevc1`（HEVC）不转码。
-   - `do_transcode.py` 优先 `h264_vaapi`（RYZEN 5400U 核显，182 秒 1080 实测约 21 秒；原 x264 veryfast 约 72 秒），失败自动回退 x264 ultrafast。
+   - `R-ORO` 转码队列：当前播放优先（最多 2 个），预取最多占 1 个，预取不会堵住当前集；`bytevc1`（HEVC）不转码；VVC/AV1 先走 `R-V5` 的 `fallback_api codec_type=3/1`，只有兼容档也没有才转码。
+   - `do_transcode.py` 优先 `h264_vaapi`（RYZEN 5400U 核显，182 秒 1080 实测约 21 秒；原 x264 veryfast 约 72 秒），失败自动回退 x264 ultrafast；H.264/HEVC/AV1 直接解 `dec.mp4`，AV1 裸流会音频-only；输出必须有视频轨，否则删除报错。
    - 转码输出 `/transcode/<vid>_<h>_v3.mp4`，7 天/200 文件清理；改输出命名/主机/证书会同时影响客户端缓存和旧 URL。
 
 9. **旧的 VVC 本地播放器已删除**

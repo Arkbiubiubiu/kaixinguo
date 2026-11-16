@@ -89,10 +89,11 @@ N = [
 
     # L6
     dict(id="R-STREAM", layer="L6", name="签名取流服务", summary="/play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。", files=["/opt/research/openhongguo/cmd/streamsrv", "9110"]),
-    dict(id="R-ORO", layer="L6", name="真签名解析", summary="优先调用 R-ORACLE（服务器 Android 官方 App）按 vid 取全部清晰度；bytevc1（HEVC）直接透传，只有 bytevc2/AV1 才转码；旧匿名身份/video_tab 通道保留兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
-    dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；oroplay 优先调它按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
+    dict(id="R-ORO", layer="L6", name="真签名解析", summary="**v5 优先**：优先调 R-V5（纯 HTTP v5 签名）取全部清晰度，失败/空/超时回 R-ORACLE；bytevc1（HEVC）直接透传，VVC/AV1 先要兼容 fallback（codec_type=3/1），最后才转码；返回前强制过滤 bytevc2；旧 video_tab 仅诊断兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
+    dict(id="R-V5", layer="L6", name="v5 纯 HTTP 签名", summary="N3urda/aston314 GPL 实现：匿名设备注册 + Android v04.10.03 Medusa/Helios/Khronos v5 签名 + gzip mobile 模型；VVC/AV1 集用模型 fallback_api 的 codec_type=3/1 取 1080P HEVC/H.265；HTTP 9119，单设备、1.2s 间隔、空响应 90s 冷却。", files=["/opt/research/v5/v5resolver.js", "playback-v5-sign.js", "playback-v5-carrier.js", "mobile-playback-v5.js", "9119", "v5resolver.service"]),
+    dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；作为 R-ORO 的**兜底**，v5 失败时按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
     dict(id="R-SIGN", layer="L6", name="签名/设备池", summary="上游签名、设备身份注册/轮换、Argus/Ladon。", files=["9100/9101/9099", "playback-sign.js", "playback-device.js"]),
-    dict(id="R-TRANSCODE", layer="L6", name="VVC 转码", summary="下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → /transcode/*_v3.mp4；优先 h264_vaapi 核显，失败回退 x264 ultrafast。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
+    dict(id="R-TRANSCODE", layer="L6", name="VVC/AV1 转码", summary="下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；VAAPI 优先、x264 兜底；输出必须 ffprobe 有视频轨，否则删除报错，绝不返回音频-only。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
     dict(id="U-CONTENT", layer="L6", name="番茄内容接口", summary="首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。", files=["api5-normal-lq.fqnovel.com"]),
     dict(id="U-PLAY", layer="L6", name="番茄播放模型", summary="multi_video_model、fallback_api、video_meta/codec_type。", files=["multi_video_model/v1"]),
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),
@@ -177,12 +178,13 @@ EDGES = [
 
     # resolvers / upstream
     ("R-STREAM","R-ORO","优先"), ("R-STREAM","R-SIGN","SDK 兜底"), ("R-STREAM","U-PLAY","档位"),
-    ("R-ORO","R-ORACLE","优先：官方 App 取全部清晰度"), ("R-ORO","R-SIGN","兜底：签名/设备"), ("R-ORO","R-TRANSCODE","bvc2 兜底"), ("R-ORO","U-PLAY","主/兼容接口"), ("R-ORO","U-CDN","下载源"),
+    ("R-ORO","R-V5","主路径：纯 HTTP v5 签名"), ("R-ORO","R-ORACLE","兜底：v5 失败/空响应"), ("R-ORO","R-SIGN","兜底：签名/设备"), ("R-ORO","R-TRANSCODE","兼容 fallback 失败才转码"), ("R-ORO","U-PLAY","主/兼容接口"), ("R-ORO","U-CDN","下载源"),
+    ("R-V5","U-PLAY","mobile 模型 + fallback_api"),
     ("R-ORACLE","U-PLAY","官方 App 取模型"), ("R-ORACLE","U-CDN","1080p 直链"),
     ("R-SIGN","U-PASSPORT","设备/账号"),
     ("R-TRANSCODE","C-MEDIA","同一解密算法副本"), ("R-TRANSCODE","U-CDN","下载加密 MP4"), ("R-TRANSCODE","V-STATIC","输出 v3.mp4"),
     ("I-TUNNEL","V-DUAL","公网入口"),
-    ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"), ("I-SYSTEMD","R-ORACLE","守护"),
+    ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"), ("I-SYSTEMD","R-V5","守护"), ("I-SYSTEMD","R-ORACLE","守护"),
 ]
 
 PLAN = [
