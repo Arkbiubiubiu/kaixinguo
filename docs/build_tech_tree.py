@@ -89,10 +89,10 @@ N = [
 
     # L6
     dict(id="R-STREAM", layer="L6", name="签名取流服务", summary="/play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。", files=["/opt/research/openhongguo/cmd/streamsrv", "9110"]),
-    dict(id="R-ORO", layer="L6", name="真签名解析", summary="优先调用 R-ORACLE（服务器 Android 官方 App）按 vid 取全部清晰度；旧匿名身份/video_tab 通道保留兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
+    dict(id="R-ORO", layer="L6", name="真签名解析", summary="优先调用 R-ORACLE（服务器 Android 官方 App）按 vid 取全部清晰度；bytevc1（HEVC）直接透传，只有 bytevc2/AV1 才转码；旧匿名身份/video_tab 通道保留兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
     dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；oroplay 优先调它按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
     dict(id="R-SIGN", layer="L6", name="签名/设备池", summary="上游签名、设备身份注册/轮换、Argus/Ladon。", files=["9100/9101/9099", "playback-sign.js", "playback-device.js"]),
-    dict(id="R-TRANSCODE", layer="L6", name="VVC 转码", summary="下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → /transcode/*_v3.mp4。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
+    dict(id="R-TRANSCODE", layer="L6", name="VVC 转码", summary="下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → /transcode/*_v3.mp4；优先 h264_vaapi 核显，失败回退 x264 ultrafast。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
     dict(id="U-CONTENT", layer="L6", name="番茄内容接口", summary="首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。", files=["api5-normal-lq.fqnovel.com"]),
     dict(id="U-PLAY", layer="L6", name="番茄播放模型", summary="multi_video_model、fallback_api、video_meta/codec_type。", files=["multi_video_model/v1"]),
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),

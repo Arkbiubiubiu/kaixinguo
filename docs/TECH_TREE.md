@@ -169,10 +169,10 @@
 | ID | 节点 | 关键位置 | 职责 | 上游 | 下游 |
 |---|---|---|---|---|---|
 | `R-STREAM` | 签名取流服务 | `/opt/research/streamsrv`，9110，Go | `/play` 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；`/transcode` 代理 job 查询 | `V-PLAYINFO` | `R-ORO`, `R-SIGN`, `U-PLAY` |
-| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **优先调 `R-ORACLE`** 按 vid 取全部清晰度；旧匿名身份/video_tab 通道保留兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
+| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **优先调 `R-ORACLE`** 按 vid 取全部清晰度；`bytevc1`（HEVC）直接透传，只有 `bytevc2`/AV1 才转码；旧匿名身份/video_tab 通道保留兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
 | `R-ORACLE` | Android 官方 App oracle | `/opt/research/oracle_parent.py` + `resolve_one.py` + `oracle_resolver.js`，9120；redroid Android 13 容器 + 官方红果 App + Frida | oroplay 优先调它：按 vid 让官方 App 用自己的签名/TTNet 取模型，返回 1080p/720p 等全部档位；容器/systemd 开机自启 | `R-ORO` | `U-PLAY`, `U-CDN` |
 | `R-SIGN` | 签名/设备池 | 9100/9101/9099，`playback-sign.js`, `playback-device.js`, `sign-server.jar` | 上游签名、设备身份注册/轮换、Argus/Ladon | `C-API`, `V-RELAY`, `R-ORO` | `U-PASSPORT`/上游 |
-| `R-TRANSCODE` | VVC 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → `/transcode/*_v3.mp4` | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
+| `R-TRANSCODE` | VVC 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → `/transcode/*_v3.mp4`；优先 `h264_vaapi` 核显，失败回退 x264 ultrafast | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
 | `U-CONTENT` | 番茄内容接口 | `api5-normal-lq.fqnovel.com` 等 | 首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员 | `C-API`, `V-RELAY` | — |
 | `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO` | — |
 | `U-CDN` | 视频/图片 CDN | 字节 CDN | 加密 MP4、封面、头像 | `C-PROXY`, 转码下载 | — |
@@ -230,7 +230,7 @@ flowchart TB
 **不可破坏的约束**：
 
 - 服务端永远不要把 `bvc2` 直接返回给客户端；`streamsrv` 的 `hasPlayable` 会剔除。
-- 兼容接口返回的是 H.265（`hvc1`），不是 H.264；真正 H.264 由转码兜底。
+- `bytevc1` 是标准 HEVC（`hvc1`），PC 的 FFmpeg 内核和安卓/TV 的 MediaCodec 都能直接解，**不要转码**；只有 `bytevc2`/`bvc2`/AV1 才是客户端已移除的私有封装，由 `R-TRANSCODE` 转 H.264。
 - 转码输出 URL 必须走有效证书域名（`dl.fabao.xin:44468` / `kxg.fabao.xin`），不要再用自签 `frp-bar.com`。
 - 客户端 `/api/playinfo` 读超时 70s，给 1080 转码/排队留时间；5xx 立即换地址/回退，不反复等。
 - 预取只备后面 3 集档位/头部；`PREFETCH_AHEAD=3`；播放队列按集号判重，不能按代理地址判重。
@@ -385,7 +385,8 @@ flowchart LR
    - `playinfo` 30min、`streamsrv` 25min、`heat` 6h、`relay` 120s~1800s。
 
 8. **转码是重资源路径**
-   - `R-ORO` 转码队列并发 2；1080 转码约十几秒到几十秒；预取 3 集同时触发可能排队。
+   - `R-ORO` 转码队列：当前播放优先（最多 2 个），预取最多占 1 个，预取不会堵住当前集；`bytevc1`（HEVC）不转码。
+   - `do_transcode.py` 优先 `h264_vaapi`（RYZEN 5400U 核显，182 秒 1080 实测约 21 秒；原 x264 veryfast 约 72 秒），失败自动回退 x264 ultrafast。
    - 转码输出 `/transcode/<vid>_<h>_v3.mp4`，7 天/200 文件清理；改输出命名/主机/证书会同时影响客户端缓存和旧 URL。
 
 9. **旧的 VVC 本地播放器已删除**
