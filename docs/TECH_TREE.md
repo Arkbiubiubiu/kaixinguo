@@ -55,7 +55,7 @@
 │   dual_server(8081) / serve.py(8080) / relay 缓存 / playinfo / 热度 / 历史 / 静态包 / 看板
 │
 ├─ L6 解析、转码与上游
-│   streamsrv(9110) → oroplay(9118) → 主接口/兼容接口/转码
+│   streamsrv(9110) → oroplay(9118) → Android 官方 App oracle(9120) → 1080p；旧主接口/兼容接口/转码兜底
 │   番茄内容 API、播放模型、CDN、登录、图片；樱花/CF/cpolar 隧道；状态目录；systemd
 │
 └─ 横切约束：三端一致、历史语义、私有参数、缓存失效、发版清单、测试设备
@@ -169,7 +169,8 @@
 | ID | 节点 | 关键位置 | 职责 | 上游 | 下游 |
 |---|---|---|---|---|---|
 | `R-STREAM` | 签名取流服务 | `/opt/research/streamsrv`，9110，Go | `/play` 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；`/transcode` 代理 job 查询 | `V-PLAYINFO` | `R-ORO`, `R-SIGN`, `U-PLAY` |
-| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | 注册匿名身份、主接口、兼容接口 `codec_type=0&force_codec=h264`、档位选择、高码率补齐；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
+| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **优先调 `R-ORACLE`** 按 vid 取全部清晰度；旧匿名身份/video_tab 通道保留兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
+| `R-ORACLE` | Android 官方 App oracle | `/opt/research/oracle_parent.py` + `resolve_one.py` + `oracle_resolver.js`，9120；redroid Android 13 容器 + 官方红果 App + Frida | oroplay 优先调它：按 vid 让官方 App 用自己的签名/TTNet 取模型，返回 1080p/720p 等全部档位；容器/systemd 开机自启 | `R-ORO` | `U-PLAY`, `U-CDN` |
 | `R-SIGN` | 签名/设备池 | 9100/9101/9099，`playback-sign.js`, `playback-device.js`, `sign-server.jar` | 上游签名、设备身份注册/轮换、Argus/Ladon | `C-API`, `V-RELAY`, `R-ORO` | `U-PASSPORT`/上游 |
 | `R-TRANSCODE` | VVC 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → `/transcode/*_v3.mp4` | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
 | `U-CONTENT` | 番茄内容接口 | `api5-normal-lq.fqnovel.com` 等 | 首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员 | `C-API`, `V-RELAY` | — |

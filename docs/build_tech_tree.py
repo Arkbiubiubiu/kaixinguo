@@ -89,7 +89,8 @@ N = [
 
     # L6
     dict(id="R-STREAM", layer="L6", name="签名取流服务", summary="/play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。", files=["/opt/research/openhongguo/cmd/streamsrv", "9110"]),
-    dict(id="R-ORO", layer="L6", name="真签名解析", summary="匿名身份、主接口、兼容接口 codec_type=0&force_codec=h264、档位选择、高码率补齐；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
+    dict(id="R-ORO", layer="L6", name="真签名解析", summary="优先调用 R-ORACLE（服务器 Android 官方 App）按 vid 取全部清晰度；旧匿名身份/video_tab 通道保留兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
+    dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；oroplay 优先调它按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
     dict(id="R-SIGN", layer="L6", name="签名/设备池", summary="上游签名、设备身份注册/轮换、Argus/Ladon。", files=["9100/9101/9099", "playback-sign.js", "playback-device.js"]),
     dict(id="R-TRANSCODE", layer="L6", name="VVC 转码", summary="下载加密 MP4 → Java 解密 → 抽 Annex-B/ADTS + 帧率 → ffmpeg H.264 → /transcode/*_v3.mp4。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
     dict(id="U-CONTENT", layer="L6", name="番茄内容接口", summary="首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。", files=["api5-normal-lq.fqnovel.com"]),
@@ -176,11 +177,12 @@ EDGES = [
 
     # resolvers / upstream
     ("R-STREAM","R-ORO","优先"), ("R-STREAM","R-SIGN","SDK 兜底"), ("R-STREAM","U-PLAY","档位"),
-    ("R-ORO","R-SIGN","签名/设备"), ("R-ORO","R-TRANSCODE","bvc2 兜底"), ("R-ORO","U-PLAY","主/兼容接口"), ("R-ORO","U-CDN","下载源"),
+    ("R-ORO","R-ORACLE","优先：官方 App 取全部清晰度"), ("R-ORO","R-SIGN","兜底：签名/设备"), ("R-ORO","R-TRANSCODE","bvc2 兜底"), ("R-ORO","U-PLAY","主/兼容接口"), ("R-ORO","U-CDN","下载源"),
+    ("R-ORACLE","U-PLAY","官方 App 取模型"), ("R-ORACLE","U-CDN","1080p 直链"),
     ("R-SIGN","U-PASSPORT","设备/账号"),
     ("R-TRANSCODE","C-MEDIA","同一解密算法副本"), ("R-TRANSCODE","U-CDN","下载加密 MP4"), ("R-TRANSCODE","V-STATIC","输出 v3.mp4"),
     ("I-TUNNEL","V-DUAL","公网入口"),
-    ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"),
+    ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"), ("I-SYSTEMD","R-ORACLE","守护"),
 ]
 
 PLAN = [
