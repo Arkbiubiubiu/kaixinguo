@@ -43,8 +43,6 @@ import kotlinx.coroutines.withContext
  * 换剧必须用 `key(seriesId)` 重建播放页：PlayerScreen 的集数状态是 remember(startIndex)
  * 存的，同一位置复用会让下一部剧继承上一部的集号（PC 上踩过「每部都从第 2 集开始」）。
  */
-private const val FEED_REFRESH_MS = 3 * 60_000L
-
 @Composable
 fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
     // 三端默认漫剧；与 PC 一致：漫剧 / 真人剧 / 推荐。
@@ -55,69 +53,36 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
     var cards by remember { mutableStateOf(UiMemo.feedCards) }
     var cursor by remember { mutableStateOf(UiMemo.feedCursor) }
     var page by remember { mutableStateOf(UiMemo.feedPage) }
-    var loading by remember { mutableStateOf(cards.isEmpty()) }
+    // 首次进入先显示 loading，绝不先画旧列表。
+    var loading by remember { mutableStateOf(true) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
-        val sameTab = cards.isNotEmpty() && tab == UiMemo.feedTab
-        // 3 分钟内从详情/播放返回：直接接回原列表和位置。
-        val fresh = sameTab && System.currentTimeMillis() - UiMemo.feedAt < FEED_REFRESH_MS
-        if (fresh) {
+        // 从详情/播放返回同一次刷剧会话：保留当前剧与位置（只此一种例外）。
+        val returning = UiMemo.feedReturnKeep &&
+            cards.isNotEmpty() && tab == UiMemo.feedTab
+        UiMemo.feedReturnKeep = false
+        if (returning) {
             loading = false
             return@LaunchedEffect
         }
-        val hadCards = sameTab
-        var cacheKey = ""
-        if (!hadCards) {
-            // 切 tab / 冷启动：先用磁盘缓存秒开，再去网络换新的；没有缓存才显示 loading。
-            cacheKey = "feed_${feedTypes[tab]}"
-            val cached = withContext(Dispatchers.IO) {
-                runCatching { FeedCache.load(cacheKey) }.getOrDefault(emptyList())
-            }
-            if (cached.isNotEmpty()) {
-                cards = cached
-                loading = false
-            } else {
-                loading = true
-                cards = emptyList()
-            }
-            cursor = 0
-            page = null
-            FeedPreload.clear()
-            if (cached.isNotEmpty()) FeedPreload.request(cards, 0)
-            UiMemo.feedAt = 0L
-        } else {
-            // 超过 3 分钟：保留当前剧和位置，后台换新，避免正在看的剧被换掉。
-            loading = false
-            cacheKey = "feed_${feedTypes[tab]}"
-        }
-        val oldId = if (hadCards) cards.getOrNull(cursor)?.seriesId else null
+        // 用户要求：每次进入刷剧都必须现拉，不显示旧列表；可以等 loading。
+        loading = true
+        cards = emptyList()
+        cursor = 0
+        page = null
+        FeedPreload.clear()
+        val cacheKey = "feed_${feedTypes[tab]}"
         val p = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPage(feedTypes[tab]) }.getOrNull()
+            runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
         }
         if (p?.cards?.isNotEmpty() == true) {
-            val freshCards = p.cards
-            if (hadCards && oldId != null) {
-                val at = freshCards.indexOfFirst { it.seriesId == oldId }
-                if (at >= 0) {
-                    cards = freshCards
-                    cursor = at
-                } else {
-                    // 新列表没有当前剧：把当前剧留在最前面，避免刷剧中途换片。
-                    val old = cards.getOrNull(cursor)
-                    cards = if (old != null) listOf(old) + freshCards else freshCards
-                    cursor = 0
-                }
-            } else {
-                cards = freshCards
-                cursor = 0
-            }
+            cards = p.cards
             page = p
+            cursor = 0
             withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, p.cards) } }
-            UiMemo.feedAt = System.currentTimeMillis()
-        } else if (!hadCards) {
-            // 网络失败且没有磁盘缓存：保持空列表，让上层显示可重试状态。
+        } else {
             cards = emptyList()
         }
         loading = false
@@ -149,7 +114,7 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
                     runCatching {
                         Api.feedNext(
                             feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
-                            cards.map { it.seriesId },
+                            cards.map { it.seriesId }, refresh = true,
                         )
                     }.getOrNull()
                 }
@@ -168,7 +133,7 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
         cursor = next
     }
 
-    BackHandler { onExit() }
+    BackHandler { UiMemo.feedReturnKeep = false; onExit() }
 
     val current = cards.getOrNull(cursor)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -189,10 +154,10 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
                 PlayerScreen(
                     seriesId = current.seriesId,
                     startIndex = 1,
-                    onBack = onExit,
+                    onBack = { UiMemo.feedReturnKeep = false; onExit() },
                     // 刷剧模式不切集（↑↓ 已被换剧占用）；连播仍由播放器内部接管
                     onSwitch = { _, _ -> },
-                    onDetail = { onOpenDetail(current.seriesId) },
+                    onDetail = { UiMemo.feedReturnKeep = true; onOpenDetail(current.seriesId) },
                     feedMode = true,
                     feedLabel = "第 ${cursor + 1} 部 · 共 ${cards.size} 部",
                     onFeedStep = { dir -> step(dir) },
@@ -216,7 +181,7 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
                             .background(if (on) Color(0xCCFF4A3D) else Color(0x66000000))
-                            .clickable { tab = i }
+                            .clickable { UiMemo.feedReturnKeep = false; tab = i }
                             .padding(horizontal = 14.dp, vertical = 7.dp),
                     )
                 }

@@ -262,7 +262,8 @@ object Api {
      * 服务器代取（不签名的普通 GET）。
      * 服务器会缓存并压缩，返回值里的 text 就是上游原文。
      */
-    private fun viaServerUrl(url: String): String? = viaServerUrlEx(url).first
+    private fun viaServerUrl(url: String, refresh: Boolean = false): String? =
+        viaServerUrlEx(url, refresh).first
 
     /**
      * 同 viaServerUrl，但把「这份数据多旧」也带出来（服务端 age 字段）。
@@ -270,8 +271,9 @@ object Api {
      * 榜单页要显示真实的数据时间：age=0 表示本次现取，>0 表示命中了服务端缓存
      * （榜单类接口缓存 5 分钟）。不把 age 带出来，界面只能瞎写一个时间。
      */
-    private fun viaServerUrlEx(url: String): Pair<String?, Double> {
+    private fun viaServerUrlEx(url: String, refresh: Boolean = false): Pair<String?, Double> {
         val payload = JSONObject().put("url", url).put("ua", UA)
+        if (refresh) payload.put("refresh", true)
         if (App.state.loggedIn) payload.put("cookie", App.state.accountCookies)
         for (base in serverBases()) {
             val reply = postFetch(base, payload)
@@ -959,14 +961,14 @@ object Api {
     fun reserveListCached(): List<SeriesCard> =
         listCached("reserve") { reserveList() } ?: emptyList()
 
-    fun firstPage(tabType: String): FeedPage {
+    fun firstPage(tabType: String, refresh: Boolean = false): FeedPage {
         val qs = baseQuery() +
             "&auth_aweme=true&auth_backward=true&bottom_tab_type=7&client_req_type=4" +
             "&device_level=3&disable_digg_stat=false&has_video_cache=false" +
             "&is_horizontal_screen=false&landing_bottom_tab_type=7&last_tab_index=0" +
             "&last_tab_type=0&offset=0&req_rank_category_id=0&screen_width_px=1078" +
             "&tab_index=0&tab_type=$tabType&video_type_preferences_str=[]"
-        val text = viaServerUrl("$HOST/reading/bookapi/bookmall/tab/v?$qs")
+        val text = viaServerUrl("$HOST/reading/bookapi/bookmall/tab/v?$qs", refresh)
             ?: runCatching { get("$HOST/reading/bookapi/bookmall/tab/v?$qs") }.getOrNull()
             ?: return FeedPage()
         val data = runCatching { JSONObject(text).optJSONObject("data") }.getOrNull()
@@ -1023,6 +1025,7 @@ object Api {
                     sessionId = page.sessionId,
                     offset = page.nextOffset,
                     seen = page.cards.map { it.seriesId },
+                    refresh = refresh,
                 )
             }.getOrNull() ?: break
             val merged = LinkedHashMap<String, SeriesCard>()
@@ -1054,6 +1057,7 @@ object Api {
         sessionId: String,
         offset: Int,
         seen: Collection<String>,
+        refresh: Boolean = false,
     ): FeedPage = cellChange(
         "/reading/bookapi/bookmall/cell/change/v",
         linkedMapOf(
@@ -1064,6 +1068,7 @@ object Api {
             "offset" to offset.toString(),
             "filter_ids" to seen.take(60).joinToString(","),
         ),
+        refresh = refresh,
     )
 
     private fun firstCellId(arr: JSONArray?): String {
@@ -1093,6 +1098,7 @@ object Api {
         path: String,
         params: LinkedHashMap<String, String>,
         allowEmptySession: Boolean = false,
+        refresh: Boolean = false,
     ): FeedPage {
         val sessionIdIn = params["session_id"] ?: ""
         val qs = baseQuery() + params.entries
@@ -1101,7 +1107,7 @@ object Api {
             "&cell_sub_id=0&client_template=7&is_horizontal_screen=false&limit=0" +
             "&need_personal_recommend=1&screen_width_px=1078&genre=0&genre_type=0" +
             "&unlimited_selector_change_type=" + if (params["offset"] == "0") "2" else "1"
-        val (relayText, relayAge) = viaServerUrlEx("$HOST$path?$qs")
+        val (relayText, relayAge) = viaServerUrlEx("$HOST$path?$qs", refresh)
         val text = relayText
             ?: runCatching { get("$HOST$path?$qs") }.getOrNull()
             ?: return FeedPage(sessionId = sessionIdIn)

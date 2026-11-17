@@ -408,8 +408,9 @@ flowchart LR
 
 12. **刷剧 feed 的 tab 与缓存**
     - 上游真实 tab：`36`=漫剧、`39`=真人剧、`16`=推荐；旧 `3/4/2` 全部回推荐（2026-11-17 实测）。三端默认 `36` 漫剧；PC/安卓 UI 顺序漫剧/真人剧/推荐，TV 按极简设计不显示 tab。
-    - 客户端进入刷剧超过 3 分钟会后台刷新并保留当前剧/位置（PC `PageMemo.feedAt`、安卓 `UiMemo.feedAt`）；安卓 `FeedCache` 24h 只作冷启动首屏，服务端 `tab/v` 缓存 15min、`cell/change` 5min。
-    - 版本：PC 1.2.83 / 安卓 2.2.195（2026-11-17）。
+    - 用户要求“每次进入刷剧必须现拉”：从菜单/切 tab 进入一律 loading、清空旧列表并 `Api.firstPage(..., refresh=true)`；服务端 `refresh=true` 会让 relay 丢掉该 URL 的缓存、绕开 `tab/v` 15min / `cell/change` 5min。只有从详情/评论返回同一次刷剧会话才保留当前剧/位置（`feedReturnKeep`）。
+    - 安卓 `FeedCache` 24h 仍只作启动预热/离线参考，不再作为刷剧首屏显示；首页/榜单的普通缓存逻辑不变。
+    - 版本：PC 1.2.84 / 安卓 2.2.196（2026-11-17）。
 
 ### 5.1 播放入口一致性（当前状态）
 

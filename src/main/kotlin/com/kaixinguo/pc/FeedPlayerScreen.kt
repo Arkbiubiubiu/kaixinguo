@@ -104,8 +104,6 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
-private const val FEED_REFRESH_MS = 3 * 60_000L
-
 @Composable
 internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> Unit, onExit: () -> Unit) {
     // 三端默认漫剧；顺序与顶部 tab 一致：漫剧 / 真人剧 / 推荐。
@@ -114,55 +112,35 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
     var tab by remember { mutableStateOf(PageMemo.feedTab) }
     var cards by remember { mutableStateOf(PageMemo.feedCards) }
     var cursor by remember { mutableStateOf(PageMemo.feedCursor) }
-    var loading by remember { mutableStateOf(cards.isEmpty()) }
+    // 首次进入先显示 loading，绝不先画旧列表。
+    var loading by remember { mutableStateOf(true) }
     /** 翻页游标（cellId/planId/sessionId/offset 都在里面），hasMore=false 后不再翻 */
     var feedCursor by remember { mutableStateOf(PageMemo.feedPage) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
-        val sameTab = cards.isNotEmpty() && tab == PageMemo.feedTab
-        // 3 分钟内从详情/播放返回：直接接回原列表和位置。
-        val fresh = sameTab && System.currentTimeMillis() - PageMemo.feedAt < FEED_REFRESH_MS
-        if (fresh) {
+        // 从详情/播放返回同一次刷剧会话：保留当前剧与位置（只此一种例外）。
+        val returning = PageMemo.feedReturnKeep &&
+            cards.isNotEmpty() && tab == PageMemo.feedTab
+        PageMemo.feedReturnKeep = false
+        if (returning) {
             loading = false
             return@LaunchedEffect
         }
-        val hadCards = sameTab
-        if (!hadCards) {
-            // 切 tab / 首次进入：没有可保留的当前列表，正常显示 loading。
-            loading = true
-            cards = emptyList()
-            cursor = 0
-            PageMemo.feedAt = 0L
-        } else {
-            // 超过 3 分钟：先保留当前剧和位置，后台换新，避免正在看的剧被换掉。
-            loading = false
-        }
-        val oldId = if (hadCards) cards.getOrNull(cursor)?.seriesId else null
+        // 用户要求：每次进入刷剧都必须现拉，不显示旧列表；可以等 loading。
+        loading = true
+        cards = emptyList()
+        cursor = 0
+        feedCursor = null
         val page = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPage(feedTypes[tab]) }.getOrNull()
+            runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
         }
         if (page?.cards?.isNotEmpty() == true) {
-            val freshCards = page.cards
-            if (hadCards && oldId != null) {
-                val at = freshCards.indexOfFirst { it.seriesId == oldId }
-                if (at >= 0) {
-                    cards = freshCards
-                    cursor = at
-                } else {
-                    // 新列表没有当前剧：把当前剧留在最前面，避免刷剧中途换片。
-                    val old = cards.getOrNull(cursor)
-                    cards = if (old != null) listOf(old) + freshCards else freshCards
-                    cursor = 0
-                }
-            } else {
-                cards = freshCards
-                cursor = 0
-            }
+            cards = page.cards
             feedCursor = page
-            PageMemo.feedAt = System.currentTimeMillis()
-        } else if (!hadCards) {
+            cursor = 0
+        } else {
             cards = emptyList()
         }
         loading = false
@@ -189,7 +167,7 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
                 val np = runCatching {
                     Api.feedNext(
                         feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
-                        cards.map { it.seriesId },
+                        cards.map { it.seriesId }, refresh = true,
                     )
                 }.getOrNull()
                 if (np != null && np.cards.isNotEmpty()) {
@@ -217,12 +195,12 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         else -> PlayerScreen(
             seriesId = current.seriesId,
             startIndex = 1,
-            onBack = { UiMode.exitAll(); onExit() },
-            onDetail = { onDetail(current.seriesId) },
-            onComments = { onComments(current.seriesId) },
+            onBack = { PageMemo.feedReturnKeep = false; UiMode.exitAll(); onExit() },
+            onDetail = { PageMemo.feedReturnKeep = true; onDetail(current.seriesId) },
+            onComments = { PageMemo.feedReturnKeep = true; onComments(current.seriesId) },
             embedded = true,
             feedTab = tab,
-            onFeedTab = { tab = it; cursor = 0 },
+            onFeedTab = { PageMemo.feedReturnKeep = false; tab = it; cursor = 0 },
             onWheelStep = { dir -> wheelStep(dir) },
         )
     }
