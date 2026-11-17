@@ -400,6 +400,12 @@ flowchart LR
     - 真机验证只允许 LDPlayer `emulator-5554`；绝不装到用户的电视/平板。
     - 模拟器无法还原 TV/平板的解码器、GPU、SoC 性能；“模拟器正常”不等于真机正常。
 
+11. **客户端 `RemoteVideo` 没有连接重试，单次卡住会长时间停在“正在取流”**
+    - 2026-11-17 19:00:59 MiTV，`vid=7703448864409275417`、`rid=a98c6e83`：服务端 `/api/playinfo` 200、v5 403ms 返回 5 档 HEVC；用户 19:01:28 返回、19:01:37 重进后立即恢复。
+    - 服务端地址实测 Range 206、12.6MB、HEVC Main 8bit 正常；oracle 未触发（v5 resolve 成功），说明卡在客户端拿到 URL 后的连接/准备阶段，不是签名/上游/兜底。
+    - 客户端 OkHttp `readTimeout=30s`，`RemoteVideo.fetch/prepare` 无重试；29 秒间隔与 30 秒超时吻合。返回重进会新建 `RemoteVideo/StreamProxy` 连接，所以恢复。
+    - 若复现：改两份 `Playback.kt`，失败/超时换新连接重试一次，优先 `backupUrl`，头部探测超时降到 8–10 秒；需要 PC + 安卓/TV 发版。
+
 ### 5.1 播放入口一致性（当前状态）
 
 | 入口 | 集数 | 秒数 | 状态 |
