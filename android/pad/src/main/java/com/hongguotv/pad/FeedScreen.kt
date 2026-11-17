@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
  * 刷剧（Pad / TV 共用）：
  *
  * 整屏连播一部短剧，换剧不换页——和 PC 的刷剧页同一套数据（`Api.firstPage/feedNext`，
- * tab 顺序同 PC：漫剧 / 真人剧 / 推荐，默认推荐）。
+ * tab 顺序同 PC：漫剧 / 真人剧 / 推荐，默认漫剧）。
  *
  * 交互按设备分：
  * - Pad：上下滑换剧、单击暂停；顶部三个分类可点。
@@ -43,10 +43,13 @@ import kotlinx.coroutines.withContext
  * 换剧必须用 `key(seriesId)` 重建播放页：PlayerScreen 的集数状态是 remember(startIndex)
  * 存的，同一位置复用会让下一部剧继承上一部的集号（PC 上踩过「每部都从第 2 集开始」）。
  */
+private const val FEED_REFRESH_MS = 3 * 60_000L
+
 @Composable
 fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
-    // 与 PC 一致：漫剧 / 真人剧 / 推荐（默认推荐）
-    val feedTypes = listOf("3", "4", "2")
+    // 三端默认漫剧；与 PC 一致：漫剧 / 真人剧 / 推荐。
+    // 上游真实 tab：36=漫剧、39=真人剧、16=推荐；3/4/2 是已失效的旧 id。
+    val feedTypes = listOf("36", "39", "16")
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
     var tab by remember { mutableStateOf(UiMemo.feedTab) }
     var cards by remember { mutableStateOf(UiMemo.feedCards) }
@@ -57,33 +60,65 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
-        // 从详情/播放返回：列表和位置都还在，直接接回来，不重新拉、不回到第一部
-        if (cards.isNotEmpty() && tab == UiMemo.feedTab) {
+        val sameTab = cards.isNotEmpty() && tab == UiMemo.feedTab
+        // 3 分钟内从详情/播放返回：直接接回原列表和位置。
+        val fresh = sameTab && System.currentTimeMillis() - UiMemo.feedAt < FEED_REFRESH_MS
+        if (fresh) {
             loading = false
             return@LaunchedEffect
         }
-        // 先用上次的列表秒开，再去网络换新的（冷启动不用干等服务器往返）
-        val cacheKey = "feed_${feedTypes[tab]}"
-        val cached = withContext(Dispatchers.IO) { runCatching { FeedCache.load(cacheKey) }.getOrDefault(emptyList()) }
-        if (cached.isNotEmpty()) {
-            cards = cached
-            loading = false
+        val hadCards = sameTab
+        var cacheKey = ""
+        if (!hadCards) {
+            // 切 tab / 冷启动：先用磁盘缓存秒开，再去网络换新的；没有缓存才显示 loading。
+            cacheKey = "feed_${feedTypes[tab]}"
+            val cached = withContext(Dispatchers.IO) {
+                runCatching { FeedCache.load(cacheKey) }.getOrDefault(emptyList())
+            }
+            if (cached.isNotEmpty()) {
+                cards = cached
+                loading = false
+            } else {
+                loading = true
+                cards = emptyList()
+            }
             cursor = 0
+            page = null
+            FeedPreload.clear()
+            if (cached.isNotEmpty()) FeedPreload.request(cards, 0)
+            UiMemo.feedAt = 0L
         } else {
-            loading = true
-            cards = emptyList()
-            cursor = 0
+            // 超过 3 分钟：保留当前剧和位置，后台换新，避免正在看的剧被换掉。
+            loading = false
+            cacheKey = "feed_${feedTypes[tab]}"
         }
-        page = null
-        FeedPreload.clear()
-        if (cached.isNotEmpty()) FeedPreload.request(cards, 0)
+        val oldId = if (hadCards) cards.getOrNull(cursor)?.seriesId else null
         val p = withContext(Dispatchers.IO) {
             runCatching { Api.firstPage(feedTypes[tab]) }.getOrNull()
         }
         if (p?.cards?.isNotEmpty() == true) {
-            cards = p.cards
+            val freshCards = p.cards
+            if (hadCards && oldId != null) {
+                val at = freshCards.indexOfFirst { it.seriesId == oldId }
+                if (at >= 0) {
+                    cards = freshCards
+                    cursor = at
+                } else {
+                    // 新列表没有当前剧：把当前剧留在最前面，避免刷剧中途换片。
+                    val old = cards.getOrNull(cursor)
+                    cards = if (old != null) listOf(old) + freshCards else freshCards
+                    cursor = 0
+                }
+            } else {
+                cards = freshCards
+                cursor = 0
+            }
             page = p
             withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, p.cards) } }
+            UiMemo.feedAt = System.currentTimeMillis()
+        } else if (!hadCards) {
+            // 网络失败且没有磁盘缓存：保持空列表，让上层显示可重试状态。
+            cards = emptyList()
         }
         loading = false
     }

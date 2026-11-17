@@ -406,6 +406,11 @@ flowchart LR
     - 客户端 OkHttp `readTimeout=30s`，`RemoteVideo.fetch/prepare` 无重试；29 秒间隔与 30 秒超时吻合。返回重进会新建 `RemoteVideo/StreamProxy` 连接，所以恢复。
     - 若复现：改两份 `Playback.kt`，失败/超时换新连接重试一次，优先 `backupUrl`，头部探测超时降到 8–10 秒；需要 PC + 安卓/TV 发版。
 
+12. **刷剧 feed 的 tab 与缓存**
+    - 上游真实 tab：`36`=漫剧、`39`=真人剧、`16`=推荐；旧 `3/4/2` 全部回推荐（2026-11-17 实测）。三端默认 `36` 漫剧；PC/安卓 UI 顺序漫剧/真人剧/推荐，TV 按极简设计不显示 tab。
+    - 客户端进入刷剧超过 3 分钟会后台刷新并保留当前剧/位置（PC `PageMemo.feedAt`、安卓 `UiMemo.feedAt`）；安卓 `FeedCache` 24h 只作冷启动首屏，服务端 `tab/v` 缓存 15min、`cell/change` 5min。
+    - 版本：PC 1.2.83 / 安卓 2.2.195（2026-11-17）。
+
 ### 5.1 播放入口一致性（当前状态）
 
 | 入口 | 集数 | 秒数 | 状态 |

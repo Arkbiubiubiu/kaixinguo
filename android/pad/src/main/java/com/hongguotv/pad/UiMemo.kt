@@ -20,6 +20,8 @@ object UiMemo {
     var feedCursor: Int = 0
     var feedCards: List<SeriesCard> = emptyList()
     var feedPage: FeedPage? = null
+    /** 刷剧列表最近一次从网络刷新成功的时间；超过 3 分钟再进会后台更新 */
+    var feedAt: Long = 0L
     /** 刷剧里连续「取流失败」跳过的部数：超过 2 部就停在错误页，避免网络断了还一路狂跳 */
     var feedFailStreak: Int = 0
 

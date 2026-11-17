@@ -112,7 +112,7 @@ fun App() {
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(2_500)
         val first = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { FeedCache.load("feed_2") }.getOrDefault(emptyList())
+            runCatching { FeedCache.load("feed_36") }.getOrDefault(emptyList())
         }.firstOrNull() ?: return@LaunchedEffect
         FeedPreload.warm(first.seriesId)
     }

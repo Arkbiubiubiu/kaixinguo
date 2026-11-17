@@ -104,10 +104,13 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
+private const val FEED_REFRESH_MS = 3 * 60_000L
+
 @Composable
 internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> Unit, onExit: () -> Unit) {
-    // 旧版顶部 Tab 顺序：漫剧 / 真人剧 / 推荐（默认推荐）
-    val feedTypes = listOf("3", "4", "2")
+    // 三端默认漫剧；顺序与顶部 tab 一致：漫剧 / 真人剧 / 推荐。
+    // 上游真实 tab：36=漫剧、39=真人剧、16=推荐；3/4/2 是已失效的旧 id。
+    val feedTypes = listOf("36", "39", "16")
     var tab by remember { mutableStateOf(PageMemo.feedTab) }
     var cards by remember { mutableStateOf(PageMemo.feedCards) }
     var cursor by remember { mutableStateOf(PageMemo.feedCursor) }
@@ -118,19 +121,50 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
-        // 从详情/播放返回：列表和位置都还在，直接接回来
-        if (cards.isNotEmpty() && tab == PageMemo.feedTab) {
+        val sameTab = cards.isNotEmpty() && tab == PageMemo.feedTab
+        // 3 分钟内从详情/播放返回：直接接回原列表和位置。
+        val fresh = sameTab && System.currentTimeMillis() - PageMemo.feedAt < FEED_REFRESH_MS
+        if (fresh) {
             loading = false
             return@LaunchedEffect
         }
-        loading = true
-        cards = emptyList()
-        cursor = 0
+        val hadCards = sameTab
+        if (!hadCards) {
+            // 切 tab / 首次进入：没有可保留的当前列表，正常显示 loading。
+            loading = true
+            cards = emptyList()
+            cursor = 0
+            PageMemo.feedAt = 0L
+        } else {
+            // 超过 3 分钟：先保留当前剧和位置，后台换新，避免正在看的剧被换掉。
+            loading = false
+        }
+        val oldId = if (hadCards) cards.getOrNull(cursor)?.seriesId else null
         val page = withContext(Dispatchers.IO) {
             runCatching { Api.firstPage(feedTypes[tab]) }.getOrNull()
         }
-        cards = page?.cards.orEmpty()
-        feedCursor = page
+        if (page?.cards?.isNotEmpty() == true) {
+            val freshCards = page.cards
+            if (hadCards && oldId != null) {
+                val at = freshCards.indexOfFirst { it.seriesId == oldId }
+                if (at >= 0) {
+                    cards = freshCards
+                    cursor = at
+                } else {
+                    // 新列表没有当前剧：把当前剧留在最前面，避免刷剧中途换片。
+                    val old = cards.getOrNull(cursor)
+                    cards = if (old != null) listOf(old) + freshCards else freshCards
+                    cursor = 0
+                }
+            } else {
+                cards = freshCards
+                cursor = 0
+            }
+            feedCursor = page
+            PageMemo.feedAt = System.currentTimeMillis()
+        } else if (!hadCards) {
+            cards = emptyList()
+        }
         loading = false
     }
 

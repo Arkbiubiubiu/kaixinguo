@@ -125,6 +125,8 @@ internal object PageMemo {
     var feedCursor = 0
     var feedCards: List<SeriesCard> = emptyList()
     var feedPage: FeedPage? = null
+    /** 刷剧列表最近一次从网络刷新成功的时间；超过 3 分钟再进会后台更新 */
+    var feedAt: Long = 0L
 
     var homeTab = -1
     var homeRefresh = -1
