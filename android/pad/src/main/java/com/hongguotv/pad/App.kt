@@ -489,6 +489,7 @@ fun App() {
                 )
                 is Screen.Feed -> FeedScreen(
                     onOpenDetail = { push(Screen.Detail(it)) },
+                    onOpenFull = { push(Screen.Play(it, 1)) },
                     onExit = {
                         if (railLockable) {
                             // TV：退回导航层（和顶层页按返回同语义），页面本身不换

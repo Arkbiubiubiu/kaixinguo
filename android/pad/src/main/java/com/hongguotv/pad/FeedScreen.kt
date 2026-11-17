@@ -44,7 +44,11 @@ import kotlinx.coroutines.withContext
  * 存的，同一位置复用会让下一部剧继承上一部的集号（PC 上踩过「每部都从第 2 集开始」）。
  */
 @Composable
-fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
+fun FeedScreen(
+    onOpenDetail: (String) -> Unit,
+    onExit: () -> Unit,
+    onOpenFull: (String) -> Unit = {},
+) {
     // 三端默认漫剧；与 PC 一致：漫剧 / 真人剧 / 推荐。
     // 上游真实 tab：36=漫剧、39=真人剧、16=推荐；3/4/2 是已失效的旧 id。
     val feedTypes = listOf("36", "39", "16")
@@ -161,6 +165,10 @@ fun FeedScreen(onOpenDetail: (String) -> Unit, onExit: () -> Unit) {
                     feedMode = true,
                     feedLabel = "第 ${cursor + 1} 部 · 共 ${cards.size} 部",
                     onFeedStep = { dir -> step(dir) },
+                    onFeedFull = {
+                        UiMemo.feedReturnKeep = true
+                        onOpenFull(current.seriesId)
+                    },
                 )
             }
         }

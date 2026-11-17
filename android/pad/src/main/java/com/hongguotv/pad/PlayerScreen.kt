@@ -119,6 +119,8 @@ fun PlayerScreen(
     feedLabel: String? = null,
     /** 刷剧模式 ↑↓ 的回调：-1 上一部 / +1 下一部。 */
     onFeedStep: ((Int) -> Unit)? = null,
+    /** 刷剧 TV 右键：进入当前剧的完整播放页（普通播放器 + 完整选集） */
+    onFeedFull: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 播放中保持屏幕常亮：平板按系统熄屏时间黑屏暂停，用户以为播放器坏了
@@ -1164,10 +1166,9 @@ fun PlayerScreen(
 
     /**
      * 刷剧模式键位（TV 极简版，控制台不出现）：
-     * ↑/↓ = 上一部/下一部，确定 = 暂停/继续，←/→ = 进入当前这部剧的详情页，返回 = 退出刷剧。
-     *
-     * ←/→ 原来是快退/快进；刷剧时用户更常见的诉求是「这部好看，想看完整版/选集」，
-     * 而详情页原本没有任何入口（TV 上没有可点的按钮），所以左右键统一改成进详情。
+     * ↑/↓ = 上一部/下一部，确定 = 暂停/继续；
+     * ← = 当前剧详情页，→ = 当前剧的完整播放页（普通播放器/完整选集）；
+     * 返回 = 退出刷剧。
      */
     fun feedKeys(ev: KeyEvent): Boolean = when (ev.key) {
         Key.Back -> { onBack(); true }
@@ -1177,7 +1178,7 @@ fun PlayerScreen(
             true
         }
         Key.DirectionLeft -> { onDetail(); true }
-        Key.DirectionRight -> { onDetail(); true }
+        Key.DirectionRight -> { (onFeedFull ?: onDetail)(); true }
         Key.DirectionUp -> { onFeedStep?.invoke(-1); true }
         Key.DirectionDown -> { onFeedStep?.invoke(1); true }
         else -> false
