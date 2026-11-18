@@ -99,7 +99,7 @@ N = [
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),
     dict(id="U-PASSPORT", layer="L6", name="登录/MFA", summary="短信登录、MFA、cookies。", files=["番茄 passport"]),
     dict(id="I-TUNNEL", layer="L6", name="公网通道", summary="樱花 frpc 44468、Cloudflare、cpolar；把 8081/8080 暴露到公网。", files=["frpc@…", "cloudflared", "cpolar"]),
-    dict(id="I-GITHUB", layer="L6", name="GitHub Release 更新镜像", summary="公开 kaixinguo Release 资产；axisnow/gh-proxy 加速，latest/download 自动跟随最新；update-mirrors 首选，樱花兜底；PC 3 段、安卓/TV 3 段。", files=["github.com/Arkbiubiubiu/kaixinguo/releases", "axisnow.gh-proxy.org", "gh-proxy.org"]),
+    dict(id="I-GITHUB", layer="L6", name="GitHub Release 更新镜像", summary="公开 kaixinguo Release 资产；axisnow/gh-proxy 加速；固定 tag 地址（/srv/hgtv-update/github-release-tag，禁用会被 CDN 缓存的 latest/download）；update-mirrors 首选，樱花兜底；PC 3 段、安卓/TV 3 段。", files=["github.com/Arkbiubiubiu/kaixinguo/releases", "axisnow.gh-proxy.org", "gh-proxy.org"]),
     dict(id="I-STATE", layer="L6", name="服务端状态", summary="历史、房间、feed-cache、heat、clientlogs、access 流水、admin token。", files=["/var/lib/hgtv-sync"]),
     dict(id="I-SYSTEMD", layer="L6", name="守护/备份", summary="systemd units、镜像 watchdog、隧道 watchdog、备份。", files=["systemd", "mirror_watchdog.sh"]),
 ]
