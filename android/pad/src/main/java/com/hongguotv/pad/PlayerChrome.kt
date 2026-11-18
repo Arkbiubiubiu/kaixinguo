@@ -148,6 +148,8 @@ fun PlayerChrome(
     onComments: (() -> Unit)? = null,
     /** 控制条出现时是否把焦点直接送进按钮行（TV：只有按 ↓ 进来时才要） */
     focusOnShow: Boolean = true,
+    /** 每次按 ↓ 递增：即使 focusOnShow 已经是 true，也重新把焦点请求到播放键上 */
+    focusRequest: Int = 0,
     /** 评论面板等模态层打开时=true：控制条不许把焦点抢回来（否则面板拿了焦点又被夺走） */
     modalOpen: Boolean = false,
 ) {
@@ -159,15 +161,20 @@ fun PlayerChrome(
     // 回调里立刻上报（不走 LaunchedEffect），否则按 ↓ 之后马上按 → 还会被当成快进。
     var barFocus by remember { mutableStateOf(false) }
     var panelFocus by remember { mutableStateOf(false) }
+    /** 这一轮控制条是否真正拿到过焦点：初次组件的 false 不能上报给父层，否则会取消 focusOnShow */
+    var barHadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) { if (!visible) barHadFocus = false }
 
     // 浮层第一项：打开后直接把焦点送进去，不再靠 moveFocus 猜方向
     val panelFirst = remember { FocusRequester() }
 
-    // 按钮是随控制条一起出现的，requestFocus 必须等这一帧 layout 结束（节点已 placed），
+    // 按钮是随控制条一起出现的，requestFocus 必须等 layout 结束（节点已 placed），
     // 否则 FocusRequester 未初始化直接抛异常 —— 之前就是被 runCatching 吞掉，
     // 焦点永远留在全屏 Box 上，遥控器根本进不来。
-    LaunchedEffect(visible, isTv, focusOnShow, modalOpen) {
+    // 两帧：一行按钮的焦点节点会在第二帧才完成 placed。
+    LaunchedEffect(visible, isTv, focusOnShow, focusRequest, modalOpen) {
         if (isTv && visible && focusOnShow && menu == PlayerMenu.None && !modalOpen) {
+            withFrameNanos { }
             withFrameNanos { }
             runCatching { playFocus?.requestFocus() }
         }
@@ -229,7 +236,13 @@ fun PlayerChrome(
                         .focusGroup()
                         .onFocusChanged {
                             barFocus = it.hasFocus
-                            onChromeFocus(it.hasFocus || panelFocus)
+                            if (it.hasFocus) barHadFocus = true
+                            // 初次组合的 false 不能上报：会立刻把 PlayerScreen 的
+                            // focusOnShow 清掉，导致按 ↓ 后控制条出来但焦点没落到播放键。
+                            if (it.hasFocus || barHadFocus) {
+                                onChromeFocus(it.hasFocus || panelFocus)
+                            }
+                            if (!it.hasFocus && !panelFocus) barHadFocus = false
                         },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 4.dp),

@@ -263,6 +263,8 @@ fun PlayerScreen(
      * 一旦进了按钮行，方向键就交给 Compose 去移动焦点，两种用法不打架。
      */
     var chromeFocused by remember { mutableStateOf(false) }
+    /** 每次按 ↓ 递增，强制 PlayerChrome 重新把焦点放到播放/暂停键 */
+    var chromeFocusTick by remember { mutableStateOf(0) }
 
     // 当前这一路取流（切集时留着上一路，等新的起来再关）
     var live by remember { mutableStateOf<Pair<RemoteVideo, StreamProxy>?>(null) }
@@ -1159,7 +1161,9 @@ fun PlayerScreen(
         // 焦点交给 PlayerChrome：控制条这一帧才刚可见，按钮还没上屏，
         // 在这里 requestFocus 会抛「FocusRequester is not initialized」并被吞掉，
         // 结果焦点留在全屏层，遥控器怎么按都进不了按钮行。
+        // tick 每次按 ↓ 都变，保证即使 focusOnShow 已经是 true 也会重试。
         chromeFocused = true
+        chromeFocusTick += 1
     }
 
     fun leaveChrome() {
@@ -1512,6 +1516,7 @@ fun PlayerScreen(
             menu = ui.menu,
             // ↑ 只亮控制条（不抢焦点，左右键照常快进）；↓ 进来时才把焦点交给按钮行
             focusOnShow = chromeFocused,
+            focusRequest = chromeFocusTick,
             // 评论面板是模态的：它开着时控制条不许再 requestFocus（会从面板手里抢焦点）
             modalOpen = ui.commentsOpen,
             onMenu = {
