@@ -1106,9 +1106,14 @@ fun PlayerScreen(
         ui.controlsVisible = false
     }
 
-    // 控制条收起时焦点标记一起复位，否则下次唤出会误判成「还在按钮行」
+    // 控制条收起时焦点标记一起复位，并把焦点还给全屏层：
+    // 暂停后点返回收条时，按钮行节点被移除会导致焦点悬空，方向键/确定全失灵。
     LaunchedEffect(ui.controlsVisible) {
-        if (!ui.controlsVisible) chromeFocused = false
+        if (!ui.controlsVisible) {
+            chromeFocused = false
+            runCatching { focusManager.clearFocus() }
+            runCatching { focus.requestFocus() }
+        }
     }
 
     /**
@@ -1242,8 +1247,17 @@ fun PlayerScreen(
     fun tvKeys(ev: KeyEvent): Boolean = tvNativeKeys(ev) || when (ev.key) {
         Key.Back -> when {
             ui.menu != PlayerMenu.None -> { ui.menu = PlayerMenu.None; mark(); true }
-            chromeFocused -> { leaveChrome(); true }
-            ui.controlsVisible -> { ui.controlsVisible = false; mark(); true }
+            // 控制条显示时一次返回直接收起；不要先只走 leaveChrome 清焦点，
+            // 否则暂停状态下条不会自动收，用户会看到「焦点没了、条还在」，
+            // 再按一次返回反而退出播放。收起后焦点交给全屏层。
+            ui.controlsVisible -> {
+                chromeFocused = false
+                ui.controlsVisible = false
+                mark()
+                runCatching { focusManager.clearFocus() }
+                runCatching { focus.requestFocus() }
+                true
+            }
             else -> { onBack(); true }
         }
         Key.DirectionCenter, Key.Enter, Key.Spacebar ->
