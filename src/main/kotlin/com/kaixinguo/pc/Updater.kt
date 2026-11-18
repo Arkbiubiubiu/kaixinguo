@@ -26,10 +26,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.charset.Charset
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 data class PcUpdate(
     val versionCode: Int,
@@ -182,7 +186,106 @@ object PcUpdater {
             null
         }
 
+    private fun validateFile(out: File, info: PcUpdate): Boolean {
+        if (info.size > 0 && out.length() != info.size) return false
+        if (info.sha256.isNotBlank()) {
+            val digest = MessageDigest.getInstance("SHA-256")
+            out.inputStream().use { input ->
+                val buf = ByteArray(1 shl 20)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            val hex = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!hex.equals(info.sha256, ignoreCase = true)) return false
+        }
+        return true
+    }
+
+    /**
+     * 大文件分段并行：GitHub axisnow / 樱花单连接都跑不满带宽，3 段能叠到数 MB/s。
+     * 每段独立文件，避免 Android 早期「写同一文件导致残缺包」的问题；分段失败回退单连接。
+     */
+    private fun downloadSegmented(url: String, out: File, info: PcUpdate, onProgress: (Int) -> Unit): Boolean {
+        val total = info.size
+        if (total < 8L * 1024 * 1024) return false
+        val segCount = 3
+        val segDir = File(out.parentFile, "segs-${info.versionName}").apply { mkdirs() }
+        segDir.deleteRecursively()
+        segDir.mkdirs()
+        val segLen = total / segCount
+        val done = AtomicLong(0)
+        val lastPct = AtomicInteger(-1)
+        val pool = Executors.newFixedThreadPool(segCount)
+        try {
+            val futures = (0 until segCount).map { i ->
+                pool.submit(java.util.concurrent.Callable {
+                    val a = i.toLong() * segLen
+                    val b = if (i == segCount - 1) total - 1 else (i + 1).toLong() * segLen - 1
+                    val segSize = b - a + 1
+                    val segFile = File(segDir, "p$i")
+                    var pos = 0L
+                    var attempt = 0
+                    while (pos < segSize && attempt < 5) {
+                        attempt++
+                        var conn: HttpURLConnection? = null
+                        try {
+                            conn = openConn(url, 15_000, 60_000)
+                            conn.setRequestProperty("Range", "bytes=${a + pos}-$b")
+                            val code = conn.responseCode
+                            if (code == 200 || code !in 200..299) error("分段 HTTP $code")
+                            conn.inputStream.use { input ->
+                                RandomAccessFile(segFile, "rw").use { raf ->
+                                    raf.seek(pos)
+                                    val buf = ByteArray(128 * 1024)
+                                    while (pos < segSize) {
+                                        val want = minOf(buf.size.toLong(), segSize - pos).toInt()
+                                        val n = input.read(buf, 0, want)
+                                        if (n <= 0) break
+                                        raf.write(buf, 0, n)
+                                        pos += n
+                                        val d = done.addAndGet(n.toLong())
+                                        val p = (d * 100 / total).toInt().coerceIn(0, 100)
+                                        if (p != lastPct.getAndSet(p)) onProgress(p)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (attempt >= 5) throw e
+                            Thread.sleep(500L * attempt)
+                        } finally {
+                            conn?.disconnect()
+                        }
+                    }
+                    if (pos < segSize) error("分段未完成 $pos/$segSize")
+                })
+            }
+            futures.forEach { it.get() }
+            out.outputStream().use { output ->
+                (0 until segCount).forEach { i ->
+                    val f = File(segDir, "p$i")
+                    val expected = if (i == segCount - 1) total - 2 * segLen else segLen
+                    if (!f.exists() || f.length() != expected) error("分段 $i 缺失")
+                    f.inputStream().use { it.copyTo(output, 256 * 1024) }
+                }
+            }
+            segDir.deleteRecursively()
+            if (validateFile(out, info)) return true
+            out.delete()
+        } catch (e: Exception) {
+            segDir.deleteRecursively()
+            out.delete()
+        } finally {
+            pool.shutdownNow()
+        }
+        return false
+    }
+
     private fun downloadOne(url: String, out: File, info: PcUpdate, onProgress: (Int) -> Unit): Boolean {
+        if (info.size >= 8L * 1024 * 1024 && downloadSegmented(url, out, info, onProgress)) return true
+        out.delete()
         val conn = openConn(url, 15_000, 60_000)
         try {
             if (conn.responseCode !in 200..299) return false
@@ -210,21 +313,7 @@ object PcUpdater {
         } finally {
             conn.disconnect()
         }
-        if (info.size > 0 && out.length() != info.size) return false
-        if (info.sha256.isNotBlank()) {
-            val digest = MessageDigest.getInstance("SHA-256")
-            out.inputStream().use { input ->
-                val buf = ByteArray(1 shl 20)
-                while (true) {
-                    val n = input.read(buf)
-                    if (n <= 0) break
-                    digest.update(buf, 0, n)
-                }
-            }
-            val hex = digest.digest().joinToString("") { "%02x".format(it) }
-            if (!hex.equals(info.sha256, ignoreCase = true)) return false
-        }
-        return true
+        return validateFile(out, info)
     }
 
     /**
