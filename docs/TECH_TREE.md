@@ -178,7 +178,8 @@
 | `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO`, `R-V5` | — |
 | `U-CDN` | 视频/图片 CDN | 字节 CDN | 加密 MP4、封面、头像 | `C-PROXY`, 转码下载 | — |
 | `U-PASSPORT` | 登录/MFA | 番茄 passport | 短信登录、MFA、cookies | `D-ACCOUNT`, `C-SIGN` | — |
-| `I-TUNNEL` | 公网通道 | 樱花 frpc（44468）、Cloudflare、cpolar | 把 8081/8080 暴露到公网；`/get` 302 下载 | 客户端 | `V-DUAL` |
+| `I-TUNNEL` | 公网通道 | 樱花 frpc（44468）、Cloudflare、cpolar | 把 8081/8080 暴露到公网 | 客户端 | `V-DUAL` |
+| `I-GITHUB` | GitHub Release 更新镜像 | `github.com/Arkbiubiubiu/kaixinguo/releases`（公开），`axisnow.gh-proxy.org` / `gh-proxy.org` | 更新包公开托管 + 国内加速镜像；`update-mirrors` 首选、樱花兜底；官网 `/get` 302 到这里；PC/安卓/TV 统一 3 段下载 | `X-BUILD`, `D-UPDATE`, `S-WEB` | — |
 | `I-STATE` | 服务端状态 | `/var/lib/hgtv-sync` | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token | `V-*` | 磁盘 |
 | `I-SYSTEMD` | 守护/备份 | systemd units、`mirror_watchdog`、`cloudflared_watchdog` | 服务常驻、镜像发现、隧道守护、备份 | 运维 | `V-*` |
 
@@ -413,7 +414,13 @@ flowchart LR
     - TV 刷剧键位：↑/↓ 换剧、← 当前剧详情、→ 当前剧完整播放页（`Screen.Play(seriesId,1)`，普通播放器/完整选集）、确定暂停、返回退出；从完整播放页返回保留刷剧现场。
     - TV 普通播放：控制条显示时按一次返回直接收起控制条并把焦点还给全屏层；暂停状态也如此，不再出现“焦点消失、条还在、按键失灵、二次返回退出”（安卓 2.2.198）。
     - TV 普通播放：按下键弹出控制条时自动把焦点落到播放/暂停键；每次按 ↓ 用 `chromeFocusTick` 强制重试；按钮行/浮层容器初次 `onFocusChanged(false)` 不再清掉 `focusOnShow`（安卓 2.2.200）。
-    - 版本：PC 1.2.84 / 安卓 2.2.200（2026-11-17）。
+    - 版本：PC 1.2.85 / 安卓 2.2.200（2026-11-19）。
+
+13. **更新包统一走 GitHub Release 镜像**
+    - 公开 Release：`Arkbiubiubiu/kaixinguo`，tag `v1.2.84-2.2.200` 含 PC 1.2.85 / 安卓 & TV 2.2.200 的全部 ABI/通用包和清单。
+    - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：`axisnow.gh-proxy.org/.../releases/latest/download` → `gh-proxy.org` → 樱花四条 → cpolar；不会再被 watchdog 覆盖回旧列表。
+    - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 20MB 约 3 秒（7.29MB/s），樱花约 16 秒（1.25MB/s）。官网 `/get/<file>` 302 到同一 latest 镜像，不由服务器中转。
+    - 以后发版必须同时上传 GitHub Release 资产并发布为 latest；`latest/download` 自动跟随，不用改客户端镜像地址。
 
 ### 5.1 播放入口一致性（当前状态）
 
