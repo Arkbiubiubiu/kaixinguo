@@ -161,9 +161,15 @@ fun PlayerChrome(
     // 回调里立刻上报（不走 LaunchedEffect），否则按 ↓ 之后马上按 → 还会被当成快进。
     var barFocus by remember { mutableStateOf(false) }
     var panelFocus by remember { mutableStateOf(false) }
-    /** 这一轮控制条是否真正拿到过焦点：初次组件的 false 不能上报给父层，否则会取消 focusOnShow */
+    /** 这一轮控制条/浮层是否真正拿到过焦点：初次组件的 false 不能上报，否则会取消 focusOnShow */
     var barHadFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(visible) { if (!visible) barHadFocus = false }
+    var panelHadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (!visible) {
+            barHadFocus = false
+            panelHadFocus = false
+        }
+    }
 
     // 浮层第一项：打开后直接把焦点送进去，不再靠 moveFocus 猜方向
     val panelFirst = remember { FocusRequester() }
@@ -330,7 +336,13 @@ fun PlayerChrome(
                 .padding(end = 16.dp, bottom = BAR_HEIGHT + 6.dp)
                 .onFocusChanged {
                     panelFocus = it.hasFocus
-                    onChromeFocus(it.hasFocus || barFocus)
+                    if (it.hasFocus) panelHadFocus = true
+                    // 初次组合的 false 同样不能上报；否则按下键时浮层容器会取消
+                    // PlayerScreen 的 focusOnShow，播放键永远拿不到焦点。
+                    if (it.hasFocus || barHadFocus || panelHadFocus) {
+                        onChromeFocus(it.hasFocus || barFocus)
+                    }
+                    if (!it.hasFocus && !barFocus) panelHadFocus = false
                 },
             horizontalAlignment = Alignment.End,
         ) {
