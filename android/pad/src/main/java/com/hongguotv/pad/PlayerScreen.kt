@@ -290,6 +290,18 @@ fun PlayerScreen(
     var firstFrameAt by remember { mutableStateOf(0L) }
     /** 这一集是否已经自动切过一次软解，防止来回重建 */
     var autoSoftTried by remember { mutableStateOf(false) }
+    /** 取流超过 3 秒时给用户的解释，避免只看到黑屏转圈 */
+    var prepareNote by remember { mutableStateOf("") }
+    LaunchedEffect(ps.preparing) {
+        if (!ps.preparing) {
+            prepareNote = ""
+            return@LaunchedEffect
+        }
+        delay(3_000)
+        if (ps.preparing && prepareNote.isEmpty()) {
+            prepareNote = "片源正在准备，首次播放可能需要几十秒…"
+        }
+    }
 
     val player = remember(decodeGen) {
         val load = DefaultLoadControl.Builder()
@@ -1438,7 +1450,17 @@ fun PlayerScreen(
 
         if (ps.preparing && ps.showSpinner) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                LoadingBlock("正在取流…")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    LoadingBlock("正在取流…")
+                    if (prepareNote.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            prepareNote,
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 13.sp,
+                        )
+                    }
+                }
             }
         }
 

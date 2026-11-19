@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import com.hongguotv.pad.ShelfKind
 import com.hongguotv.pad.ShelfRepository
 import com.hongguotv.pad.SeasonService
+import com.hongguotv.pad.PlaybackApi
 import com.hongguotv.pad.Api
 import com.hongguotv.pad.ReviewPage
 import com.hongguotv.pad.RelatedGroup
@@ -109,6 +110,13 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                 detail = d
                 followed = d?.followed ?: false
                 liked = d?.hasDigg ?: false
+                // 详情页打开就把前 2 集交给服务端预热：VVC 集会在后台开始转码，
+                // 用户看完简介再点播放时大概率已经命中缓存。
+                if (d != null) launch(Dispatchers.IO) {
+                    d.episodes.take(2).forEach { ep ->
+                        runCatching { PlaybackApi.tiers(ep.vid, priority = false) }
+                    }
+                }
             }
             launch {
                 // 云端历史推「继续看」：同一部剧取最新一条的集号（>3 秒才续播）

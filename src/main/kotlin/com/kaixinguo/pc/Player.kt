@@ -182,6 +182,16 @@ fun PlayerScreen(
     var loading by remember { mutableStateOf(true) }
     // 加载中的补充说明（VVC 片源要本机转换十几秒，只转圈会让用户以为卡死）
     var loadingNote by remember { mutableStateOf("") }
+    LaunchedEffect(loading) {
+        if (!loading) {
+            loadingNote = ""
+            return@LaunchedEffect
+        }
+        delay(3_000)
+        if (loading && loadingNote.isEmpty()) {
+            loadingNote = "片源正在准备，首次播放可能需要几十秒…"
+        }
+    }
     var failed by remember { mutableStateOf<String?>(null) }
     // 详情/分集拉取的重试计数：以前详情失败时 episodes 永远是空的，起播 effect 直接 return，
     // loading 就永远停在 true（界面无限转圈、没有任何文字和重试）。

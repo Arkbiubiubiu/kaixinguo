@@ -195,6 +195,16 @@ fun DetailScreen(
         error = if (d == null) "详情没加载出来（网络问题）" else null
         loading = false
 
+        // 详情页打开就预热前 2 集：VVC 集会在服务端后台转码，
+        // 用户看完简介再点播放时大概率已经命中缓存。
+        d?.let { dd ->
+            launch(Dispatchers.IO) {
+                dd.episodes.take(2).forEach { ep ->
+                    runCatching { PlaybackApi.tiers(ep.vid, priority = false) }
+                }
+            }
+        }
+
         // ---- 以下是页面已经显示之后才补的数据，全部后台跑 ----
 
         // 云端状态优先：换设备/重装后本地是空的，但账号里其实已经收藏/预约/追更过
