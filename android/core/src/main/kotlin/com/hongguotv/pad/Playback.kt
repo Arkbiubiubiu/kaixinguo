@@ -101,26 +101,43 @@ class RemoteVideo(private val info: PlayInfo) {
         }
     }
 
+    /**
+     * CDN/隧道偶发 connection reset，这里对网络 IO 自动换新连接重试一次。
+     * 只重试 IOException（连接 reset/超时/EOF），HTTP 4xx/5xx 不在这里重试。
+     */
+    private fun <T> retryIo(block: () -> T): T {
+        var last: java.io.IOException? = null
+        for (attempt in 0 until 2) {
+            try {
+                return block()
+            } catch (e: java.io.IOException) {
+                last = e
+                if (attempt == 0) runCatching { Thread.sleep(250) }
+            }
+        }
+        throw last ?: java.io.IOException("视频网络请求失败")
+    }
+
     /** 拉指定区间（AV1 取首帧序列头用）。 */
-    private fun fetchRange(at: Long, len: Int): ByteArray {
+    private fun fetchRange(at: Long, len: Int): ByteArray = retryIo {
         val req = Request.Builder().url(info.url)
             .header("Range", "bytes=$at-${at + len - 1}")
             .header("User-Agent", USER_AGENT)
             .header("Accept-Encoding", "identity")
             .build()
-        return http.newCall(req).execute().use { resp ->
+        http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) ByteArray(0) else (resp.body?.bytes() ?: ByteArray(0))
         }
     }
 
     /** 拉头部并顺手取出文件总长（省掉一次单独的探测往返）。 */
-    private fun fetchHead(want: Int): Pair<ByteArray, Long> {
+    private fun fetchHead(want: Int): Pair<ByteArray, Long> = retryIo {
         val req = Request.Builder().url(info.url)
             .header("Range", "bytes=0-${want - 1}")
             .header("User-Agent", USER_AGENT)
             .header("Accept-Encoding", "identity")
             .build()
-        return http.newCall(req).execute().use { resp ->
+        http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("视频分片下载失败（HTTP ${resp.code}）")
             val cr = resp.header("Content-Range").orEmpty()
             val t = cr.substringAfter('/', "0").trim().toLongOrNull() ?: 0L
@@ -209,29 +226,33 @@ class RemoteVideo(private val info: PlayInfo) {
     }
 
     private fun probeLength(): Long = runCatching {
-        val req = Request.Builder().url(info.url).header("Range", "bytes=0-0")
-            .header("User-Agent", USER_AGENT).build()
-        http.newCall(req).execute().use { resp ->
-            val cr = resp.header("Content-Range").orEmpty()
-            val t = cr.substringAfter('/', "0").trim().toLongOrNull() ?: 0L
-            if (t > 0) t else resp.body?.contentLength() ?: 0L
+        retryIo {
+            val req = Request.Builder().url(info.url).header("Range", "bytes=0-0")
+                .header("User-Agent", USER_AGENT).build()
+            http.newCall(req).execute().use { resp ->
+                val cr = resp.header("Content-Range").orEmpty()
+                val t = cr.substringAfter('/', "0").trim().toLongOrNull() ?: 0L
+                if (t > 0) t else resp.body?.contentLength() ?: 0L
+            }
         }
     }.getOrDefault(0L).let { if (it > 0) it else fallbackLength() }
 
     private fun fallbackLength(): Long = runCatching {
-        val req = Request.Builder().url(info.url).head().header("User-Agent", USER_AGENT).build()
-        http.newCall(req).execute().use { it.body?.contentLength() ?: 0L }
+        retryIo {
+            val req = Request.Builder().url(info.url).head().header("User-Agent", USER_AGENT).build()
+            http.newCall(req).execute().use { it.body?.contentLength() ?: 0L }
+        }
     }.getOrDefault(0L)
 
-    private fun fetch(at: Long, want: Int): ByteArray {
-        if (want <= 0) return ByteArray(0)
+    private fun fetch(at: Long, want: Int): ByteArray = retryIo {
+        if (want <= 0) return@retryIo ByteArray(0)
         val end = at + want - 1
         val req = Request.Builder().url(info.url)
             .header("Range", "bytes=$at-$end")
             .header("User-Agent", USER_AGENT)
             .header("Accept-Encoding", "identity")
             .build()
-        return http.newCall(req).execute().use { resp ->
+        http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("视频分片下载失败（HTTP ${resp.code}）")
             resp.body?.bytes() ?: ByteArray(0)
         }
