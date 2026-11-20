@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -59,10 +60,11 @@ fun FeedScreen(
     var page by remember { mutableStateOf(UiMemo.feedPage) }
     // 首次进入先显示 loading，绝不先画旧列表。
     var loading by remember { mutableStateOf(true) }
+    var reload by remember { mutableStateOf(0) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(tab) {
+    LaunchedEffect(tab, reload) {
         // 从详情/播放返回同一次刷剧会话：保留当前剧与位置（只此一种例外）。
         val returning = UiMemo.feedReturnKeep &&
             cards.isNotEmpty() && tab == UiMemo.feedTab
@@ -148,12 +150,31 @@ fun FeedScreen(
             loading -> Box(Modifier.align(Alignment.Center)) {
                 LoadingBlock("正在加载…")
             }
-            current == null -> Text(
-                "没有拿到推荐，检查网络后重试",
-                color = Color.White.copy(alpha = 0.7f),
-                fontSize = 14.sp,
+            current == null -> Column(
                 modifier = Modifier.align(Alignment.Center),
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    "没有拿到推荐，检查网络后重试",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 14.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "重试",
+                        color = Color.White, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0xCCFF4A3D))
+                            .clickable { reload++ }.padding(horizontal = 18.dp, vertical = 8.dp),
+                    )
+                    Text(
+                        "退出",
+                        color = Color.White, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0x66000000))
+                            .clickable { UiMemo.feedReturnKeep = false; onExit() }.padding(horizontal = 18.dp, vertical = 8.dp),
+                    )
+                }
+            }
             else -> key(current.seriesId) {
                 PlayerScreen(
                     seriesId = current.seriesId,
@@ -169,6 +190,29 @@ fun FeedScreen(
                         UiMemo.feedReturnKeep = true
                         onOpenFull(current.seriesId)
                     },
+                )
+            }
+        }
+
+        // Pad 刷剧：顶部常驻「详情 / 退出」（TV 不必，遥控器有返回键）
+        if (!isTv) {
+            Row(
+                Modifier.align(Alignment.TopEnd).padding(20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (current != null) {
+                    Text(
+                        "详情", color = Color.White, fontSize = 13.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0x66000000))
+                            .clickable { UiMemo.feedReturnKeep = true; onOpenDetail(current.seriesId) }
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    )
+                }
+                Text(
+                    "退出", color = Color.White, fontSize = 13.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0x66000000))
+                        .clickable { UiMemo.feedReturnKeep = false; onExit() }
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
                 )
             }
         }

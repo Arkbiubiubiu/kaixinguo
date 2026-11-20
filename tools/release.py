@@ -290,6 +290,36 @@ def prune_remote(keep=2):
         print("WARN: 远端旧包清理异常（不影响本次发布）：", exc)
 
 
+def publish_github(assets):
+    """发版后把产物同步到 GitHub Release 并更新服务器 github-release-tag。
+    尽力而为：失败只告警，不影响本地/服务器发布（服务器清单已上传即可供更新器使用）。"""
+    try:
+        try:
+            pcv = read_version_pc()[0]
+        except Exception:
+            pcv = ""
+        try:
+            andv = read_version_android()[0]
+        except Exception:
+            andv = ""
+        tag = os.environ.get("KXG_RELEASE_TAG") or ("v%s-%s" % (pcv, andv))
+        repo = os.environ.get("KXG_GH_REPO", "Arkbiubiubiu/kaixinguo")
+        assets = [f for f in assets if os.path.isfile(f)]
+        if not assets or shutil.which("gh") is None:
+            print("WARN: 跳过 GitHub Release（无资产或未安装 gh）")
+            return
+        view = subprocess.run(["gh", "release", "view", tag, "--repo", repo], capture_output=True)
+        if view.returncode != 0:
+            subprocess.run(["gh", "release", "create", tag, "--repo", repo,
+                            "--title", tag, "--notes", "发布 " + tag] + assets, check=False)
+        else:
+            subprocess.run(["gh", "release", "upload", tag, "--repo", repo, "--clobber"] + assets, check=False)
+        subprocess.run(["ssh", SERVER, "printf '%%s' '%s' > %s/github-release-tag" % (tag, SERVER_DIR)], check=False)
+        print("GitHub Release 已同步:", tag)
+    except Exception as exc:
+        print("WARN: GitHub 发布异常（不影响本次）：", exc)
+
+
 def copy_to_desktop(version):
     os.makedirs(DESKTOP_APK, exist_ok=True)
     keep = {
@@ -315,7 +345,7 @@ def cmd_android(a):
     if a.bump:
         write_version_android(version, code)
     props = load_props(a.env)
-    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases") and not props.get(p)]
+    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
     if missing:
         die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
     if not a.no_build:
@@ -328,6 +358,7 @@ def cmd_android(a):
     if not a.no_upload:
         upload(files, manifests)
         prune_remote()
+        publish_github(list(files.values()) + manifests)
     if a.desktop_copy:
         copy_to_desktop(version)
 
@@ -338,11 +369,15 @@ def cmd_pc(a):
     if a.bump:
         write_version_pc(version)
     props = load_props(a.env)
+    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
+    if missing:
+        die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
     files, manifests = stage_pc(version, a.notes, props, no_build=a.no_build)
     print("产物目录:", os.path.join(ROOT, "dist", "pc", version))
     if not a.no_upload:
         upload(files, manifests)
         prune_remote()
+        publish_github(list(files.values()) + manifests)
 
 
 def main():

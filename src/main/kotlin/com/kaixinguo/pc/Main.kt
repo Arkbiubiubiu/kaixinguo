@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -579,11 +579,13 @@ private fun AppRoot() {
     // 从任意入口点「播放」都接着上次看的地方：以前只有历史页/详情页会续播，
     // 首页、排行榜、新剧、追更、预约一点就回第 1 集。
     fun playSeries(id: String) {
-        val ep = runCatching {
+        val row = runCatching {
             com.kaixinguo.pc.PcStore.history().firstOrNull { it.optString("seriesId") == id }
-                ?.optInt("episode", 0) ?: 0
-        }.getOrDefault(0)
-        nav(Route.Player(id, if (ep > 0) ep else 1))
+        }.getOrNull()
+        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+        // 连秒数一起传：本机有 posOf 能续，带上历史秒数后换机/清缓存也能接着播。
+        val pos = row?.optLong("positionMs", 0L) ?: 0L
+        nav(Route.Player(id, ep, pos))
     }
     // 打赏浮层：侧栏「打赏」入口，纯展示不接支付
     var donateOpen by remember { mutableStateOf(false) }
@@ -629,7 +631,7 @@ private fun AppRoot() {
                     onBack = { navBack() },
                     onPlaySeries = { id -> nav(Route.Player(id)) },
                 )
-                is Route.Detail -> DetailScreen(r.seriesId, initialTab = r.tab, onBack = { navBack() }, onPlay = { ep -> nav(Route.Player(r.seriesId, ep)) }, onOpenSeason = { nav(Route.Detail(it)) }, onCreator = { nav(Route.Creator(it)) })
+                is Route.Detail -> DetailScreen(r.seriesId, initialTab = r.tab, onBack = { navBack() }, onPlay = { ep, pos -> nav(Route.Player(r.seriesId, ep, pos)) }, onOpenSeason = { nav(Route.Detail(it)) }, onCreator = { nav(Route.Creator(it)) })
                 is Route.Player -> PlayerScreen(r.seriesId, r.index, r.startMs, onBack = { UiMode.exitAll(); navBack() }, onDetail = { nav(Route.Detail(r.seriesId)) }, onComments = { nav(Route.Detail(r.seriesId, tab = 1)) }, onSwitchSeries = { id -> route = Route.Player(id, 1) })
                 null -> {
                     when (page) {

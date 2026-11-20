@@ -641,9 +641,9 @@ flowchart LR
 
 ## 9. 版本基线
 
-- PC：`1.2.80`（`build.gradle.kts` 的 `pcVersion`；源码已含 2026-11-15 历史/续播调整，未单独发版）
-- Android：`2.2.170`（`android/pad/build.gradle.kts` 的 `versionCode=290`）
+- PC：`1.2.100`（`build.gradle.kts` 的 `pcVersion`）
+- Android：`2.2.216`（`android/pad/build.gradle.kts` 的 `versionCode=336`）
 - 服务端：`hgtv-update`（8080）、`dual-server`（8081）、`streamsrv`（9110）、`oroplay`（9118）
-- 公网：樱花 `frp-bar.com:44468` / `dl.fabao.xin:44468`；官网 `hgtv.fabao.xin` / `kxg.fabao.xin`
+- 公网：小请求走樱花 `dl.fabao.xin:44468`；转码大文件走 CF `tc.fabao.xin`；官网/看板 `hgtv.fabao.xin` / `kxg.fabao.xin`（frp-bar 自签已关、cpolar 已删）
 
 > 每次发版只改最后一节的版本和对应节点；不要在这棵树里写 token、cookie、私钥。

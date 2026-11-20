@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -489,7 +489,13 @@ fun App() {
                 )
                 is Screen.Feed -> FeedScreen(
                     onOpenDetail = { push(Screen.Detail(it)) },
-                    onOpenFull = { push(Screen.Play(it, 1)) },
+                    // 刷剧「完整播放页」也按历史续播，不再从第1集
+                    onOpenFull = { id ->
+                        val row = Store.history().firstOrNull { it.optString("seriesId") == id }
+                        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+                        val pos = row?.optLong("positionMs", 0L) ?: 0L
+                        push(Screen.Play(id, ep, pos))
+                    },
                     onExit = {
                         if (railLockable) {
                             // TV：退回导航层（和顶层页按返回同语义），页面本身不换
@@ -511,13 +517,24 @@ fun App() {
                 )
                 is Screen.Rank -> RankScreen(
                     onOpen = { push(Screen.Detail(it.seriesId)) },
-                    onPlay = { push(Screen.Play(it.seriesId, 1)) },
+                    // 排行榜点播放：按历史续播（集+秒），不再写死第1集
+                    onPlay = { c ->
+                        val row = Store.history().firstOrNull { it.optString("seriesId") == c.seriesId }
+                        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+                        val pos = row?.optLong("positionMs", 0L) ?: 0L
+                        push(Screen.Play(c.seriesId, ep, pos))
+                    },
                     onCreator = { push(Screen.Creator(it)) },
                 )
                 is Screen.NewDrama -> NewDramaScreen(
                     onOpen = { push(Screen.Detail(it.seriesId)) },
-                    // 日历里「已上线」的行可以直接播放（从第 1 集起）
-                    onPlay = { id -> push(Screen.Play(id, 1)) },
+                    // 日历「已上线」直接播放：按历史续播（集+秒），不再写死第1集
+                    onPlay = { id ->
+                        val row = Store.history().firstOrNull { it.optString("seriesId") == id }
+                        val ep = (row?.optInt("episode", 0) ?: 0).coerceAtLeast(1)
+                        val pos = row?.optLong("positionMs", 0L) ?: 0L
+                        push(Screen.Play(id, ep, pos))
+                    },
                 )
                 is Screen.History -> RecordsScreen(
                     initialTab = 0,

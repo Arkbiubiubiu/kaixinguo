@@ -18,6 +18,7 @@
 退出码 0 = 一致；1 = 有版本没落地（会列出差在哪）。
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -62,6 +63,44 @@ def fetch_manifest(base, name):
             return json.loads(resp.read().decode("utf-8", "replace"))
     except Exception as exc:
         die("拉不到 %s：%s" % (url, exc))
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_artifacts(base):
+    """额外核对 manifest 的 abis/sha256 与本地 dist 产物是否一致；本地无 dist 时只查 abis 数量。
+    这是补 check_versions 只比版本号的缺口：sha 错 / ABI 少一个，版本号却照样一致。"""
+    bad = []
+    try:
+        tv = fetch_manifest(base, "version-tv.json")
+    except SystemExit:
+        return bad
+    abis = tv.get("abis") or {}
+    if isinstance(abis, dict) and len(abis) < 3:
+        bad.append("version-tv.json abis 少于3个(%d)，部分机型可能拿不到包" % len(abis))
+    if isinstance(abis, dict):
+        ver = str(tv.get("versionName") or "").strip()
+        ddir = os.path.join(ROOT, "dist", "android", ver)
+        for abi, info in abis.items():
+            path = os.path.join(ddir, str(info.get("path") or ""))
+            if os.path.isfile(path):
+                if _sha256(path) != str(info.get("sha256") or "").lower():
+                    bad.append("AND abi %s sha256 不一致：%s" % (abi, path))
+    try:
+        pc = fetch_manifest(base, "version-pc.json")
+    except SystemExit:
+        return bad
+    pver = str(pc.get("versionName") or "").strip()
+    ppath = os.path.join(ROOT, "dist", "pc", pver, str(pc.get("path") or ""))
+    if os.path.isfile(ppath) and _sha256(ppath) != str(pc.get("sha256") or "").lower():
+        bad.append("PC msi sha256 不一致：%s" % ppath)
+    return bad
 
 
 def installed_pc_version():
@@ -125,6 +164,7 @@ def main():
         bad += check_pc(a.base, not a.no_installed)
     if a.platform in ("both", "android"):
         bad += check_android(a.base)
+    bad += verify_artifacts(a.base)
 
     if bad:
         print("\n版本没落地：")

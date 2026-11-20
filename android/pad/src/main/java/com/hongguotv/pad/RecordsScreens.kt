@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -121,9 +121,11 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
         mutableStateListOf<JSONObject>().apply { runCatching { addAll(Store.history()) } }
     }
     var loading by remember { mutableStateOf(rows.isEmpty()) }
+    var syncFailed by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reload) {
         if (rows.isEmpty()) {
             loading = true
             rows.addAll(Store.history())
@@ -136,6 +138,7 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
         // 表现就是「看历史看着看着，焦点自己跳回第一条」。改成原地对齐更新。
         if (Store.loggedIn) {
             val ok = withContext(Dispatchers.IO) { runCatching { HistoryApi.sync() }.getOrDefault(false) }
+            syncFailed = !ok
             if (ok) {
                 rows.diffUpdate(Store.history()) { it.optString("seriesId") }
             }
@@ -286,6 +289,7 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
         }
         when {
             loading -> StatusBox(loading = true, error = null)
+            visible.isEmpty() && syncFailed -> StatusBox(loading = false, error = "历史没加载出来（网络问题）", onRetry = { reload++ })
             visible.isEmpty() -> StatusBox(loading = false, error = null, empty = true, emptyText = if (search.isNotBlank()) "没有匹配的记录" else "看过的剧会出现在这里")
             else -> LazyColumn(
                 Modifier.fillMaxSize(),
@@ -405,6 +409,7 @@ internal fun ShelfTab(key: String, onOpen: (String) -> Unit) {
     var loading by remember { mutableStateOf(cards.isEmpty()) }
     var syncing by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
+    var cloudFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(key, reload) {
         val at = if (key == Store.KEY_FAVORITE) UiMemo.favoriteAt else UiMemo.likeAt
@@ -421,6 +426,7 @@ internal fun ShelfTab(key: String, onOpen: (String) -> Unit) {
         loading = true
         cards.clear()
         Store.ids(key).forEach { id -> Store.card(key, id)?.let { cards.add(it) } }
+        cloudFailed = false
         if (key == Store.KEY_FAVORITE && Store.loggedIn) {
             // 收藏以云端为准：别的设备上取消了收藏，这里不该还留着。
             // 拉取失败（getOrNull()==null）时保留本地，避免网络抖动把列表清空。
@@ -429,6 +435,8 @@ internal fun ShelfTab(key: String, onOpen: (String) -> Unit) {
                 cards.clear()
                 cards.addAll(cloud)
                 Store.replaceCards(Store.KEY_FAVORITE, cloud)
+            } else {
+                cloudFailed = true
             }
         }
         loading = false
@@ -454,6 +462,7 @@ internal fun ShelfTab(key: String, onOpen: (String) -> Unit) {
         }
         when {
             loading -> StatusBox(loading = true, error = null)
+            cards.isEmpty() && cloudFailed -> StatusBox(loading = false, error = "收藏没加载出来（网络问题）", onRetry = { reload++ })
             cards.isEmpty() -> StatusBox(
                 loading = false, error = null, empty = true,
                 emptyText = if (key == Store.KEY_LIKE) "在播放页点❤，点过赞的剧会出现在这里"

@@ -618,10 +618,13 @@ fun PlayerScreen(
             val ep = episodes.getOrNull(index - 1) ?: continue
             val pos = runCatching { engine?.positionMs ?: 0L }.getOrDefault(0L)
             if (pos <= 0L) continue
-            PcStore.markPos(ep.vid, pos)
-            // 历史 = 最近一次真实播放：真正播过 3 秒才写；换到低集数也照实更新
-            if (playedThisEpisode >= 3_000L && pos > 0L) {
-                HistoryReporter.onPlayed(seriesId, title, "", index, episodes.size, pos)
+            // 写盘/上报统一挪 IO：以前在主线程同步重写整份 prefs，历史越多越顿
+            withContext(Dispatchers.IO) {
+                runCatching { PcStore.markPos(ep.vid, pos) }
+                // 历史 = 最近一次真实播放：真正播过 3 秒才写；换到低集数也照实更新
+                if (playedThisEpisode >= 3_000L && pos > 0L) {
+                    runCatching { HistoryReporter.onPlayed(seriesId, title, "", index, episodes.size, pos) }
+                }
             }
             // 20 秒报一次官方；开头 5 秒不报（刚点进来就退出不该把云端进度压回开头）
             if (tick % 5 == 0 && pos > 5_000L && ep.vid.isNotEmpty()) {
@@ -730,6 +733,7 @@ fun PlayerScreen(
     // 进度落盘 + 历史上报（节拍对齐旧版 history-cadence）：
     // 落盘 5 秒节流；上报首报 5 秒、同集每 60 秒一条，暂停不计时
     LaunchedEffect(engine, index) {
+        if (embedded) return@LaunchedEffect   // 刷剧预览连播不记本地进度（避免污染续播）
         val ep = episodes.getOrNull(index - 1) ?: return@LaunchedEffect
         var lastSaved = 0L
         var lastReport = 0L
@@ -741,7 +745,7 @@ fun PlayerScreen(
             if (playing) playedThisEpisode += 1_000L
             if (playing && pos > 0 && pos - lastSaved >= 5_000) {
                 lastSaved = pos
-                PcStore.markPos(ep.vid, pos)
+                withContext(Dispatchers.IO) { runCatching { PcStore.markPos(ep.vid, pos) } }
             }
             if (playing && !embedded && playedThisEpisode >= 5_000L && pos > 0 && pos - lastReport >= 60_000) {
                 lastReport = pos

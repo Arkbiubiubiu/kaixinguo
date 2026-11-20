@@ -70,7 +70,7 @@ import kotlinx.coroutines.withContext
  * 收藏、追更按钮直接调 core 的 Api（走签名服务）。
  */
 @Composable
-fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPlay: (Int) -> Unit, onOpenSeason: (String) -> Unit = {}, onCreator: (String) -> Unit = {}) {
+fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPlay: (Int, Long) -> Unit, onOpenSeason: (String) -> Unit = {}, onCreator: (String) -> Unit = {}) {
     var detail by remember(seriesId) { mutableStateOf<SeriesDetail?>(null) }
     var loadDone by remember(seriesId) { mutableStateOf(false) }
     var reviews by remember { mutableStateOf<ReviewPage?>(null) }
@@ -99,6 +99,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
     var message by remember { mutableStateOf<String?>(null) }
     /** 銆岀户缁湅銆嶇殑闆嗗彿锛氫簯绔巻鍙?> 鏈湴杩涘害 > 1锛堟棫鐗?resolveResumeEntry 鍚岃涔夛級 */
     var continueIndex by remember { mutableStateOf(1) }
+    var continueMs by remember { mutableStateOf(0L) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(seriesId) {
@@ -119,14 +120,26 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                 }
             }
             launch {
-                // 云端历史推「继续看」：同一部剧取最新一条的集号（>3 秒才续播）
+                // 「继续看」= 云端历史 与 本机历史 取更靠后那条（集号大者优先，同集取秒数大者），>3 秒才算
                 val hist = withContext(Dispatchers.IO) {
                     runCatching { Api.officialHistory(2) }.getOrDefault(emptyList())
                 }
                 val mine = hist.firstOrNull { it.optString("seriesId") == seriesId }
                 val cloudEp = mine?.optInt("episode", 0) ?: 0
                 val cloudPos = mine?.optLong("positionMs", 0L) ?: 0L
-                continueIndex = if (cloudEp > 1 && cloudPos > 3_000) cloudEp else 1
+                // 本机历史：登录/云端无记录时也能续播（以前只用云端，未登录永远从第1集开始）
+                val localRow = runCatching {
+                    PcStore.history().firstOrNull { it.optString("seriesId") == seriesId }
+                }.getOrNull()
+                val localEp = localRow?.optInt("episode", 0) ?: 0
+                val localPos = localRow?.optLong("positionMs", 0L) ?: 0L
+                val cloudValid = cloudEp > 1 && cloudPos > 3_000
+                val useCloud = cloudValid && (cloudEp > localEp || (cloudEp == localEp && cloudPos > localPos))
+                val bestEp = if (useCloud) cloudEp else localEp
+                val bestPos = if (useCloud) cloudPos else localPos
+                val ok = bestEp > 1 || (bestEp == 1 && bestPos > 3_000)
+                continueIndex = if (ok) bestEp else 1
+                continueMs = if (ok) bestPos else 0L
             }
             launch {
                 reviews = withContext(Dispatchers.IO) { runCatching { Api.reviews(seriesId, 20) }.getOrNull() }
@@ -309,7 +322,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                             PrimaryButton(
                                 if (continueIndex > 1) "继续看第 $continueIndex 集" else "从第 1 集开始",
                                 Icons.Filled.PlayArrow,
-                            ) { onPlay(continueIndex) }
+                            ) { onPlay(continueIndex, continueMs) }
                             SecondaryButton(if (fav) "已收藏" else "收藏", icon = if (fav) Icons.Filled.Star else Icons.Filled.StarBorder, iconTint = if (fav) Palette.star else Palette.dim) {
                                 val target = !fav
                                 scope.launch(Dispatchers.IO) {
@@ -405,7 +418,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
             Spacer(Modifier.height(14.dp))
 
             when (tab) {
-                0 -> EpisodeGrid(d?.episodes.orEmpty(), continueIndex) { ep -> onPlay(ep) }
+                0 -> EpisodeGrid(d?.episodes.orEmpty(), continueIndex) { ep -> onPlay(ep, 0L) }
                 1 -> ReviewsBlock(reviews, seriesId)
                 else -> RelatedBlock(related, loading = !relatedLoaded, onOpenSeries = onOpenSeason)
             }

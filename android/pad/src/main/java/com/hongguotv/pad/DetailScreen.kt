@@ -874,9 +874,8 @@ private fun MetaChip(
  *  原来 TV 是纯数字一行 17 个（原版口径），信息只有序号，与 PC 差异明显。 */
 @Composable
 private fun EpisodeGrid(episodes: List<Episode>, activeIndex: Int, onPick: (Int) -> Unit) {
-    // 500 多集一次性组合会明显卡一下：先只排前 60 集，其余点「展开全部」再排
-    var expanded by remember { mutableStateOf(false) }
-    val shown = if (expanded) episodes.size else minOf(episodes.size, 60)
+    // 500 多集一次性组合会明显卡一下：分批渲染，每次「展开更多」只多排 120 集，避免瞬间卡死
+    var shown by remember(episodes.size) { mutableStateOf(minOf(episodes.size, 60)) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         episodes.indices.take(shown).chunked(5).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -925,15 +924,15 @@ private fun EpisodeGrid(episodes: List<Episode>, activeIndex: Int, onPick: (Int)
                 repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
-        if (!expanded && episodes.size > shown) {
+        if (shown < episodes.size) {
             Box(
                 Modifier.fillMaxWidth().height(44.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(PanelHi)
-                    .clickable { expanded = true },
+                    .clickable { shown = minOf(episodes.size, shown + 120) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text("展开全部（${episodes.size} 集）", color = TextDim, fontSize = 14.sp)
+                Text("展开更多（还有 ${episodes.size - shown} 集）", color = TextDim, fontSize = 14.sp)
             }
         }
     }

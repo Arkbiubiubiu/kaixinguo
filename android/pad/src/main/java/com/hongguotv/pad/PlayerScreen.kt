@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import android.util.Log
 import androidx.compose.foundation.background
@@ -810,20 +810,9 @@ fun PlayerScreen(
             Log.e("Playback", "unsupported codec vid=$badVid series=$seriesId title=$title ep=$index")
         } catch (e: Exception) {
             val msg = e.message ?: "起播失败"
-            // 刷剧：取流服务偶发失败（隧道抖动/上游 502）不要停在这一部上，
-            // 自动跳到下一部；连续失败 3 次才认为真的没网，停下来给提示。
-            if (feed && msg.contains("取流") && onFeedStep != null && UiMemo.feedFailStreak < 2) {
-                UiMemo.feedFailStreak += 1
-                ps.failed = null
-                runCatching {
-                    android.widget.Toast.makeText(
-                        context, "取流失败，已跳到下一部", android.widget.Toast.LENGTH_SHORT,
-                    ).show()
-                }
-                onFeedStep.invoke(1)
-            } else {
-                ps.failed = msg
-            }
+            // 刷剧取流失败不再静默连跳下一部（用户分不清是坏片还是断网）；
+            // 停在当前集，给失败提示 + 重试（遥控器「确定」= 重试，见 tvKeys）
+            ps.failed = msg
             ps.preparing = false
         } finally {
             // 被下一集打断（或起播失败）时，本协程自己建的资源在这里关掉
@@ -1295,22 +1284,26 @@ fun PlayerScreen(
             else -> { onBack(); true }
         }
         Key.DirectionCenter, Key.Enter, Key.Spacebar ->
-            if (chromeFocused) false else {
+            // 起播失败时，遥控器「确定」= 重试（以前失败只能退出重进）
+            if (ps.failed != null) { ps.attempt++; true }
+            else if (chromeFocused) false else {
                 if (player.isPlaying) player.pause() else player.play()
                 mark()
                 true
             }
         Key.DirectionLeft ->
-            if (chromeFocused) false else { seekByKey(-1); true }
+            if (ps.failed != null) true else if (chromeFocused) false else { seekByKey(-1); true }
         Key.DirectionRight ->
-            if (chromeFocused) false else { seekByKey(1); true }
+            if (ps.failed != null) true else if (chromeFocused) false else { seekByKey(1); true }
         Key.DirectionDown ->
-            if (ui.menu != PlayerMenu.None) false
+            if (ps.failed != null) true
+            else if (ui.menu != PlayerMenu.None) false
             // 已经在按钮行：吃掉，别把焦点甩出控制台（甩出去就变成快进了，看着像坏了）
             else if (chromeFocused) true
             else { enterChrome(); true }
         Key.DirectionUp ->
-            if (ui.menu != PlayerMenu.None) false
+            if (ps.failed != null) true
+            else if (ui.menu != PlayerMenu.None) false
             else if (chromeFocused) { leaveChrome(); true }
             else if (!ui.controlsVisible) { ui.controlsVisible = true; mark(); true }
             else false

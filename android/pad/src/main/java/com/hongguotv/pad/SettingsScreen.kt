@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -112,6 +112,7 @@ fun SettingsScreen() {
         PageHeader(title = "设置")
         LazyColumn(
             Modifier.fillMaxSize(),
+            state = UiMemo.settingsList,
             contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
