@@ -1,8 +1,13 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -36,6 +41,14 @@ class MainActivity : ComponentActivity() {
         var deepEp: Int = 0
     }
 
+    /**
+     * Android 13+ 运行期通知权限。允许/拒绝都只影响「追更通知能不能弹」，
+     * 绝不拦任何主流程（拒绝后其余功能照常）。字段初始化时必须注册，早于 onCreate。
+     */
+    private val notifPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 忽略结果：拒绝也不崩、不拦主流程 */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (BuildConfig.DEBUG) {
@@ -60,6 +73,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         Store.init(this)
+        // 追更系统通知：建通知渠道 + 调度周期检查（KEEP 去重），Android13+ 顺带请求通知权限
+        runCatching { FollowNotify.ensureChannel(this) }
+        runCatching { FollowNotifyWorker.schedule(this) }
+        runCatching { window?.decorView?.post { requestNotifPermissionIfNeeded() } }
         // 启动后后台自动清缓存（VVC 超过 7 天 / 总量超 800MB），不阻塞冷启动
         Thread { runCatching { Store.autoCleanCache(this) } }
             .apply { isDaemon = true; name = "cache-clean" }.start()
@@ -96,6 +113,15 @@ class MainActivity : ComponentActivity() {
                 LaunchScreen()
             }
         }
+    }
+
+    /** Android 13+ 首次运行请求通知权限；拒绝也不崩、不拦主流程。 */
+    private fun requestNotifPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) runCatching { notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
     }
 
     override fun onStart() {

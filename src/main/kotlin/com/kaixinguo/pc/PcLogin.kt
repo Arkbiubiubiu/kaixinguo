@@ -52,15 +52,15 @@ object PcLogin {
         "ac" to "wifi",
         "aid" to "8662",
         "app_name" to "novelread",
-        "cdid" to "a694f0f8-266a-421a-bef3-ee760b049478",
+        "cdid" to "",            // 由 PcStore.loginIdentity() 注入（本机唯一身份）
         "channel" to "xiaomi_8662_64",
         "device_brand" to "xiaomi",
-        "device_id" to "23562609503024",
+        "device_id" to "",       // 由 PcStore.loginIdentity() 注入（本机唯一身份）
         "device_platform" to "android",
         "device_type" to "23127PN0CC",
         "dpi" to "460",
         "host_abi" to "arm64-v8a",
-        "iid" to "23562609507120",
+        "iid" to "",             // 由 PcStore.loginIdentity() 注入（本机唯一身份）
         "language" to "zh",
         "manifest_version_code" to "74232",
         "os" to "android",
@@ -297,8 +297,18 @@ object PcLogin {
 
     // ---------------- 内部 ----------------
 
-    private fun devicePairs(): List<Pair<String, String>> =
-        listOf("_rticket" to System.currentTimeMillis().toString()) + DEVICE.map { it.key to it.value }
+    private fun devicePairs(): List<Pair<String, String>> {
+        // 本机唯一设备身份（device_id / iid / cdid）从 PcStore 读取，不再写死常量。
+        // PcStore.loginIdentity() 首次会生成并持久化；默认回退公共档案值以免签名身份不一致。
+        val (deviceId, iid, cdid) = PcStore.loginIdentity()
+        val base = DEVICE.toMutableMap().apply {
+            put("device_id", deviceId)
+            put("iid", iid)
+            put("cdid", cdid)
+        }
+        return listOf("_rticket" to System.currentTimeMillis().toString()) +
+            base.map { it.key to it.value }
+    }
 
     private fun sdkQuery(withRom: Boolean): JSONArray {
         val q = JSONArray()

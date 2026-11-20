@@ -1,4 +1,4 @@
-﻿package com.kaixinguo.pc
+package com.kaixinguo.pc
 
 import androidx.compose.runtime.mutableStateOf
 import com.hongguotv.pad.AccountState
@@ -143,6 +143,58 @@ object PcStore : AccountState {
     var deviceCdid: String
         get() = str("device_cdid", "")
         set(v) = put("device_cdid", v.trim())
+
+    // ---------------- 登录用「本机唯一设备身份」（替代 PcLogin 里写死的安卓指纹） ----------------
+    //
+    // 首次使用自动生成并持久化到 prefs（login_device_id / login_iid / login_cdid），
+    // 格式贴近安卓指纹：device_id、iid 为 14 位数字，cdid 为 UUID；之后每台 PC 各用各的。
+    //
+    // ⚠️ 兼容/安全说明：passport 请求体里的 device_id/iid/cdid 必须和「签名设备」一致——
+    // 本地签名用 shared/LocalSign 的 PROFILE_JSON（其中 device_token 与固定 device_id 绑定），
+    // 远程签名服务用它自己的 device.json；两边不一致时上游会判伪造，发码回 1003「手机号错误」。
+    // 所以在签名侧支持「按本机身份」之前，这里默认回退到原公共档案的三项值（不改动线上行为）；
+    // 需要真正启用时把 prefs 里 login_unique_device 置 1（并同步签名侧）即可，无需重编。
+    private const val FALLBACK_LOGIN_DEVICE_ID = "23562609503024"
+    private const val FALLBACK_LOGIN_IID = "23562609507120"
+    private const val FALLBACK_LOGIN_CDID = "a694f0f8-266a-421a-bef3-ee760b049478"
+
+    /** 是否把本机唯一身份用于登录请求（默认关闭=沿用公共档案，避免签名身份不一致导致 1003）。 */
+    private val uniqueLoginDevice: Boolean get() = str("login_unique_device", "0") == "1"
+
+    @Volatile
+    private var localLoginIdentity: Triple<String, String, String>? = null
+
+    /** 取本机登录设备身份（首次访问会生成并持久化）；开关关闭时回退到公共档案值。 */
+    fun loginIdentity(): Triple<String, String, String> {
+        val own = ensureLocalLoginIdentity()
+        return if (uniqueLoginDevice) own
+        else Triple(FALLBACK_LOGIN_DEVICE_ID, FALLBACK_LOGIN_IID, FALLBACK_LOGIN_CDID)
+    }
+
+    /** 生成本机唯一身份并持久化（已有则直接复用）；返回 (device_id, iid, cdid)。 */
+    @Synchronized
+    private fun ensureLocalLoginIdentity(): Triple<String, String, String> {
+        localLoginIdentity?.let { return it }
+        val rnd = java.security.SecureRandom()
+        fun digits14(): String = buildString(14) {
+            append(1 + rnd.nextInt(9))          // 首位 1-9，避免前导零
+            repeat(13) { append(rnd.nextInt(10)) }
+        }
+        val uuidRe = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+        var did = str("login_device_id", "")
+        var iid = str("login_iid", "")
+        var cdid = str("login_cdid", "")
+        if (did.length != 14 || !did.all { it.isDigit() }) did = digits14()
+        if (iid.length != 14 || !iid.all { it.isDigit() }) iid = digits14()
+        if (!uuidRe.matches(cdid)) cdid = java.util.UUID.randomUUID().toString()
+        if (str("login_device_id") != did || str("login_iid") != iid || str("login_cdid") != cdid) {
+            props.setProperty("login_device_id", did)
+            props.setProperty("login_iid", iid)
+            props.setProperty("login_cdid", cdid)
+            save()
+        }
+        return Triple(did, iid, cdid).also { localLoginIdentity = it }
+    }
 
     /** 服务配置是否填齐（首次启动引导用） */
     val configured: Boolean get() = signUrl.isNotBlank()

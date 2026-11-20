@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文(HTTP)流量控制：
+  - 默认：只允许 HTTPS（系统信任链，不再全局放开明文）。
+  - 例外：本机播放代理(127.0.0.1 / localhost) 和局域网服务器 192.168.1.54 允许明文。
+  HTTPS 不受影响。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">192.168.1.54</domain>
+    </domain-config>
+</network-security-config>
