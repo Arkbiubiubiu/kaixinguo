@@ -60,9 +60,10 @@ object FeedPreload {
                 ids.forEachIndexed { index, id ->
                     if (!isActive) return@launch
                     if (synchronized(lock) { ready.containsKey(id) || id in dead }) return@forEachIndexed
-                    // 后 5 部全部做「完整预载」：档位 + 解密头部，切过去直接接管。
-                    // 用户明确要求刷剧换剧无缝，不能只拉详情。
-                    runCatching { build(id) }
+                    // 稳定口径：只有紧跟的 2 部做完整预载（档位+解密头部），
+                    // 其余 3 部只拉详情。5 部全量预取会跟正在播的那一路抢带宽，
+                    // 导致播放卡顿/快进变慢（2026-11-21 实测回退）。
+                    runCatching { if (index < 2) build(id) else { Api.ensureDetail(id) } }
                     delay(900)
                 }
             }

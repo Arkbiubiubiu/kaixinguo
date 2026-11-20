@@ -205,22 +205,8 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         if (feedCursor?.hasMore == true && cursor >= cards.size - 4) loadMore()
     }
 
-    // 刷剧预载：后面 5 部的第一集，直接把档位+解密头部+本地代理备好，
-    // 切过去由 PlayerScreen 的 take(vid) 接管（和连播切集同一套无缝交接）
-    LaunchedEffect(tab, cards, cursor) {
-        val targets = cards.drop(cursor + 1).take(5)
-        if (targets.isEmpty()) return@LaunchedEffect
-        delay(1_500)
-        targets.forEach { card ->
-            if (card.seriesId.isEmpty()) return@forEach
-            val d = withContext(Dispatchers.IO) {
-                runCatching { Api.ensureDetail(card.seriesId) }.getOrNull()
-            } ?: return@forEach
-            val vid = d.episodes.firstOrNull()?.vid ?: return@forEach
-            runCatching { PlaybackPrefetch.warmFeed(vid, PcStore.maxHeight) }
-            delay(700)
-        }
-    }
+    // 刷剧预载：PC 端不做全量视频预取（会和正在播的那一路抢带宽），
+    // 只保留前面的「下一页提前加载」；切剧仍按正常流程取流。
 
     val current = cards.getOrNull(cursor)
     when {

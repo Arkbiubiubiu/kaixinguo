@@ -74,7 +74,9 @@ object DetailCache {
                         // 用数组下标兜底只在顺序严格按集数时才正确
                         index = o.optInt("vid_index", o.optInt("episode", i + 1)),
                         title = o.optString("title"),
-                        duration = o.optInt("duration", 0),
+                        // 上游偶尔把「毫秒」塞进 duration（例如 49049 = 49 秒），
+                        // 电视上就显示成 13:37:29。短剧没有超过 2 小时的集，按阈值归一。
+                        duration = o.optInt("duration", 0).let { d -> if (d > 7200) d / 1000 else d },
                         cover = o.optString("cover"),
                         userDigg = o.optBoolean("user_digg", false),
                     ),

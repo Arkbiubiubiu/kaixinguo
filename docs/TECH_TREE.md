@@ -417,7 +417,7 @@ flowchart LR
     - 上游真实 tab：`36`=漫剧、`39`=真人剧、`16`=推荐；旧 `3/4/2` 全部回推荐（2026-11-17 实测）。三端默认 `36` 漫剧；PC/安卓 UI 顺序漫剧/真人剧/推荐，TV 按极简设计不显示 tab。
     - 用户要求“每次进入刷剧必须现拉”：从菜单/切 tab 进入一律 loading、清空旧列表并 `Api.firstPage(..., refresh=true)`；服务端 `refresh=true` 会让 relay 丢掉该 URL 的缓存、绕开 `tab/v` 15min / `cell/change` 5min。只有从详情/评论返回同一次刷剧会话才保留当前剧/位置（`feedReturnKeep`）。
     - 安卓 `FeedCache` 24h 仍只作启动预热/离线参考，不再作为刷剧首屏显示；首页/榜单的普通缓存逻辑不变。
-    - **刷剧预载（2026-11-21）**：当前窗口向后 5 部的**第一集真实视频流**都提前取好（档位+解密头部/代理，5 部全部，不再只有 2 部）；VVC 冷集当场排服务端转码 job，转完由后台补预取。进刷剧 1.2 秒后自动预拉下一页（15→30→…），接近列表尾继续续页，不再等切到第 16 部才加载。安卓 `FeedPreload`、PC `PlaybackPrefetch.warmFeed` 两端同口径。
+    - **刷剧预载（稳定口径，2026-11-21 回退）**：后 5 部都拉详情，**只给紧跟的 2 部做完整预载**（档位+解密头部），其余 3 部只详情；5 部全量预取会跟正在播的那一路抢带宽，导致播放卡顿/快进变慢，已回退。进刷剧 1.2 秒后自动预拉下一页（15→30→…），接近列表尾继续续页（这一条保留）。PC 不做刷剧视频预取。
     - TV 刷剧键位：↑/↓ 换剧、← 当前剧详情、→ 当前剧完整播放页（`Screen.Play(seriesId,1)`，普通播放器/完整选集）、确定暂停、返回退出；从完整播放页返回保留刷剧现场。
     - TV 普通播放：控制条显示时按一次返回直接收起控制条并把焦点还给全屏层；暂停状态也如此，不再出现“焦点消失、条还在、按键失灵、二次返回退出”（安卓 2.2.198）。
     - TV 普通播放：按下键弹出控制条时自动把焦点落到播放/暂停键；每次按 ↓ 用 `chromeFocusTick` 强制重试；按钮行/浮层容器初次 `onFocusChanged(false)` 不再清掉 `focusOnShow`（安卓 2.2.200）。
@@ -426,10 +426,11 @@ flowchart LR
     - VVC 集转码等待：主播放路径（PC `normalSource()` / 安卓起播 effect）拿到空档位且存在 `pendingJob` 时，等 job 最多 60s 再取一次档位，不再把 202「转码中」当取流失败（PC 1.2.88 / 安卓 2.2.203）。
     - 预取顺序约束：预取 N+1 失败时必须停止，不得继续把 N+2 挂进播放器队列；否则当前集播完 ExoPlayer 会直接播 N+2（用户看到“卡一下然后跳过一集”，2026-11-20 修，PC 1.2.88 / 安卓 2.2.203）。
     - **冷启动 HLS（安卓 2.2.204）**：没有 v4 缓存的 VVC 集第一次点开时，服务端先出 4 秒分片播放列表，几秒起播；后台转完整集写 v4，第二次起走整集 MP4。只有「冷启动的那一集」用 HLS，预取/下一集永远拿 MP4。
-    - 版本：PC 1.2.93 / 安卓 2.2.209（2026-11-21）。
+    - 集时长单位：上游偶尔把毫秒塞进 `duration`（49049 → 显示 13:37:29），`DetailCache` 统一按 >7200 视为毫秒并 /1000（2.2.210 / 1.2.94）。
+    - 版本：PC 1.2.94 / 安卓 2.2.210（2026-11-21）。
 
 13. **更新包统一走 GitHub Release 镜像**
-    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.93-2.2.209`，含 PC 1.2.93 / 安卓 & TV 2.2.209 的全部 ABI/通用包和清单。
+    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.94-2.2.210`，含 PC 1.2.94 / 安卓 & TV 2.2.210 的全部 ABI/通用包和清单。
     - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：固定 tag 的 `axisnow.gh-proxy.org/.../releases/download/<tag>` → `gh-proxy.org` → 樱花四条 → cpolar；tag 读 `/srv/hgtv-update/github-release-tag`。**不要用 `latest/download`：axisnow/CDN 会缓存旧内容**。
     - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 20MB 约 3 秒（7.29MB/s），樱花约 16 秒（1.25MB/s）。官网 `/get/<file>` 302 到同一固定 tag 镜像，不由服务器中转。
     - 以后发版必须同时上传 GitHub Release 资产，并更新 `/srv/hgtv-update/github-release-tag`；不要依赖 latest。

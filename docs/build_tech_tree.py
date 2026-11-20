@@ -36,7 +36,7 @@ N = [
     # L1 Android
     dict(id="A-SHELL", layer="L1", name="Android App / 导航", summary="初始化、路由栈、侧栏、返回、Pad/TV 适配。", files=["MainActivity.kt", "App.kt", "Screen.kt"]),
     dict(id="A-HOME", layer="L1", name="Android 首页", summary="三 tab、hero、卡片、继续看。", files=["HomeFeed.kt"]),
-    dict(id="A-FEED", layer="L1", name="Android 刷剧", summary="整屏连播、上下换剧；**后 5 部第一集完整预载（含 VVC 后台转码），进页即预拉下一页**。", files=["FeedScreen.kt", "FeedPreload.kt"]),
+    dict(id="A-FEED", layer="L1", name="Android 刷剧", summary="整屏连播、上下换剧；后 5 部详情、最近 2 部完整预载；进页即预拉下一页（视频全量预取已回退）。", files=["FeedScreen.kt", "FeedPreload.kt"]),
     dict(id="A-DETAIL", layer="L1", name="Android 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),
     dict(id="A-PLAYER", layer="L1", name="Android 播放页", summary="起播、队列、预取、无缝切集、看门狗、历史、进度上报。", files=["PlayerScreen.kt"]),
     dict(id="A-CHROME", layer="L1", name="Android 播放控制条", summary="进度条、播放/暂停、上下集、倍速、清晰度、选集、弹幕设置。", files=["PlayerChrome.kt"]),
@@ -72,7 +72,7 @@ N = [
     dict(id="X-AN-STORE", layer="L4", name="Android 本地库", summary="SharedPreferences：设置、账号、历史、书架、缓存清理。", files=["Store.kt", "ShelfStore.kt", "HistoryStore.kt", "hongguo_pad prefs"]),
     dict(id="X-AN-EXO", layer="L4", name="Android 播放引擎", summary="Media3 ExoPlayer 1.4.1 + 播放列表、硬解/软解、首帧、错误恢复。", files=["PlayerScreen.kt", "media3-exoplayer 1.4.1"]),
     dict(id="X-AN-GO", layer="L4", name="Android 本机取流", summary="gomobile Go 绑定，本机签名/取流兜底；LocalResolverProvider。", files=["DeviceResolver.kt", "libs/openhongguo.jar"]),
-    dict(id="X-AN-CACHE", layer="L4", name="Android 缓存/预载", summary="刷剧首屏磁盘缓存 24h；**后 5 部第一集真实流预载（FeedPreload / warmFeed）**。", files=["FeedCache.kt", "FeedPreload.kt"]),
+    dict(id="X-AN-CACHE", layer="L4", name="Android 缓存/预载", summary="刷剧首屏磁盘缓存 24h；后 5 部拉详情、最近 2 部完整预载（5 部全量会抢带宽，已回退）。", files=["FeedCache.kt", "FeedPreload.kt"]),
     dict(id="X-AN-UPD", layer="L4", name="Android 平台服务", summary="APK 清单/ABI 选择/下载/sha/安装、日志上传。", files=["Updater.kt", "LogUploader.kt", "UpdateProvider.kt"]),
     dict(id="X-BUILD", layer="L4", name="构建 / 签名 / 参数", summary="版本号、私有 -P 参数、flavor、ABI 拆分、MSI、签名。", files=["build.gradle.kts 两端", "android/release.sh"]),
 
