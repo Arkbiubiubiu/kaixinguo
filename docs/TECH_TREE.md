@@ -397,7 +397,7 @@ flowchart LR
    - **`bv2C` 不等于 AV1**：`MediaCrypto` 为兼容 ExoPlayer 把私有 `bvc2` 一律改写成 `av01`，但部分集的真实码流是 VVC，结果 ffmpeg 报 `No sequence header`、整集转码失败（2026-11-20 用户报「今生向阳而行 S3 第 2 集放不出」）。现在标签为 av1 时先做 1 秒解码试探，失败按 VVC 走 `extract_vvc.py`。
    - `R-ORO.resolve()` 先查 `/srv/hgtv-update/transcode`：已有该 vid 的 `*_v4.mp4`（>100KB）就直接返回，不再请求 v5/oracle；旧 `_v3` 只在转码失败时兜底。上游限流（`200+0` / `video_tab empty`，冷却 90s 全局）时，这一步保证已看过的集照常播。
    - 播放传输：`V-DUAL` 静态 Range 支持 keep-alive（2026-11-21 实测公网同连接 5×1MB≈0.8s/块）；此前每条 Range 重建 TLS，长片容易断粮「放到一半卡住」。
-   - **冷启动 HLS**：客户端请求带 `hls:true` 且该集没有 v4 缓存时，`R-ORO` 先拉 `R-LIVE` 分片转码并等首个分片（≤12s），把 `index.m3u8` 作为档位（`hls:true`）返回；安卓用 `HlsMediaSource` 直接播，几秒起播。同时 `do_live.py` 跑完合成 v4，后续播放自动走整集 MP4。HLS 档位只缓存 60 秒，预取/下一集永远不下发 HLS（`buildReady` 遇到 hls 返回 null）。PC 不发 `hls:true`，行为不变。
+   - **冷启动 HLS**：客户端请求带 `hls:true` 且该集没有 v4 缓存时，`R-ORO` 先拉 `R-LIVE` 分片转码并等首个分片（≤12s），把 `index.m3u8` 作为档位（`hls:true`）返回；安卓用 `HlsMediaSource` 直接播，几秒起播；PC 用 FFmpeg 内核直接读 m3u8（`PlaySource.Hls`，不建本地代理）。同时 `do_live.py` 跑完合成 v4，后续播放自动走整集 MP4。HLS 档位只缓存 60 秒，预取/下一集永远不下发 HLS（安卓 `buildReady` 遇 hls 返回 null；PC 预取不请求 HLS）。
    - 转码输出 `/transcode/<vid>_<h>_v4.mp4`，7 天/200 文件清理 + 磁盘剩 <8GB 自动删最旧；改输出命名/主机/证书会同时影响客户端缓存和旧 URL。
 
 9. **旧的 VVC 本地播放器已删除**
@@ -425,10 +425,10 @@ flowchart LR
     - VVC 集转码等待：主播放路径（PC `normalSource()` / 安卓起播 effect）拿到空档位且存在 `pendingJob` 时，等 job 最多 60s 再取一次档位，不再把 202「转码中」当取流失败（PC 1.2.88 / 安卓 2.2.203）。
     - 预取顺序约束：预取 N+1 失败时必须停止，不得继续把 N+2 挂进播放器队列；否则当前集播完 ExoPlayer 会直接播 N+2（用户看到“卡一下然后跳过一集”，2026-11-20 修，PC 1.2.88 / 安卓 2.2.203）。
     - **冷启动 HLS（安卓 2.2.204）**：没有 v4 缓存的 VVC 集第一次点开时，服务端先出 4 秒分片播放列表，几秒起播；后台转完整集写 v4，第二次起走整集 MP4。只有「冷启动的那一集」用 HLS，预取/下一集永远拿 MP4。
-    - 版本：PC 1.2.88 / 安卓 2.2.204（2026-11-21）。
+    - 版本：PC 1.2.89 / 安卓 2.2.204（2026-11-21）。
 
 13. **更新包统一走 GitHub Release 镜像**
-    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.88-2.2.204`，含 PC 1.2.88 / 安卓 & TV 2.2.204 的全部 ABI/通用包和清单。
+    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.89-2.2.204`，含 PC 1.2.89 / 安卓 & TV 2.2.204 的全部 ABI/通用包和清单。
     - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：固定 tag 的 `axisnow.gh-proxy.org/.../releases/download/<tag>` → `gh-proxy.org` → 樱花四条 → cpolar；tag 读 `/srv/hgtv-update/github-release-tag`。**不要用 `latest/download`：axisnow/CDN 会缓存旧内容**。
     - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 20MB 约 3 秒（7.29MB/s），樱花约 16 秒（1.25MB/s）。官网 `/get/<file>` 302 到同一固定 tag 镜像，不由服务器中转。
     - 以后发版必须同时上传 GitHub Release 资产，并更新 `/srv/hgtv-update/github-release-tag`；不要依赖 latest。
