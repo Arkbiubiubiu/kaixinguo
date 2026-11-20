@@ -169,11 +169,11 @@
 | ID | 节点 | 关键位置 | 职责 | 上游 | 下游 |
 |---|---|---|---|---|---|
 | `R-STREAM` | 签名取流服务 | `/opt/research/streamsrv`，9110，Go | `/play` 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；`/transcode` 代理 job 查询 | `V-PLAYINFO` | `R-ORO`, `R-SIGN`, `U-PLAY` |
-| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **v5 优先**：先调 `R-V5`，失败/空/超时回 `R-ORACLE`；`bytevc1`（HEVC）直接透传；VVC/AV1 先取 `fallback_api` 兼容档（1080P HEVC/H.265），最后才转码；返回前强制过滤 `bytevc2`；旧 video_tab 仅诊断兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-V5`, `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
+| `R-ORO` | 真签名解析 | `/opt/research/oroplay.js`，9118，Node | **v5 优先**：先调 `R-V5`，失败/空/超时回 `R-ORACLE`；`bytevc1`（HEVC）直接透传；VVC/AV1 先取 `fallback_api` 兼容档（1080P HEVC/H.265），最后才转码；**命中已转码文件时直接返回 `/transcode/<vid>_<h>_v3.mp4`，不再打上游**（上游限流时已看过的集照常播，2026-11-20）；返回前强制过滤 `bytevc2`；旧 video_tab 仅诊断兜底；异步转码 job（30min/200 条，可轮询） | `R-STREAM` | `R-V5`, `R-ORACLE`, `R-SIGN`, `R-TRANSCODE`, `U-PLAY`, `U-CDN` |
 | `R-V5` | v5 纯 HTTP 签名 | `/opt/research/v5/v5resolver.js`，127.0.0.1:9119；`playback-v5-sign.js`、`mobile-playback-v5.js` 等 | 匿名设备注册 + Android `v04.10.03` v5 签名 + gzip mobile 模型；VVC/AV1 集调 `fallback_api` 的 `codec_type=3/1` 取 1080P HEVC/H.265；单设备、1.2s 间隔、空响应 90s 冷却 | `R-ORO` | `U-PLAY` |
 | `R-ORACLE` | Android 官方 App oracle | `/opt/research/oracle_parent.py` + `resolve_one.py` + `oracle_resolver.js`，9120；redroid Android 13 容器 + 官方红果 App + Frida | oroplay 的**兜底**：v5 失败/空/超时时按 vid 让官方 App 用自己的签名/TTNet 取模型，返回 1080p/720p 等全部档位；容器/systemd 开机自启 | `R-ORO` | `U-PLAY`, `U-CDN` |
 | `R-SIGN` | 签名/设备池 | 9100/9101/9099，`playback-sign.js`, `playback-device.js`, `sign-server.jar` | 上游签名、设备身份注册/轮换、Argus/Ladon | `C-API`, `V-RELAY`, `R-ORO` | `U-PASSPORT`/上游 |
-| `R-TRANSCODE` | VVC/AV1 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；VAAPI 优先、x264 兜底；输出必须 ffprobe 有视频轨，否则删除报错，绝不返回音频-only | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
+| `R-TRANSCODE` | VVC/AV1 转码 | `/opt/research/transcode/do_transcode.py`, `extract_vvc.py`, `DecryptMp4.java` | 下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；VAAPI 优先、x264 兜底；**容器标 `av01` 但 1 秒解码失败时按 VVC 重新抽取**（`bv2C` 私有封装里实际是 VVC 的集会被 MediaCrypto 误写成 av01，2026-11-20 修）；输出必须 ffprobe 有视频轨，否则删除报错，绝不返回音频-only | `R-ORO` | `C-MEDIA`（Java 副本）, 本机 ffmpeg, `V-STATIC` |
 | `U-CONTENT` | 番茄内容接口 | `api5-normal-lq.fqnovel.com` 等 | 首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员 | `C-API`, `V-RELAY` | — |
 | `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO`, `R-V5` | — |
 | `U-CDN` | 视频/图片 CDN | 字节 CDN | 加密 MP4、封面、头像 | `C-PROXY`, 转码下载 | — |
@@ -392,6 +392,8 @@ flowchart LR
 8. **转码是重资源路径**
    - `R-ORO` 转码队列：当前播放优先（最多 2 个），预取最多占 1 个，预取不会堵住当前集；`bytevc1`（HEVC）不转码；VVC/AV1 先走 `R-V5` 的 `fallback_api codec_type=3/1`，只有兼容档也没有才转码。
    - `do_transcode.py` 优先 `h264_vaapi`（RYZEN 5400U 核显，182 秒 1080 实测约 21 秒；原 x264 veryfast 约 72 秒），失败自动回退 x264 ultrafast；H.264/HEVC/AV1 直接解 `dec.mp4`，AV1 裸流会音频-only；输出必须有视频轨，否则删除报错。
+   - **`bv2C` 不等于 AV1**：`MediaCrypto` 为兼容 ExoPlayer 把私有 `bvc2` 一律改写成 `av01`，但部分集的真实码流是 VVC，结果 ffmpeg 报 `No sequence header`、整集转码失败（2026-11-20 用户报「今生向阳而行 S3 第 2 集放不出」）。现在标签为 av1 时先做 1 秒解码试探，失败按 VVC 走 `extract_vvc.py`。
+   - `R-ORO.resolve()` 先查 `/srv/hgtv-update/transcode`：已有该 vid 的 `*_v3.mp4`（>100KB）就直接返回，不再请求 v5/oracle。上游限流（`200+0` / `video_tab empty`，冷却 90s 全局）时，这一步保证已看过的集照常播。
    - 转码输出 `/transcode/<vid>_<h>_v3.mp4`，7 天/200 文件清理；改输出命名/主机/证书会同时影响客户端缓存和旧 URL。
 
 9. **旧的 VVC 本地播放器已删除**
