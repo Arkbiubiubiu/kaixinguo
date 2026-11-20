@@ -473,7 +473,10 @@ fun PlayerScreen(
 
         val src = withContext(Dispatchers.IO) {
             fun normalSource(): PlaySource {
-                var list = runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = true) }.getOrDefault(emptyList())
+                // PC 的 FFmpeg 内核是「视频/音频两个 ffmpeg 进程」，读还在增长的直播 HLS
+                // 会各自追播放列表，实测卡成幻灯片。PC 不做冷启动 HLS，仍按整集等待
+                // （安卓 ExoPlayer 单进程处理直播 HLS 正常，保留边转边播）。
+                var list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
                 // 全 VVC 集要先等服务端转码：以前这里直接往下 play()，
                 // 202 转码中会被当成取流失败。等 job 完成再取一次档位。
                 if (list.isEmpty()) {
@@ -483,7 +486,7 @@ fun PlayerScreen(
                         PlaybackApi.clearPendingJob(ep.vid)
                         if (done) {
                             list = runCatching {
-                                PlaybackApi.tiers(ep.vid, priority = true, allowHls = true)
+                                PlaybackApi.tiers(ep.vid, priority = true)
                             }.getOrDefault(emptyList())
                         }
                     }
@@ -493,7 +496,7 @@ fun PlayerScreen(
                 else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
                     ?: list.maxByOrNull { it.height }
                 val info = picked?.toPlayInfo()
-                    ?: PlaybackApi.play(ep.vid, 1004, PcStore.maxHeight, allowHls = true)
+                    ?: PlaybackApi.play(ep.vid, 1004, PcStore.maxHeight)
                 // 冷启动 VVC：服务端边转边出 HLS，FFmpeg 内核直接读 m3u8，不建本地代理
                 if (info.hls && info.url.contains(".m3u8")) return PlaySource.Hls(info)
                 val rv = RemoteVideo(info)
