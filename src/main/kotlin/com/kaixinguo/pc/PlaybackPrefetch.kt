@@ -53,10 +53,15 @@ object PlaybackPrefetch {
 
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>()
+    /** 刷剧预载的集：连播预取的 retain 不能把它们清掉，直到 take/clear */
+    private val feedKeeps = java.util.LinkedHashSet<String>()
 
     /** 取出一集（取出即出池）。过期条目就地释放并返回 null。 */
     fun take(vid: String): Entry? {
-        val e = synchronized(lock) { entries.remove(vid) } ?: return null
+        val e = synchronized(lock) {
+            feedKeeps.remove(vid)
+            entries.remove(vid)
+        } ?: return null
         if (System.currentTimeMillis() - e.at > MAX_AGE_MS) {
             e.release()
             return null
@@ -64,14 +69,14 @@ object PlaybackPrefetch {
         return e
     }
 
-    /** 只保留 [keep] 里的集，其余释放。 */
+    /** 只保留 [keep] 里的集，其余释放；刷剧预载的集不受影响。 */
     fun retain(keep: Set<String>) {
         val dropped = ArrayList<Entry>()
         synchronized(lock) {
             val it = entries.entries.iterator()
             while (it.hasNext()) {
                 val (vid, e) = it.next()
-                if (vid !in keep) {
+                if (vid !in keep && vid !in feedKeeps) {
                     it.remove()
                     dropped += e
                 }
@@ -80,9 +85,48 @@ object PlaybackPrefetch {
         dropped.forEach { it.release() }
     }
 
+    /**
+     * 刷剧预载：下一部剧的第一集提前把「档位 + 头部/代理」都准备好。
+     * 切剧时 PlayerScreen 用 take(vid) 直接接管，和连播切集同一套交接逻辑。
+     */
+    suspend fun warmFeed(vid: String, maxHeight: Int): Boolean {
+        if (vid.isEmpty()) return false
+        // 刷剧池最多留 6 部（当前 + 后 5）：用户连换几部时别把旧代理攒满内存
+        val dropped = ArrayList<Entry>()
+        synchronized(lock) {
+            feedKeeps.remove(vid)
+            feedKeeps.add(vid)
+            while (feedKeeps.size > 6) {
+                val old = feedKeeps.first()
+                feedKeeps.remove(old)
+                entries.remove(old)?.let { dropped += it }
+            }
+        }
+        dropped.forEach { it.release() }
+        val existing = synchronized(lock) { entries[vid] }
+        if (existing != null && existing.headDone) return true
+        val entry = withContext(Dispatchers.IO) { build(vid, maxHeight, prepareHead = true) }
+        if (entry == null) {
+            synchronized(lock) { feedKeeps.remove(vid) }
+            return false
+        }
+        return synchronized(lock) {
+            if (entries.containsKey(entry.vid)) {
+                entry.release()
+                true
+            } else {
+                entries[entry.vid] = entry
+                true
+            }
+        }
+    }
+
     /** 离开播放页：全部释放。 */
     fun clear() {
-        val all = synchronized(lock) { entries.values.toList().also { entries.clear() } }
+        val all = synchronized(lock) {
+            feedKeeps.clear()
+            entries.values.toList().also { entries.clear() }
+        }
         all.forEach { it.release() }
     }
 

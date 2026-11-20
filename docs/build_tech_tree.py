@@ -29,14 +29,14 @@ N = [
     dict(id="P-LIBRARY", layer="L1", name="PC 追更/预约/我的", summary="追更提醒、预约、收藏/点赞入口、账号同步码。", files=["LibraryScreens.kt: FollowsPage/ReservePage/MinePage"]),
     dict(id="P-DETAIL", layer="L1", name="PC 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),
     dict(id="P-PLAYER", layer="L1", name="PC 播放器", summary="起播、切集、清晰度、倍速、队列、预取、看门狗、历史、弹幕、评论。", files=["Player.kt"]),
-    dict(id="P-FEED", layer="L1", name="PC 刷剧", summary="整屏连播、换剧、预览不记历史。", files=["FeedPlayerScreen.kt: FeedPlayerPage", "Player.kt: embedded"]),
+    dict(id="P-FEED", layer="L1", name="PC 刷剧", summary="整屏连播、换剧、预览不记历史；**后 5 部第一集真实流预取（warmFeed），进页即预拉下一页**。", files=["FeedPlayerScreen.kt: FeedPlayerPage", "Player.kt: embedded"]),
     dict(id="P-LOGIN", layer="L1", name="PC 登录/配对", summary="短信 MFA、账号 cookies、匹配码同步。", files=["PcLogin.kt", "PcLoginScreen.kt"]),
     dict(id="P-DONATE", layer="L1", name="PC 打赏浮层", summary="展示打赏码，不接支付 SDK。", files=["Donate.kt"]),
 
     # L1 Android
     dict(id="A-SHELL", layer="L1", name="Android App / 导航", summary="初始化、路由栈、侧栏、返回、Pad/TV 适配。", files=["MainActivity.kt", "App.kt", "Screen.kt"]),
     dict(id="A-HOME", layer="L1", name="Android 首页", summary="三 tab、hero、卡片、继续看。", files=["HomeFeed.kt"]),
-    dict(id="A-FEED", layer="L1", name="Android 刷剧", summary="整屏连播、上下换剧、预载 5 部。", files=["FeedScreen.kt", "FeedPreload.kt"]),
+    dict(id="A-FEED", layer="L1", name="Android 刷剧", summary="整屏连播、上下换剧；**后 5 部第一集完整预载（含 VVC 后台转码），进页即预拉下一页**。", files=["FeedScreen.kt", "FeedPreload.kt"]),
     dict(id="A-DETAIL", layer="L1", name="Android 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),
     dict(id="A-PLAYER", layer="L1", name="Android 播放页", summary="起播、队列、预取、无缝切集、看门狗、历史、进度上报。", files=["PlayerScreen.kt"]),
     dict(id="A-CHROME", layer="L1", name="Android 播放控制条", summary="进度条、播放/暂停、上下集、倍速、清晰度、选集、弹幕设置。", files=["PlayerChrome.kt"]),
@@ -67,12 +67,12 @@ N = [
     # L4 platform
     dict(id="X-PC-STORE", layer="L4", name="PC 本地库", summary="设置、账号、历史、收藏/点赞/追更/预约、缓存统计。", files=["PcStore.kt", "PcHistoryStore.kt", "PcNoticeStore.kt", "%APPDATA%/KaixinguoPC"]),
     dict(id="X-PC-ENGINE", layer="L4", name="PC 播放引擎", summary="启动/控制 ffmpeg 进程、探测、seek、音量、倍速、暂停。", files=["VideoEngine.kt"]),
-    dict(id="X-PC-PREFETCH", layer="L4", name="PC 预取", summary="预热下一集直链/头部/代理，最多按设置 N 集。", files=["PlaybackPrefetch.kt"]),
+    dict(id="X-PC-PREFETCH", layer="L4", name="PC 预取", summary="预热下一集直链/头部/代理，最多按设置 N 集；**刷剧 warmFeed 预载其他剧第一集**。", files=["PlaybackPrefetch.kt"]),
     dict(id="X-PC-UPD", layer="L4", name="PC 平台服务", summary="MSI 更新、日志上传、ffmpeg 路径解析。", files=["Updater.kt", "ClientLog.kt", "Resolver.kt"]),
     dict(id="X-AN-STORE", layer="L4", name="Android 本地库", summary="SharedPreferences：设置、账号、历史、书架、缓存清理。", files=["Store.kt", "ShelfStore.kt", "HistoryStore.kt", "hongguo_pad prefs"]),
     dict(id="X-AN-EXO", layer="L4", name="Android 播放引擎", summary="Media3 ExoPlayer 1.4.1 + 播放列表、硬解/软解、首帧、错误恢复。", files=["PlayerScreen.kt", "media3-exoplayer 1.4.1"]),
     dict(id="X-AN-GO", layer="L4", name="Android 本机取流", summary="gomobile Go 绑定，本机签名/取流兜底；LocalResolverProvider。", files=["DeviceResolver.kt", "libs/openhongguo.jar"]),
-    dict(id="X-AN-CACHE", layer="L4", name="Android 缓存/预载", summary="刷剧首屏磁盘缓存 24h、预载 5 部、详情/集数头部。", files=["FeedCache.kt", "FeedPreload.kt"]),
+    dict(id="X-AN-CACHE", layer="L4", name="Android 缓存/预载", summary="刷剧首屏磁盘缓存 24h；**后 5 部第一集真实流预载（FeedPreload / warmFeed）**。", files=["FeedCache.kt", "FeedPreload.kt"]),
     dict(id="X-AN-UPD", layer="L4", name="Android 平台服务", summary="APK 清单/ABI 选择/下载/sha/安装、日志上传。", files=["Updater.kt", "LogUploader.kt", "UpdateProvider.kt"]),
     dict(id="X-BUILD", layer="L4", name="构建 / 签名 / 参数", summary="版本号、私有 -P 参数、flavor、ABI 拆分、MSI、签名。", files=["build.gradle.kts 两端", "android/release.sh"]),
 

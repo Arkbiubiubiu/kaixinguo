@@ -30,6 +30,8 @@ object FeedPreload {
 
     private val ready = LinkedHashMap<String, Ready>()
     private val dead = HashSet<String>()
+    /** 正在后台等转码的剧：避免同一部重复排队 */
+    private val warming = HashSet<String>()
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -58,25 +60,49 @@ object FeedPreload {
                 ids.forEachIndexed { index, id ->
                     if (!isActive) return@launch
                     if (synchronized(lock) { ready.containsKey(id) || id in dead }) return@forEachIndexed
-                    // 只给最近 2 部做「完整预载」（档位 + 解密头部）；其余只拉详情。
-                    // 每部 playinfo 都要让 oroplay 现场注册匿名设备（慢且偶发 502），
-                    // 5 部全都拉档位会跟正在播的那一路抢串行锁，反而拖慢首屏。
-                    runCatching { build(id, full = index < 2) }
+                    // 后 5 部全部做「完整预载」：档位 + 解密头部，切过去直接接管。
+                    // 用户明确要求刷剧换剧无缝，不能只拉详情。
+                    runCatching { build(id) }
                     delay(900)
                 }
             }
         }
     }
 
-    private fun build(seriesId: String, full: Boolean = true) {
+    private fun build(seriesId: String) {
         val d = Api.ensureDetail(seriesId) ?: return
-        if (!full) return   // 详情已进 DetailCache，切过去时只剩档位+索引
         val ep = d.episodes.firstOrNull() ?: return
         if (Store.isUnsupported(ep.vid)) {
             synchronized(lock) { dead.add(seriesId) }
             return
         }
         val tiers = PlaybackApi.tiers(ep.vid)
+        if (tiers.isEmpty()) {
+            // 全 VVC 的冷集：服务端已排进转码 job。后台等它转完再把真实流预取好，
+            // 不阻塞后面几部的预载；换到它时才能和普通剧一样无缝。
+            val job = PlaybackApi.pendingJob(ep.vid)
+            if (job != null) {
+                val first = synchronized(lock) { warming.add(seriesId) }
+                if (first) {
+                    scope.launch {
+                        val ok = PlaybackApi.awaitTranscode(job, 180_000L)
+                        PlaybackApi.clearPendingJob(ep.vid)
+                        if (ok) {
+                            runCatching {
+                                prepare(seriesId, ep, PlaybackApi.tiers(ep.vid))
+                            }
+                        }
+                        synchronized(lock) { warming.remove(seriesId) }
+                    }
+                }
+            }
+            return
+        }
+        prepare(seriesId, ep, tiers)
+    }
+
+    /** 档位已经有了：选档 + 下头部/索引，放进 ready 池。 */
+    private fun prepare(seriesId: String, ep: Episode, tiers: List<PlayTier>) {
         val cap = Store.maxHeight
         val playable = tiers.filter { it.playable }
         val picked = playable.firstOrNull { it.height == cap }
@@ -103,7 +129,7 @@ object FeedPreload {
             job?.cancel()
             job = scope.launch {
                 delay(1_200)
-                runCatching { build(seriesId, full = true) }
+                runCatching { build(seriesId) }
             }
         }
     }
@@ -119,6 +145,7 @@ object FeedPreload {
             ready.values.forEach { runCatching { it.remote.close() } }
             ready.clear()
             dead.clear()
+            warming.clear()
         }
     }
 }

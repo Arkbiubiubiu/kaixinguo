@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -105,36 +106,56 @@ fun FeedScreen(
         UiMemo.feedPage = page
     }
 
+    /** 续一页：成功后回调（换剧时用来推进 cursor；预取时不需要）。 */
+    fun loadMore(andThen: (() -> Unit)? = null) {
+        val c = page ?: return
+        if (!c.hasMore || moreLoading) return
+        moreLoading = true
+        scope.launch {
+            val np = withContext(Dispatchers.IO) {
+                runCatching {
+                    Api.feedNext(
+                        feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
+                        cards.map { it.seriesId }, refresh = true,
+                    )
+                }.getOrNull()
+            }
+            if (np != null && np.cards.isNotEmpty()) {
+                val known = cards.map { it.seriesId }.toSet()
+                cards = cards + np.cards.filter { it.seriesId !in known }
+                page = np
+                andThen?.invoke()
+            } else {
+                page = c.copy(hasMore = false)
+            }
+            moreLoading = false
+        }
+    }
+
     /** 换剧：-1 上一部 / +1 下一部；走到列表尾自动续一页。 */
     fun step(dir: Int) {
         val next = cursor + dir
         if (next < 0) return
         if (next >= cards.size) {
-            val c = page ?: return
-            if (!c.hasMore || moreLoading) return
-            moreLoading = true
-            scope.launch {
-                val np = withContext(Dispatchers.IO) {
-                    runCatching {
-                        Api.feedNext(
-                            feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
-                            cards.map { it.seriesId }, refresh = true,
-                        )
-                    }.getOrNull()
-                }
-                if (np != null && np.cards.isNotEmpty()) {
-                    val known = cards.map { it.seriesId }.toSet()
-                    cards = cards + np.cards.filter { it.seriesId !in known }
-                    page = np
-                    cursor = next.coerceAtMost(cards.lastIndex)
-                } else {
-                    page = c.copy(hasMore = false)
-                }
-                moreLoading = false
-            }
+            loadMore { cursor = next.coerceAtMost(cards.lastIndex) }
             return
         }
         cursor = next
+    }
+
+    // 刚进刷剧就先把下一页拉好（而不是等切到第 16 集才现拉）
+    var autoPrefetched by remember { mutableStateOf(false) }
+    LaunchedEffect(tab) { autoPrefetched = false }
+    LaunchedEffect(page, cards.size) {
+        val c = page ?: return@LaunchedEffect
+        if (!c.hasMore || autoPrefetched) return@LaunchedEffect
+        delay(1_200)
+        autoPrefetched = true
+        loadMore()
+    }
+    // 接近列表尾也持续续页，保证永远留有前瞻
+    LaunchedEffect(cursor, cards.size, page) {
+        if (page?.hasMore == true && cursor >= cards.size - 4) loadMore()
     }
 
     BackHandler { UiMemo.feedReturnKeep = false; onExit() }
