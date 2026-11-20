@@ -9,8 +9,10 @@ import org.json.JSONObject
  * 下一步把 `Api.kt` 对应段落搬进这些对象，调用方无需再改。
  */
 object PlaybackApi {
-    fun tiers(vid: String, priority: Boolean = false): List<PlayTier> = Api.tiers(vid, priority)
-    fun play(vid: String, contentType: Int = 1004, want: Int = 0): PlayInfo = Api.play(vid, contentType, want, priority = true)
+    fun tiers(vid: String, priority: Boolean = false, allowHls: Boolean = false): List<PlayTier> =
+        Api.tiers(vid, priority, allowHls)
+    fun play(vid: String, contentType: Int = 1004, want: Int = 0, allowHls: Boolean = false): PlayInfo =
+        Api.play(vid, contentType, want, priority = true, allowHls = allowHls)
     fun clearTierCache() = Api.clearTierCache()
     /** 服务端异步转码 job（非优先级取流返回 202 时记录）。 */
     fun pendingJob(vid: String): String? = Api.pendingJob(vid)

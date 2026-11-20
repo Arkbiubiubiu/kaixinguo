@@ -94,6 +94,7 @@ N = [
     dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；作为 R-ORO 的**兜底**，v5 失败时按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
     dict(id="R-SIGN", layer="L6", name="签名/设备池", summary="上游签名、设备身份注册/轮换、Argus/Ladon。", files=["9100/9101/9099", "playback-sign.js", "playback-device.js"]),
     dict(id="R-TRANSCODE", layer="L6", name="VVC/AV1 转码", summary="下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；**画质对齐同行：不放大、VAAPI CQP23（x264 veryfast CRF23 兜底）、AAC 音频 copy、maxrate 4.5Mbps、接近 16:9 归一到 1920，输出 _v4.mp4；磁盘剩 <8GB 自动删最旧**；容器标 av01 但 1 秒解码失败时按 VVC 重抽；输出必须 ffprobe 有视频轨，否则删除报错。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
+    dict(id="R-LIVE", layer="L6", name="冷启动边转边播", summary="没有 v4 缓存的 VVC 集：**do_live.py** 下载/解密后直接写 4 秒 fMP4 分片 + EVENT 播放列表（index.m3u8），客户端几秒起播；后台跑完把分片拼回 _v4.mp4 供下次秒开；用户换集会杀掉旧的边转进程，warm 转码会让路；分片目录 3 小时清理。", files=["do_live.py", "live/<vid>/index.m3u8"]),
     dict(id="U-CONTENT", layer="L6", name="番茄内容接口", summary="首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。", files=["api5-normal-lq.fqnovel.com"]),
     dict(id="U-PLAY", layer="L6", name="番茄播放模型", summary="multi_video_model、fallback_api、video_meta/codec_type。", files=["multi_video_model/v1"]),
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),
@@ -183,7 +184,8 @@ EDGES = [
     ("R-V5","U-PLAY","mobile 模型 + fallback_api"),
     ("R-ORACLE","U-PLAY","官方 App 取模型"), ("R-ORACLE","U-CDN","1080p 直链"),
     ("R-SIGN","U-PASSPORT","设备/账号"),
-    ("R-TRANSCODE","C-MEDIA","同一解密算法副本"), ("R-TRANSCODE","U-CDN","下载加密 MP4"), ("R-TRANSCODE","V-STATIC","输出 v3.mp4"),
+    ("R-TRANSCODE","C-MEDIA","同一解密算法副本"), ("R-TRANSCODE","U-CDN","下载加密 MP4"), ("R-TRANSCODE","V-STATIC","输出 v4.mp4"),
+    ("R-ORO","R-LIVE","冷启动边转边播"), ("R-LIVE","C-MEDIA","解密算法副本"), ("R-LIVE","U-CDN","下载加密 MP4"), ("R-LIVE","V-STATIC","HLS 分片 + 回写 v4"),
     ("I-TUNNEL","V-DUAL","公网入口"),
     ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"), ("I-SYSTEMD","R-V5","守护"), ("I-SYSTEMD","R-ORACLE","守护"),
 ]

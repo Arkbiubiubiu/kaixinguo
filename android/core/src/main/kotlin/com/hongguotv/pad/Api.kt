@@ -503,9 +503,9 @@ object Api {
      * 取播放地址：先让服务器代取（服务器签名 + 固定设备身份，命中率高），
      * 拿不到才本机直连。
      */
-    fun play(vid: String, contentType: Int = 1004, want: Int = 0, priority: Boolean = false): PlayInfo {
+    fun play(vid: String, contentType: Int = 1004, want: Int = 0, priority: Boolean = false, allowHls: Boolean = false): PlayInfo {
         Log.d("PadPlayer", "play() vid=$vid ct=$contentType want=$want")
-        playFromServer(vid, want, priority)?.let {
+        playFromServer(vid, want, priority, allowHls)?.let {
             Log.d("PadPlayer", "playFromServer ok ${it.definition} ${it.size}")
             return it
         }
@@ -607,14 +607,14 @@ object Api {
         return App.flags
     }
 
-    private fun playInfoData(vid: String, want: String, priority: Boolean): JSONObject? {
+    private fun playInfoData(vid: String, want: String, priority: Boolean, allowHls: Boolean = false): JSONObject? {
         lastPlayError = null
         pendingJobs.remove(vid)
         if (PLAY_BASES.isEmpty()) {
             Log.e("PadApi", "未配置播放信息服务地址")
             return null
         }
-        val body = JSONObject().put("vid", vid).put("want", want).put("priority", priority).toString()
+        val body = JSONObject().put("vid", vid).put("want", want).put("priority", priority).put("hls", allowHls).toString()
         val rid = java.util.UUID.randomUUID().toString().take(8)
         Log.d("PadPlayer", "playinfo rid=$rid vid=$vid want=$want")
         // 取流服务偶发 502（匿名设备轮换/上游抖动）：重试一次就够。
@@ -694,9 +694,9 @@ object Api {
     }.onFailure { lastPlayError = it.message?.take(80) }.getOrNull()
 
     /** 服务器代取播放地址（服务器签名 + 固定设备身份）。 */
-    private fun playFromServer(vid: String, want: Int = 0, priority: Boolean = false): PlayInfo? {
+    private fun playFromServer(vid: String, want: Int = 0, priority: Boolean = false, allowHls: Boolean = false): PlayInfo? {
         val target = if (want > 0) want else App.state.maxHeight
-        val data = playInfoData(vid, "${target}p", priority) ?: run {
+        val data = playInfoData(vid, "${target}p", priority, allowHls) ?: run {
             Log.d("PadPlayer", "playinfo miss want=${target}p")
             return null
         }
@@ -714,6 +714,7 @@ object Api {
             height = height,
             duration = 0,
             size = data.optLong("size"),
+            hls = data.optBoolean("hls"),
         )
     }
 
@@ -3573,13 +3574,13 @@ object Api {
         tierCache.clear()
     }
 
-    fun tiers(vid: String, priority: Boolean = false): List<PlayTier> {
+    fun tiers(vid: String, priority: Boolean = false, allowHls: Boolean = false): List<PlayTier> {
         tierCache[tierKey(vid)]?.let { (at, list) ->
             if (System.currentTimeMillis() - at < TIER_TTL_MS) return list
             tierCache.remove(tierKey(vid))
         }
         val out = runCatching {
-            val list = playInfoData(vid, "all", priority)?.optJSONArray("list")
+            val list = playInfoData(vid, "all", priority, allowHls)?.optJSONArray("list")
                 ?: return@runCatching emptyList()
             (0 until list.length()).mapNotNull { i ->
                 val o = list.optJSONObject(i) ?: return@mapNotNull null
@@ -3594,6 +3595,7 @@ object Api {
                     spadeA = o.optString("spade_a"),
                     size = o.optLong("size"),
                     codec = o.optString("codec"),
+                    hls = o.optBoolean("hls"),
                 )
             }.sortedByDescending { it.height }
         }.getOrDefault(emptyList())

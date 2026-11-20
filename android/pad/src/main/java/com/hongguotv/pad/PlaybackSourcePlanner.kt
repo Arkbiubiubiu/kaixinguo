@@ -52,6 +52,8 @@ internal fun buildReady(
     val picked = playable.firstOrNull { it.height == cap }
         ?: playable.firstOrNull { it.height <= cap }
         ?: playable.firstOrNull()
+    // 冷启动 HLS 只用于当前正在播的那一集；预取/下一集必须等整集 MP4，不能拿 m3u8 建代理
+    if (picked?.hls == true) return null
     val info = picked?.toPlayInfo() ?: PlaybackApi.play(ep.vid, 1004, defWant)
     val rv = RemoteVideo(info)
     try {

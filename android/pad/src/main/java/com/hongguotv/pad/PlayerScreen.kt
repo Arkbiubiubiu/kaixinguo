@@ -727,7 +727,7 @@ fun PlayerScreen(
         try {
             // 档位表一次拿全（含直链/编码），切清晰度直接用表里的地址，不再请求上游
             var ts = withContext(Dispatchers.IO) {
-                runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = true) }.getOrDefault(emptyList())
             }
             // 全 VVC 集：服务端要先转码才有档位。以前这里直接往下走 play()，失败后
             // 外层就把这一集判死（预取队列只剩下一集，播完直接跳过去）。必须像预取
@@ -739,7 +739,7 @@ fun PlayerScreen(
                     PlaybackApi.clearPendingJob(ep.vid)
                     if (done) {
                         ts = withContext(Dispatchers.IO) {
-                            runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                            runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = true) }.getOrDefault(emptyList())
                         }
                     }
                 }
@@ -754,18 +754,25 @@ fun PlayerScreen(
             // 刷剧：后面几部已经预载过（详情 + 档位 + 解密代理头部），直接接管
             val pre = if (feed) FeedPreload.take(seriesId) else null
             val info = pre?.info ?: picked?.toPlayInfo()
-                ?: withContext(Dispatchers.IO) { PlaybackApi.play(ep.vid, 1004, defWant) }
+                ?: withContext(Dispatchers.IO) { PlaybackApi.play(ep.vid, 1004, defWant, allowHls = true) }
             ps.curDef = info.height
+            // 冷启动 VVC：服务端边转边出 HLS，这里直接播播放列表，不建本地代理。
+            // 后台 do_live 跑完会写 _v4.mp4，下一次播放就走整集缓存。
+            val hlsMode = info.hls && info.url.contains(".m3u8")
             // 注意：不要再按「历史标记」直接跳过这一集。
             // 标记只说明「某次、某个清晰度」确实解不了，不代表现在也解不了
             // （21 集曾被旧标记误判成 bvc2，VVC 页发现是 hvc1 又交回来，来回跳）。
             // 一律按真实取流结果判断，代价只是多拉一次头部。
-            val rv = pre?.remote ?: RemoteVideo(info)
-            if (pre == null) withContext(Dispatchers.IO) { rv.prepare() }
-            val px = StreamProxy(rv)
-            px.start()
-            created = rv to px
-            ps.duration = rv.total
+            val rv = if (hlsMode) null else (pre?.remote ?: RemoteVideo(info))
+            if (!hlsMode && pre == null) withContext(Dispatchers.IO) { rv!!.prepare() }
+            var px: StreamProxy? = null
+            if (!hlsMode) {
+                val rvLocal = rv!!
+                px = StreamProxy(rvLocal)
+                px.start()
+                created = rvLocal to px
+                ps.duration = rvLocal.total
+            }
             // 同上：切集前先记住上一集看到哪儿
             if (ps.preparedVid.isNotEmpty() && ps.preparedIndex > 0) {
                 runCatching { Store.markPos(ps.preparedVid, player.currentPosition) }
@@ -778,12 +785,21 @@ fun PlayerScreen(
                 queued.clear()
                 stale.forEach { dropReady(it) }
             }
-            player.setMediaItem(MediaItem.fromUri(px.url))
-            uriToEp[px.url] = index
+            if (hlsMode) {
+                val ds = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                val source = androidx.media3.exoplayer.hls.HlsMediaSource.Factory(ds)
+                    .createMediaSource(MediaItem.fromUri(info.url))
+                player.setMediaSource(source)
+                uriToEp[info.url] = index
+            } else {
+                player.setMediaItem(MediaItem.fromUri(px!!.url))
+                uriToEp[px!!.url] = index
+            }
             player.setPlaybackSpeed(speed)
             player.prepare()
-            // 只剩最后 5 秒的「上次位置」没意义，直接从头
-            if (keepAt > 2_000 && (rv.total <= 0 || keepAt < rv.total - 5_000)) player.seekTo(keepAt)
+            // 只剩最后 5 秒的「上次位置」没意义，直接从头；HLS 冷启动没有总长，按 0 处理
+            val total = rv?.total ?: 0
+            if (keepAt > 2_000 && (total <= 0 || keepAt < total - 5_000)) player.seekTo(keepAt)
             player.play()
 
             // 新的已经跑起来了，这时才关旧的

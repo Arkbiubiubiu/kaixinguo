@@ -13,9 +13,9 @@ android {
         targetSdk = 36
         // 发版流水线 tools/release.py 可用 -PversionCode/-PversionName 覆盖；
         // 不带参数时保持源码里的版本（AGENTS.md 的“版本唯一来源”仍然成立）。
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 323
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 324
         versionName = (project.findProperty("versionName") as String?)?.trim()
-            ?.takeIf { it.isNotEmpty() } ?: "2.2.203"
+            ?.takeIf { it.isNotEmpty() } ?: "2.2.204"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
@@ -123,6 +123,7 @@ dependencies {
 
     // 播放：ExoPlayer + 媒体抽取（原工程就用的这套）
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-extractor:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
