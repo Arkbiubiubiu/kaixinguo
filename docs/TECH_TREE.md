@@ -179,12 +179,13 @@
 | `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO`, `R-V5` | — |
 | `U-CDN` | 视频/图片 CDN | 字节 CDN | 加密 MP4、封面、头像 | `C-PROXY`, 转码下载 | — |
 | `U-PASSPORT` | 登录/MFA | 番茄 passport | 短信登录、MFA、cookies | `D-ACCOUNT`, `C-SIGN` | — |
-| `I-TUNNEL` | 公网通道 | 樱花 frpc（仅对 `dl.fabao.xin` 真证书，44468）、Cloudflare（`hgtv.fabao.xin`）；cpolar 已停用 | 把 8081/8080 暴露到公网：小请求走 CF(hgtv)、大文件走樱花(dl 真证书) | 客户端 | `V-DUAL` |
+| `I-TUNNEL` | 公网通道 | Cloudflare（`hgtv.fabao.xin` / `tc.fabao.xin`→8081 / `kxg.fabao.xin`）、樱花 frpc（仅 `dl.fabao.xin` 真证书，44468）；cpolar 已删 | 公网分流：**小请求主走樱花(dl，低延迟)**、**转码大文件走 CF(tc→8081，高吞吐+分段206)**、官网/看板走 CF(hgtv/kxg) | 客户端 | `V-DUAL` |
 | `I-GITHUB` | GitHub Release 更新镜像 | `github.com/Arkbiubiubiu/kaixinguo/releases`（公开），`axisnow.gh-proxy.org` / `gh-proxy.org`、`dl.fabao.xin:44468`，`/srv/hgtv-update/github-release-tag` | 更新包公开托管 + 国内加速镜像；**固定 tag**（latest/download 会被 CDN 缓存旧内容）；下载线路 axisnow→gh-proxy→dl.fabao.xin（真证书兜底），已去 frp-bar 自签与 cpolar；客户端不再“信任所有证书”；官网 `/get` 302 到这里；PC/安卓/TV 统一 3 段下载 | `X-BUILD`, `D-UPDATE`, `S-WEB` | — |
 | `I-STATE` | 服务端状态 | `/var/lib/hgtv-sync` | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token | `V-*` | 磁盘 |
 | `I-SYSTEMD` | 守护/备份 | systemd units、`mirror_watchdog`、`cloudflared_watchdog` | 服务常驻、镜像发现、隧道守护、备份 | 运维 | `V-*` |
 
 > **v5 主路径已切换（2026-11-17）**：`oroplay` 先调 `R-V5`（9119），失败/空/超时回 `R-ORACLE`（9120），旧 video_tab 仅诊断。VVC/AV1 集不硬转：先用模型 `fallback_api` 的 `codec_type=3/1` 取 1080P HEVC/H.265；4 个历史音频-only AV1 缓存已隔离，`R-TRANSCODE` 增加“输出必须有视频轨”校验。实测 7 部常规 + 4 个 AV1 集全部 5 档、0 空响应、无 `bytevc2` 返回。
+> **公网分流（2026-11-21 实测定，见 I-TUNNEL）**：小请求（内容/取流/历史/签名）主走**樱花 `dl.fabao.xin`**（延迟 0.13s，比 CF 0.86s 快约 6.8 倍）；**转码大文件输出域名由 `dl.fabao.xin` 改为 `tc.fabao.xin`（Cloudflare→8081，支持 Range 206 + keep-alive，实测 4.4MB/s vs 樱花 1.3MB/s）**——此前"漫剧看几秒后每秒卡一下"即转码片走樱花带宽/断流所致；官网/看板走 CF（hgtv/kxg）。`oroplay.js`/`do_transcode.py`/`do_live.py` 的转码 URL 基址已改为 `https://tc.fabao.xin/transcode/`。
 
 ---
 
