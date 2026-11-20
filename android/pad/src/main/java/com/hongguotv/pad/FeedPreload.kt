@@ -60,10 +60,10 @@ object FeedPreload {
                 ids.forEachIndexed { index, id ->
                     if (!isActive) return@launch
                     if (synchronized(lock) { ready.containsKey(id) || id in dead }) return@forEachIndexed
-                    // 稳定口径：只有紧跟的 2 部做完整预载（档位+解密头部），
-                    // 其余 3 部只拉详情。5 部全量预取会跟正在播的那一路抢带宽，
-                    // 导致播放卡顿/快进变慢（2026-11-21 实测回退）。
-                    runCatching { if (index < 2) build(id) else { Api.ensureDetail(id) } }
+                    // 后 5 部全部做完整预载（档位+解密头部，VVC 还会后台等转码）。
+                    // 只在刷剧页存在时运行；离开刷剧由 FeedScreen 的 DisposableEffect
+                    // 统一 clear()，绝不会影响正常漫剧播放。
+                    runCatching { build(id) }
                     delay(900)
                 }
             }

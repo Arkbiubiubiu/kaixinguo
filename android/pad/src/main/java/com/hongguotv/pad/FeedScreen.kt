@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -62,6 +63,10 @@ fun FeedScreen(
     var loading by remember { mutableStateOf(true) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    // 离开刷剧板块（切到漫剧/首页/播放器等）立刻清掉所有预取连接，
+    // 否则后台的 5 部预取会继续和正常播放抢带宽（2026-11-21 用户实测）。
+    DisposableEffect(Unit) { onDispose { FeedPreload.clear() } }
 
     LaunchedEffect(tab) {
         // 从详情/播放返回同一次刷剧会话：保留当前剧与位置（只此一种例外）。
