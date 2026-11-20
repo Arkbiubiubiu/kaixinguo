@@ -77,7 +77,7 @@ N = [
     dict(id="X-BUILD", layer="L4", name="构建 / 签名 / 参数", summary="版本号、私有 -P 参数、flavor、ABI 拆分、MSI、签名。", files=["build.gradle.kts 两端", "android/release.sh"]),
 
     # L5 server
-    dict(id="V-DUAL", layer="L5", name="双协议网关", summary="/api/admin* 反代 8080（静态/看板），其余 /api/* 与 /sign 反代 8082（内容 API）；静态/官网；/get/* 302 到下载节点。", files=["/opt/hgtv-update/dual_server.py", "8081/TLS"]),
+    dict(id="V-DUAL", layer="L5", name="双协议网关", summary="/api/admin* 反代 8080（静态/看板），其余 /api/* 与 /sign 反代 8082（内容 API）；静态/官网；/get/* 302 到下载节点；**静态 Range 支持 keep-alive**（播放器连续 Range 不再每条重建 TLS）。", files=["/opt/hgtv-update/dual_server.py", "8081/TLS"]),
     dict(id="V-SERVE", layer="L5", name="静态 / 看板进程", summary="ROLE=static（8080）：静态 Range、/admin、/api/admin*；其余 /api/* 反代 V-API。看板重启不影响取流。", files=["/opt/hgtv-update/serve.py (ROLE=static)", "8080", "hgtv-update.service"]),
     dict(id="V-API", layer="L5", name="内容 API 进程", summary="ROLE=api（8082）：fetch/sign/playinfo/history/heat/rankmeta/seasons/flags/transcode；不提供静态和看板。", files=["/opt/hgtv-update/serve.py (ROLE=api)", "8082", "hgtv-api.service"]),
     dict(id="V-RELAY", layer="L5", name="上游代取/缓存", summary="代签、代拉、TTL/SWR/磁盘缓存、feed-cache。", files=["/opt/hgtv-update/relay.py"]),
@@ -89,11 +89,11 @@ N = [
 
     # L6
     dict(id="R-STREAM", layer="L6", name="签名取流服务", summary="/play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。", files=["/opt/research/openhongguo/cmd/streamsrv", "9110"]),
-    dict(id="R-ORO", layer="L6", name="真签名解析", summary="**v5 优先**：优先调 R-V5（纯 HTTP v5 签名）取全部清晰度，失败/空/超时回 R-ORACLE；**已转码的 vid 直接发 `/transcode/*_v3.mp4`，不再打上游**（上游限流时已看过的集照常播）；bytevc1（HEVC）直接透传，VVC/AV1 先要兼容 fallback（codec_type=3/1），最后才转码；返回前强制过滤 bytevc2；旧 video_tab 仅诊断兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
+    dict(id="R-ORO", layer="L6", name="真签名解析", summary="**v5 优先**：优先调 R-V5（纯 HTTP v5 签名）取全部清晰度，失败/空/超时回 R-ORACLE；**已转码的 vid 直接发 `/transcode/*_v4.mp4`（画质版），不再打上游；旧 `_v3` 只作转码失败兜底**；bytevc1（HEVC）直接透传，VVC/AV1 先要兼容 fallback（codec_type=3/1），最后才转码；返回前强制过滤 bytevc2；旧 video_tab 仅诊断兜底；转码 job 可查询（30min/200 条）。", files=["/opt/research/oroplay.js", "9118"]),
     dict(id="R-V5", layer="L6", name="v5 纯 HTTP 签名", summary="N3urda/aston314 GPL 实现：匿名设备注册 + Android v04.10.03 Medusa/Helios/Khronos v5 签名 + gzip mobile 模型；VVC/AV1 集用模型 fallback_api 的 codec_type=3/1 取 1080P HEVC/H.265；HTTP 9119，单设备、1.2s 间隔、空响应 90s 冷却。", files=["/opt/research/v5/v5resolver.js", "playback-v5-sign.js", "playback-v5-carrier.js", "mobile-playback-v5.js", "9119", "v5resolver.service"]),
     dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；作为 R-ORO 的**兜底**，v5 失败时按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
     dict(id="R-SIGN", layer="L6", name="签名/设备池", summary="上游签名、设备身份注册/轮换、Argus/Ladon。", files=["9100/9101/9099", "playback-sign.js", "playback-device.js"]),
-    dict(id="R-TRANSCODE", layer="L6", name="VVC/AV1 转码", summary="下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；**容器标 av01 但 1 秒解码失败时按 VVC 重抽**（bv2C 私有封装里可能是 VVC）；VAAPI 优先、x264 兜底；输出必须 ffprobe 有视频轨，否则删除报错，绝不返回音频-only。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
+    dict(id="R-TRANSCODE", layer="L6", name="VVC/AV1 转码", summary="下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；**画质对齐同行：不放大、VAAPI CQP23（x264 veryfast CRF23 兜底）、AAC 音频 copy、maxrate 4.5Mbps、接近 16:9 归一到 1920，输出 _v4.mp4；磁盘剩 <8GB 自动删最旧**；容器标 av01 但 1 秒解码失败时按 VVC 重抽；输出必须 ffprobe 有视频轨，否则删除报错。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
     dict(id="U-CONTENT", layer="L6", name="番茄内容接口", summary="首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。", files=["api5-normal-lq.fqnovel.com"]),
     dict(id="U-PLAY", layer="L6", name="番茄播放模型", summary="multi_video_model、fallback_api、video_meta/codec_type。", files=["multi_video_model/v1"]),
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),
