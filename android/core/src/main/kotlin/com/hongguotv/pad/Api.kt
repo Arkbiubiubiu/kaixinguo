@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import org.json.JSONArray
 import org.json.JSONObject
@@ -176,30 +176,8 @@ object Api {
     )
 
 
-    // ---------------- 樱花通道的 TLS ----------------
-    // 樱花隧道把 TLS 终止在本地 8081，用的是自签证书；只有樱花域名放行，
-    // 其它 HTTPS 仍然严格校验证书（和更新器 Updater 里同一套做法）。
-    private val SAKURA_HOSTS = setOf("frp-bar.com", "dx.frp-bar.com", "yd.frp-bar.com", "lt.frp-bar.com")
-    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
-        val tm = object : javax.net.ssl.X509TrustManager {
-            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-        }
-        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
-        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
-    }
-
-    /** 统一开连接：樱花域名套自签信任，其它原样。 */
-    private fun URL.open(): HttpURLConnection {
-        val conn = openConnection() as HttpURLConnection
-        if (conn is javax.net.ssl.HttpsURLConnection && host?.lowercase() in SAKURA_HOSTS) {
-            conn.sslSocketFactory = sakuraTls.first
-            conn.hostnameVerifier = sakuraTls.second
-        }
-        return conn
-    }
+    /** 统一开连接：走标准证书校验（各域名都用真证书，不再放行自签）。 */
+    private fun URL.open(): HttpURLConnection = openConnection() as HttpURLConnection
 
     private fun serverBases(): List<String> {
         val pref = preferredBase ?: return PLAY_BASES

@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import android.content.Context
 import android.content.Intent
@@ -72,7 +72,7 @@ object Updater {
     /**
      * 唯一更新源。构建参数 `updateBases` 可覆盖（自建集群多入口时用），公开包不带参数。
      */
-    private const val UPDATE_BASE = "https://frp-bar.com:44468"
+    private const val UPDATE_BASE = "https://dl.fabao.xin:44468"
 
     private val BASES = BuildConfig.UPDATE_BASES
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -82,38 +82,13 @@ object Updater {
     /** 动态发现的镜像（cpolar 国内直连等）。check() 时刷新；下载竞速时并入。 */
     private var discoveredMirrors: List<String> = emptyList()
 
-    /**
-     * 樱花穿透隧道（frp-bar.com:44468）用自签证书：HttpURLConnection 默认会拒绝。
-     * 只对 frp-bar.com 放行自签证书，其它域名仍走系统信任链；下载完还有 sha256 校验兜底。
-     * 注意：樱花节点只拦明文 HTTP（回 501 合规页），所以更新链路必须走 HTTPS。
-     */
-    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
-        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-            override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-        }), java.security.SecureRandom())
-        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
-    }
-
-    /** 樱花自签放行判定：必须精确到 host（旧实现 url.contains 会被 frp-bar.com.evil.tld 命中）。 */
-    private fun isSakuraHost(u: String): Boolean {
-        val host = runCatching { java.net.URI(u).host?.lowercase() }.getOrNull() ?: return false
-        return host == "frp-bar.com" || host.endsWith(".frp-bar.com")
-    }
-
-    /** 统一开连接：对樱花域名套自签证书信任，其余域名保持默认。 */
+    /** 统一开连接：走标准证书校验（各域名都用真证书，不再放行自签）。 */
     private fun openConn(url: String, connectTimeoutMs: Int, readTimeoutMs: Int): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = connectTimeoutMs
         conn.readTimeout = readTimeoutMs
         conn.instanceFollowRedirects = true
         conn.setRequestProperty("User-Agent", "Dalvik/2.1.0")
-        if (conn is javax.net.ssl.HttpsURLConnection && isSakuraHost(url)) {
-            conn.sslSocketFactory = sakuraTls.first
-            conn.hostnameVerifier = sakuraTls.second
-        }
         return conn
     }
 

@@ -179,8 +179,8 @@
 | `U-PLAY` | 番茄播放模型 | `multi_video_model/v1`、`fallback_api`、`video_meta/codec_type` | 档位、编码、密钥种子、兼容接口 | `R-STREAM`, `R-ORO`, `R-V5` | — |
 | `U-CDN` | 视频/图片 CDN | 字节 CDN | 加密 MP4、封面、头像 | `C-PROXY`, 转码下载 | — |
 | `U-PASSPORT` | 登录/MFA | 番茄 passport | 短信登录、MFA、cookies | `D-ACCOUNT`, `C-SIGN` | — |
-| `I-TUNNEL` | 公网通道 | 樱花 frpc（44468）、Cloudflare、cpolar | 把 8081/8080 暴露到公网 | 客户端 | `V-DUAL` |
-| `I-GITHUB` | GitHub Release 更新镜像 | `github.com/Arkbiubiubiu/kaixinguo/releases`（公开），`axisnow.gh-proxy.org` / `gh-proxy.org`，`/srv/hgtv-update/github-release-tag` | 更新包公开托管 + 国内加速镜像；**固定 tag**（latest/download 会被 CDN 缓存旧内容）；`update-mirrors` 首选、樱花兜底；官网 `/get` 302 到这里；PC/安卓/TV 统一 3 段下载 | `X-BUILD`, `D-UPDATE`, `S-WEB` | — |
+| `I-TUNNEL` | 公网通道 | 樱花 frpc（仅对 `dl.fabao.xin` 真证书，44468）、Cloudflare（`hgtv.fabao.xin`）；cpolar 已停用 | 把 8081/8080 暴露到公网：小请求走 CF(hgtv)、大文件走樱花(dl 真证书) | 客户端 | `V-DUAL` |
+| `I-GITHUB` | GitHub Release 更新镜像 | `github.com/Arkbiubiubiu/kaixinguo/releases`（公开），`axisnow.gh-proxy.org` / `gh-proxy.org`、`dl.fabao.xin:44468`，`/srv/hgtv-update/github-release-tag` | 更新包公开托管 + 国内加速镜像；**固定 tag**（latest/download 会被 CDN 缓存旧内容）；下载线路 axisnow→gh-proxy→dl.fabao.xin（真证书兜底），已去 frp-bar 自签与 cpolar；客户端不再“信任所有证书”；官网 `/get` 302 到这里；PC/安卓/TV 统一 3 段下载 | `X-BUILD`, `D-UPDATE`, `S-WEB` | — |
 | `I-STATE` | 服务端状态 | `/var/lib/hgtv-sync` | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token | `V-*` | 磁盘 |
 | `I-SYSTEMD` | 守护/备份 | systemd units、`mirror_watchdog`、`cloudflared_watchdog` | 服务常驻、镜像发现、隧道守护、备份 | 运维 | `V-*` |
 
@@ -432,8 +432,8 @@ flowchart LR
 
 13. **更新包统一走 GitHub Release 镜像**
     - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.97-2.2.213`，含 PC 1.2.97 / 安卓 & TV 2.2.213 的全部 ABI/通用包和清单。
-    - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：固定 tag 的 `axisnow.gh-proxy.org/.../releases/download/<tag>` → `gh-proxy.org` → 樱花四条 → cpolar；tag 读 `/srv/hgtv-update/github-release-tag`。**不要用 `latest/download`：axisnow/CDN 会缓存旧内容**。
-    - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 20MB 约 3 秒（7.29MB/s），樱花约 16 秒（1.25MB/s）。官网 `/get/<file>` 302 到同一固定 tag 镜像，不由服务器中转。
+    - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：固定 tag 的 `axisnow.gh-proxy.org/.../releases/download/<tag>` → `gh-proxy.org` → `https://dl.fabao.xin:44468`（真证书兜底）；已删除樱花四条与 cpolar。tag 读 `/srv/hgtv-update/github-release-tag`。**不要用 `latest/download`：axisnow/CDN 会缓存旧内容**。
+    - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 最快（峰值可达 ~10MB/s），dl.fabao 约 1.3MB/s 稳定兜底。官网 `/get/<file>` 302 到同一固定 tag 镜像，不由服务器中转。客户端已移除对 frp-bar/fabao.xin 的“信任所有证书”，全部走标准证书校验。
     - 以后发版必须同时上传 GitHub Release 资产，并更新 `/srv/hgtv-update/github-release-tag`；不要依赖 latest。
 
 ### 5.1 播放入口一致性（当前状态）

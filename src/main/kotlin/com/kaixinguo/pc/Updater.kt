@@ -1,4 +1,4 @@
-﻿package com.kaixinguo.pc
+package com.kaixinguo.pc
 
 import com.hongguotv.pad.UpdateManifest
 
@@ -58,55 +58,30 @@ data class PcUpdate(
 object PcUpdater {
 
     /**
-     * 下载镜像：樱花穿透四线（主，实测 1.3-1.5MB/s）。
-     * cpolar 域名会漂移，check 时从 update-mirrors.json 动态取，作为兜底。
-     * 2026-11-11 起 CF 的 HTTP/2 对 hgtv 域名被针对性 reset（他站 CF 正常），
-     * CF 不再作为下载源；设置里的「更新源」仍可覆盖（自建多入口时用）。
+     * 更新发现入口与兜底下载基点（都是真证书域名，走标准 TLS 校验）：
+     * - 先问官方 CF 域名 hgtv.fabao.xin 要镜像清单（小文件，CF 够快）；
+     * - 失败退回 dl.fabao.xin:44468（真证书、支持分段，能下大文件）。
+     * 设置里的「更新源」仍可覆盖（自建多入口时用）。
      */
-    private val SAKURA = listOf(
-        "https://frp-bar.com:44468",
-        "https://dx.frp-bar.com:44468",
-        "https://yd.frp-bar.com:44468",
-        "https://lt.frp-bar.com:44468",
-    )
-
-    private val SAKURA_HOSTS = setOf("frp-bar.com", "dx.frp-bar.com", "yd.frp-bar.com", "lt.frp-bar.com")
-
-    /** 樱花 TLS 终止在本地 8081，自签证书；只对樱花域名放行，其他域名仍严格校验。 */
-    private val sakuraTls: Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.HostnameVerifier> by lazy {
-        val tm = object : javax.net.ssl.X509TrustManager {
-            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-        }
-        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
-        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
-    }
+    private val BOOTSTRAP = listOf("https://hgtv.fabao.xin", "https://dl.fabao.xin:44468")
+    private val FALLBACK_BASE = "https://dl.fabao.xin:44468"
 
     /** 动态镜像（樱花 + cpolar），每次 check 刷新。 */
     private var mirrors: List<String> = emptyList()
 
-    private fun openConn(url: String, connectMs: Int, readMs: Int): HttpURLConnection {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+    private fun openConn(url: String, connectMs: Int, readMs: Int): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = connectMs
             readTimeout = readMs
             instanceFollowRedirects = true
         }
-        val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull()
-        if (conn is javax.net.ssl.HttpsURLConnection && host in SAKURA_HOSTS) {
-            conn.sslSocketFactory = sakuraTls.first
-            conn.hostnameVerifier = sakuraTls.second
-        }
-        return conn
-    }
 
-    /** 留空 = 默认（樱花 + cpolar 动态发现）；设置里填了「更新源」就只用它。 */
+    /** 留空 = 默认（动态发现）；设置里填了「更新源」就只用它。 */
     private fun configuredBase(): String = PcStore.updateBase.trim().trimEnd('/')
 
     private fun discoverMirrors() {
         if (configuredBase().isNotBlank()) return
-        for (b in (SAKURA + mirrors).distinct()) {
+        for (b in (BOOTSTRAP + mirrors).distinct()) {
             val list = runCatching {
                 val conn = openConn("$b/update-mirrors.json", 5_000, 7_000).apply {
                     setRequestProperty("Accept", "application/json")
@@ -131,7 +106,7 @@ object PcUpdater {
 
     private fun bases(): List<String> =
         if (configuredBase().isNotBlank()) listOf(configuredBase())
-        else (mirrors + SAKURA).distinct()
+        else (mirrors + FALLBACK_BASE).distinct()
 
     private fun fetchManifest(root: String): PcUpdate? {
         val conn = openConn("$root/version-pc.json", 8_000, 12_000).apply {

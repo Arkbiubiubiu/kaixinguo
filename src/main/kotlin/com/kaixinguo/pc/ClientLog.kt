@@ -11,30 +11,9 @@ import java.net.URL
 object ClientLog {
     private const val INTERVAL_MS = 10 * 60 * 1000L
 
-    // 樱花隧道是自签证书：标准 HttpsURLConnection 会握手失败，异常又被下面吞掉，
-    // 结果就是「日志回传从来没成功过」。只对自己的域名放行，其它仍严格校验证书。
-    private val trustAll by lazy {
-        val tm = object : javax.net.ssl.X509TrustManager {
-            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
-        }
-        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
-        ctx.socketFactory to javax.net.ssl.HostnameVerifier { _, _ -> true }
-    }
-
-    private fun openTrusted(url: java.net.URL): HttpURLConnection {
-        val conn = url.openConnection() as HttpURLConnection
-        val host = url.host.lowercase()
-        if (conn is javax.net.ssl.HttpsURLConnection &&
-            (host == "frp-bar.com" || host.endsWith(".frp-bar.com") || host.endsWith(".fabao.xin"))
-        ) {
-            conn.sslSocketFactory = trustAll.first
-            conn.hostnameVerifier = trustAll.second
-        }
-        return conn
-    }
+    // 走标准证书校验（各域名都用真证书，不再放行自签）。
+    private fun openTrusted(url: java.net.URL): HttpURLConnection =
+        url.openConnection() as HttpURLConnection
 
     fun start() {
         Thread {
