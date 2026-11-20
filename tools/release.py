@@ -227,6 +227,8 @@ def stage_android(version, code, notes, url_base):
 def build_pc(version, props, no_build=False):
     if not no_build:
         args = [GRADLE_PC, "packageMsi", "-PpcVersion=%s" % version]
+        for k, v in props.items():
+            args.append("-P%s=%s" % (k, v))
         run(args, cwd=ROOT, env={"JAVA_HOME": JDK})
     msi_dir = os.path.join(ROOT, "build", "compose", "binaries", "main", "msi")
     if not os.path.isdir(msi_dir):
@@ -238,8 +240,8 @@ def build_pc(version, props, no_build=False):
     return os.path.join(msi_dir, names[-1])
 
 
-def stage_pc(version, notes, no_build=False):
-    src = build_pc(version, {}, no_build)
+def stage_pc(version, notes, props=None, no_build=False):
+    src = build_pc(version, props or {}, no_build)
     out = os.path.join(ROOT, "dist", "pc", version)
     os.makedirs(out, exist_ok=True)
     dst = os.path.join(out, "kaixinguo-%s.msi" % version)
@@ -270,6 +272,22 @@ def upload(files, manifests):
         if p.returncode != 0 or local not in p.stdout:
             die("远端校验失败: " + name)
     print("上传并校验通过: %d 个文件" % (len(files) + len(manifests)))
+
+
+def prune_remote(keep=2):
+    """发版后立即在服务器上只保留每个产品最新 N 版安装包，更旧的归档到数据盘。
+    服务器上由 ark-prune-pkgs.sh 执行；失败只告警，不影响本次发版结果。"""
+    try:
+        p = subprocess.run(
+            ["ssh", SERVER, "/usr/local/bin/ark-prune-pkgs.sh %d" % keep],
+            capture_output=True, text=True)
+        msg = (p.stdout or "").strip() or (p.stderr or "").strip()
+        if p.returncode == 0:
+            print("远端旧包清理:", msg)
+        else:
+            print("WARN: 远端旧包清理未成功（不影响本次发布）：", msg)
+    except Exception as exc:
+        print("WARN: 远端旧包清理异常（不影响本次发布）：", exc)
 
 
 def copy_to_desktop(version):
@@ -309,6 +327,7 @@ def cmd_android(a):
     print("产物目录:", os.path.join(ROOT, "dist", "android", version))
     if not a.no_upload:
         upload(files, manifests)
+        prune_remote()
     if a.desktop_copy:
         copy_to_desktop(version)
 
@@ -318,10 +337,12 @@ def cmd_pc(a):
     version = a.version or (bump_version(cur_name) if a.bump else cur_name)
     if a.bump:
         write_version_pc(version)
-    files, manifests = stage_pc(version, a.notes, no_build=a.no_build)
+    props = load_props(a.env)
+    files, manifests = stage_pc(version, a.notes, props, no_build=a.no_build)
     print("产物目录:", os.path.join(ROOT, "dist", "pc", version))
     if not a.no_upload:
         upload(files, manifests)
+        prune_remote()
 
 
 def main():
