@@ -473,9 +473,6 @@ fun PlayerScreen(
 
         val src = withContext(Dispatchers.IO) {
             fun normalSource(): PlaySource {
-                // PC 的 FFmpeg 内核是「视频/音频两个 ffmpeg 进程」，读还在增长的直播 HLS
-                // 会各自追播放列表，实测卡成幻灯片。PC 不做冷启动 HLS，仍按整集等待
-                // （安卓 ExoPlayer 单进程处理直播 HLS 正常，保留边转边播）。
                 var list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
                 // 全 VVC 集要先等服务端转码：以前这里直接往下 play()，
                 // 202 转码中会被当成取流失败。等 job 完成再取一次档位。
@@ -485,9 +482,7 @@ fun PlayerScreen(
                         val done = PlaybackApi.awaitTranscode(job, 60_000L)
                         PlaybackApi.clearPendingJob(ep.vid)
                         if (done) {
-                            list = runCatching {
-                                PlaybackApi.tiers(ep.vid, priority = true)
-                            }.getOrDefault(emptyList())
+                            list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
                         }
                     }
                 }
@@ -495,10 +490,7 @@ fun PlayerScreen(
                 val picked = if (quality > 0) list.firstOrNull { it.height == quality }
                 else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
                     ?: list.maxByOrNull { it.height }
-                val info = picked?.toPlayInfo()
-                    ?: PlaybackApi.play(ep.vid, 1004, PcStore.maxHeight)
-                // 冷启动 VVC：服务端边转边出 HLS，FFmpeg 内核直接读 m3u8，不建本地代理
-                if (info.hls && info.url.contains(".m3u8")) return PlaySource.Hls(info)
+                val info = picked?.toPlayInfo() ?: PlaybackApi.play(ep.vid, 1004, PcStore.maxHeight)
                 val rv = RemoteVideo(info)
                 rv.prepare()
                 val px = StreamProxy(rv)
@@ -547,20 +539,10 @@ fun PlayerScreen(
         if (src is PlaySource.Stream) {
             remote = src.remote
             proxy = src.proxy
-        } else {
-            remote = null
-            proxy = null
         }
         loadingNote = ""
 
-        val eng = VideoEngine(
-            when (src) {
-                is PlaySource.Stream -> src.proxy.url
-                is PlaySource.Hls -> src.info.url
-            },
-            // HLS 播放列表还在增长：进度条总长用服务端下发的整集时长
-            knownDurationMs = if (src is PlaySource.Hls) src.info.durationMs else 0L,
-        )
+        val eng = VideoEngine((src as PlaySource.Stream).proxy.url)
         engine = eng
         // 换集/起播：新引擎从 0 开始播，暂停状态和「启动宽限」一起重置
         userPaused = false
@@ -2418,8 +2400,7 @@ private fun EmojiPanel(onPick: (String) -> Unit) {
     }
 }
 
-/** 一集的播放源：普通加密流（本地代理）或冷启动 HLS（服务端边转边播）。 */
+/** 一集的播放源：普通加密流（本地代理）或 VVC（本机转换后的干净 MP4）。 */
 private sealed interface PlaySource {
     class Stream(val remote: RemoteVideo, val proxy: StreamProxy, val info: com.hongguotv.pad.PlayInfo) : PlaySource
-    class Hls(val info: com.hongguotv.pad.PlayInfo) : PlaySource
 }

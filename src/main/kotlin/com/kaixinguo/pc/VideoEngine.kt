@@ -35,7 +35,7 @@ import javax.sound.sampled.SourceDataLine
  *
  * 起播/切集/拖动 = 带 `-ss` 重启两个进程；暂停 = 停进程记位置。
  */
-class VideoEngine(private val sourceUrl: String, private val knownDurationMs: Long = 0L) {
+class VideoEngine(private val sourceUrl: String) {
 
     data class Info(
         val width: Int,
@@ -115,9 +115,7 @@ class VideoEngine(private val sourceUrl: String, private val knownDurationMs: Lo
         outHeight = minOf(720, srcH)
         outWidth = (srcW.toDouble() * outHeight / srcH).toInt().let { it - (it % 2) }
 
-        val result = Info(srcW, srcH, fps.coerceIn(1.0, 60.0), hasAudio,
-            // HLS 冷启动：播放列表只转出几秒，总长用服务端下发的整集时长
-            if (knownDurationMs > duration) knownDurationMs else duration)
+        val result = Info(srcW, srcH, fps.coerceIn(1.0, 60.0), hasAudio, duration)
         info = result
         return result
     }

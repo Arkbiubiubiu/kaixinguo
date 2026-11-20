@@ -98,7 +98,6 @@ import com.hongguotv.pad.RankTabsel
 import com.hongguotv.pad.SeriesCard
 import com.hongguotv.pad.SeriesDetail
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -155,75 +154,34 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         PageMemo.feedPage = feedCursor
     }
 
-    /** 续一页：成功后回调（换剧时推进 cursor；预取时不需要）。 */
-    fun loadMore(andThen: (() -> Unit)? = null) {
-        val c = feedCursor ?: return
-        if (!c.hasMore || moreLoading) return
-        moreLoading = true
-        scope.launch(Dispatchers.IO) {
-            val np = runCatching {
-                Api.feedNext(
-                    feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
-                    cards.map { it.seriesId }, refresh = true,
-                )
-            }.getOrNull()
-            if (np != null && np.cards.isNotEmpty()) {
-                val known = cards.map { it.seriesId }.toSet()
-                cards = cards + np.cards.filter { it.seriesId !in known }
-                feedCursor = np
-                andThen?.invoke()
-            } else {
-                feedCursor = c.copy(hasMore = false)
-            }
-            moreLoading = false
-        }
-    }
-
     // 滚轮换剧（旧版 onWheelStep 同语义）：向下=下一部，向上=上一部；
-    // 走到列表尾自动续一页
+    // 接近列表尾（剩 2 部）自动 cell/change 翻页续上
     fun wheelStep(dir: Int) {
         val next = cursor + dir
         if (next < 0) return
         if (next >= cards.size) {
-            loadMore { cursor = next.coerceAtMost(cards.lastIndex) }
+            val c = feedCursor ?: return
+            if (!c.hasMore || moreLoading) return
+            moreLoading = true
+            scope.launch(Dispatchers.IO) {
+                val np = runCatching {
+                    Api.feedNext(
+                        feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
+                        cards.map { it.seriesId }, refresh = true,
+                    )
+                }.getOrNull()
+                if (np != null && np.cards.isNotEmpty()) {
+                    val known = cards.map { it.seriesId }.toSet()
+                    cards = cards + np.cards.filter { it.seriesId !in known }
+                    feedCursor = np
+                } else {
+                    feedCursor = c.copy(hasMore = false)
+                }
+                moreLoading = false
+            }
             return
         }
         cursor = next
-    }
-
-    // 刚进刷剧就把下一页拉好，不等切到第 16 集现拉
-    var autoPrefetched by remember { mutableStateOf(false) }
-    LaunchedEffect(tab) { autoPrefetched = false }
-    LaunchedEffect(feedCursor, cards.size) {
-        val c = feedCursor ?: return@LaunchedEffect
-        if (!c.hasMore || autoPrefetched) return@LaunchedEffect
-        delay(1_200)
-        autoPrefetched = true
-        loadMore()
-    }
-    LaunchedEffect(cursor, cards.size, feedCursor) {
-        if (feedCursor?.hasMore == true && cursor >= cards.size - 4) loadMore()
-    }
-
-    // 刷剧预载：PC 端不做全量视频预取（会和正在播的那一路抢带宽），
-    // 只保留前面的「下一页提前加载」；切剧仍按正常流程取流。
-
-    // 刷剧预载：只在刷剧页存在时，把后面 5 部的第一集真实流备好
-    //（档位+解密头部+本地代理），切剧由 PlayerScreen.take(vid) 直接接管。
-    // 离开刷剧页时 PlayerScreen 的 clear() 会释放全部预取。
-    LaunchedEffect(tab, cards, cursor) {
-        val targets = cards.drop(cursor + 1).take(5)
-        if (targets.isEmpty()) return@LaunchedEffect
-        delay(1_500)
-        targets.forEach { card ->
-            if (card.seriesId.isEmpty()) return@forEach
-            val d = withContext(Dispatchers.IO) {
-                runCatching { Api.ensureDetail(card.seriesId) }.getOrNull()
-            } ?: return@forEach
-            val vid = d.episodes.firstOrNull()?.vid ?: return@forEach
-            runCatching { PlaybackPrefetch.warmFeed(vid, PcStore.maxHeight) }
-            delay(700)
-        }
     }
 
     val current = cards.getOrNull(cursor)

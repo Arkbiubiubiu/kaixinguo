@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -27,7 +26,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -63,10 +61,6 @@ fun FeedScreen(
     var loading by remember { mutableStateOf(true) }
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-
-    // 离开刷剧板块（切到漫剧/首页/播放器等）立刻清掉所有预取连接，
-    // 否则后台的 5 部预取会继续和正常播放抢带宽（2026-11-21 用户实测）。
-    DisposableEffect(Unit) { onDispose { FeedPreload.clear() } }
 
     LaunchedEffect(tab) {
         // 从详情/播放返回同一次刷剧会话：保留当前剧与位置（只此一种例外）。
@@ -111,56 +105,36 @@ fun FeedScreen(
         UiMemo.feedPage = page
     }
 
-    /** 续一页：成功后回调（换剧时用来推进 cursor；预取时不需要）。 */
-    fun loadMore(andThen: (() -> Unit)? = null) {
-        val c = page ?: return
-        if (!c.hasMore || moreLoading) return
-        moreLoading = true
-        scope.launch {
-            val np = withContext(Dispatchers.IO) {
-                runCatching {
-                    Api.feedNext(
-                        feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
-                        cards.map { it.seriesId }, refresh = true,
-                    )
-                }.getOrNull()
-            }
-            if (np != null && np.cards.isNotEmpty()) {
-                val known = cards.map { it.seriesId }.toSet()
-                cards = cards + np.cards.filter { it.seriesId !in known }
-                page = np
-                andThen?.invoke()
-            } else {
-                page = c.copy(hasMore = false)
-            }
-            moreLoading = false
-        }
-    }
-
     /** 换剧：-1 上一部 / +1 下一部；走到列表尾自动续一页。 */
     fun step(dir: Int) {
         val next = cursor + dir
         if (next < 0) return
         if (next >= cards.size) {
-            loadMore { cursor = next.coerceAtMost(cards.lastIndex) }
+            val c = page ?: return
+            if (!c.hasMore || moreLoading) return
+            moreLoading = true
+            scope.launch {
+                val np = withContext(Dispatchers.IO) {
+                    runCatching {
+                        Api.feedNext(
+                            feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
+                            cards.map { it.seriesId }, refresh = true,
+                        )
+                    }.getOrNull()
+                }
+                if (np != null && np.cards.isNotEmpty()) {
+                    val known = cards.map { it.seriesId }.toSet()
+                    cards = cards + np.cards.filter { it.seriesId !in known }
+                    page = np
+                    cursor = next.coerceAtMost(cards.lastIndex)
+                } else {
+                    page = c.copy(hasMore = false)
+                }
+                moreLoading = false
+            }
             return
         }
         cursor = next
-    }
-
-    // 刚进刷剧就先把下一页拉好（而不是等切到第 16 集才现拉）
-    var autoPrefetched by remember { mutableStateOf(false) }
-    LaunchedEffect(tab) { autoPrefetched = false }
-    LaunchedEffect(page, cards.size) {
-        val c = page ?: return@LaunchedEffect
-        if (!c.hasMore || autoPrefetched) return@LaunchedEffect
-        delay(1_200)
-        autoPrefetched = true
-        loadMore()
-    }
-    // 接近列表尾也持续续页，保证永远留有前瞻
-    LaunchedEffect(cursor, cards.size, page) {
-        if (page?.hasMore == true && cursor >= cards.size - 4) loadMore()
     }
 
     BackHandler { UiMemo.feedReturnKeep = false; onExit() }
