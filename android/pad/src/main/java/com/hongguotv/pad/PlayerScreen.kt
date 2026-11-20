@@ -186,6 +186,10 @@ fun PlayerScreen(
     var prefetchSlot by remember { mutableStateOf<CompletableDeferred<ReadyEpisode?>?>(null) }
     /** 正在预取哪一集（-1 = 没在预取）；切成别的集时靠它让预取自己收手 */
     var prefetchWant by remember { mutableStateOf(-1) }
+    /** 当前正在用 HLS 冷启动播放的 vid；失败时自动退回整集 MP4 */
+    var hlsPlayingVid by remember { mutableStateOf("") }
+    /** 这一集 HLS 已失败：重试时带 allowHls=false，等服务端整集转码 */
+    var hlsBlockedVid by remember { mutableStateOf("") }
 
     // 播放器监听器用（避免闭包捕获旧值）
     //
@@ -193,6 +197,9 @@ fun PlayerScreen(
     // listener 里闭包捕获的全是首次组合时的值。之前只包了 index 和集数，
     // seriesId 没包 —— 结果跨季之后（第一季→第二季）listener 里还是第一季的 id，
     // 于是第二季第 1 集播完会用第一季的 id 去切第 2 集，看起来就是「跳回第一季」。
+    // 换集/换剧：上一集因 HLS 失败而禁用 HLS 的标记不能带过来
+    LaunchedEffect(index) { hlsBlockedVid = "" }
+
     val curIndex by rememberUpdatedState(index)
     /**
      * 给播放器监听器用的「设置当前集号」入口。
@@ -340,6 +347,9 @@ fun PlayerScreen(
         while (true) {
             kotlinx.coroutines.delay(500)
             if (firstFrameAt != 0L || autoSoftTried) break
+            // HLS 冷启动首帧本来就要等分片下载（往往 3~6 秒），
+            // 这时切软解会重建播放器、又从头拉分片，越切越卡
+            if (hlsPlayingVid.isNotEmpty()) break
             if (player.playbackState == Player.STATE_READY && player.isPlaying && player.currentPosition > 2500) {
                 autoSoftTried = true
                 android.util.Log.w("nextup", "no frame in ${player.currentPosition}ms -> auto soft decode")
@@ -479,7 +489,22 @@ fun PlayerScreen(
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 val msg = error.message.orEmpty()
-                Log.e("Playback", "player error index=$curIndex code=${error.errorCode} $msg")
+                Log.e("Playback", "player error index=$curIndex code=${error.errorCode} $msg hls=$hlsPlayingVid")
+                // 冷启动 HLS 失败（分片/隧道抖动/播放列表异常）：自动退回整集 MP4，
+                // 服务端本来就在转这一集，等它转完即可，不把整集判死。
+                if (hlsPlayingVid.isNotEmpty() && hlsPlayingVid == episodes.getOrNull(curIndex - 1)?.vid &&
+                    watchdog.consumeRetry()
+                ) {
+                    Log.e("Playback", "hls error -> fallback full mp4 vid=$hlsPlayingVid")
+                    hlsBlockedVid = hlsPlayingVid
+                    hlsPlayingVid = ""
+                    PlaybackApi.clearTierCache()
+                    runCatching { player.clearMediaItems() }
+                    ps.preparing = true
+                    ps.failed = null
+                    ps.attempt += 1
+                    return
+                }
                 // 证书错误/直链 404/旧地址：旧档位缓存可能还是自签证书域名或过期直链。
                 // 清掉档位缓存、清空 ExoPlayer 队列（防止它自己连跳几集），重取一次。
                 if (PlaybackErrorPolicy.isRecoverable(msg) && watchdog.consumeRetry()) {
@@ -727,7 +752,7 @@ fun PlayerScreen(
         try {
             // 档位表一次拿全（含直链/编码），切清晰度直接用表里的地址，不再请求上游
             var ts = withContext(Dispatchers.IO) {
-                runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = true) }.getOrDefault(emptyList())
+                runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = false) }.getOrDefault(emptyList())
             }
             // 全 VVC 集：服务端要先转码才有档位。以前这里直接往下走 play()，失败后
             // 外层就把这一集判死（预取队列只剩下一集，播完直接跳过去）。必须像预取
@@ -739,7 +764,7 @@ fun PlayerScreen(
                     PlaybackApi.clearPendingJob(ep.vid)
                     if (done) {
                         ts = withContext(Dispatchers.IO) {
-                            runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = true) }.getOrDefault(emptyList())
+                            runCatching { PlaybackApi.tiers(ep.vid, priority = true, allowHls = false) }.getOrDefault(emptyList())
                         }
                     }
                 }
@@ -754,11 +779,12 @@ fun PlayerScreen(
             // 刷剧：后面几部已经预载过（详情 + 档位 + 解密代理头部），直接接管
             val pre = if (feed) FeedPreload.take(seriesId) else null
             val info = pre?.info ?: picked?.toPlayInfo()
-                ?: withContext(Dispatchers.IO) { PlaybackApi.play(ep.vid, 1004, defWant, allowHls = true) }
+                ?: withContext(Dispatchers.IO) { PlaybackApi.play(ep.vid, 1004, defWant, allowHls = false) }
             ps.curDef = info.height
             // 冷启动 VVC：服务端边转边出 HLS，这里直接播播放列表，不建本地代理。
             // 后台 do_live 跑完会写 _v4.mp4，下一次播放就走整集缓存。
             val hlsMode = info.hls && info.url.contains(".m3u8")
+            hlsPlayingVid = if (hlsMode) ep.vid else ""
             // 注意：不要再按「历史标记」直接跳过这一集。
             // 标记只说明「某次、某个清晰度」确实解不了，不代表现在也解不了
             // （21 集曾被旧标记误判成 bvc2，VVC 页发现是 hvc1 又交回来，来回跳）。
@@ -967,7 +993,10 @@ fun PlayerScreen(
                 when (watchdog.onTick(
                     position = position,
                     now = watchdogNow,
-                    active = player.isPlaying || player.playbackState == Player.STATE_BUFFERING,
+                    // HLS 冷启动的缓冲由分片进度决定，8 秒看门狗会误判成「卡死」并重建；
+                    // 真正的 HLS 错误交给 onPlayerError 退回整集 MP4
+                    active = hlsPlayingVid.isEmpty() &&
+                        (player.isPlaying || player.playbackState == Player.STATE_BUFFERING),
                     preparing = ps.preparing,
                     switching = ps.switching,
                 )) {
