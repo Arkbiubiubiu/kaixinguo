@@ -1,25 +1,20 @@
-#!/bin/bash
-# 开心果发版一条龙：bump 版本号 → 构建 → 签名 → 部署 → 生成更新清单
+﻿#!/bin/bash
+# 寮€蹇冩灉鍙戠増涓€鏉￠緳锛歜ump 鐗堟湰鍙?鈫?鏋勫缓 鈫?绛惧悕 鈫?閮ㄧ讲 鈫?鐢熸垚鏇存柊娓呭崟
 #
-# 用法：
-#   release.sh "更新说明"        正常发版（版本号 +1）
-#   release.sh --resume "说明"   版本号已改过，直接构建/部署/写清单
-#
-# 注意：脚本用 set -euo pipefail，所有「命令 | head」式管道都会因 head 提前退出
-# 触发 SIGPIPE 而误杀脚本 —— 一律先取进变量再打印。
-set -euo pipefail
+# 鐢ㄦ硶锛?#   release.sh "鏇存柊璇存槑"        姝ｅ父鍙戠増锛堢増鏈彿 +1锛?#   release.sh --resume "璇存槑"   鐗堟湰鍙峰凡鏀硅繃锛岀洿鎺ユ瀯寤?閮ㄧ讲/鍐欐竻鍗?#
+# 娉ㄦ剰锛氳剼鏈敤 set -euo pipefail锛屾墍鏈夈€屽懡浠?| head銆嶅紡绠￠亾閮戒細鍥?head 鎻愬墠閫€鍑?# 瑙﹀彂 SIGPIPE 鑰岃鏉€鑴氭湰 鈥斺€?涓€寰嬪厛鍙栬繘鍙橀噺鍐嶆墦鍗般€?set -euo pipefail
 cd /opt/hongguo-redo
 
 MODE=normal
 if [ "${1:-}" = "--resume" ]; then MODE=resume; shift; fi
 NOTES="${1:-}"
-[ -z "$NOTES" ] && { echo "用法: release.sh [--resume] \"更新说明\""; exit 1; }
+[ -z "$NOTES" ] && { echo "鐢ㄦ硶: release.sh [--resume] \"鏇存柊璇存槑\""; exit 1; }
 
 GRADLE=/opt/gradle/bin/gradle
 BT=/opt/android-sdk/build-tools/35.0.0
 UP=/srv/hgtv-update
 
-# ---------- 1) 版本号 ----------
+# ---------- 1) 鐗堟湰鍙?----------
 VC=$(grep -o 'versionCode = [0-9]*' pad/build.gradle.kts | head -1 | grep -o '[0-9]*' || true)
 VN=$(grep -o 'versionName = "[0-9.]*"' pad/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/' || true)
 if [ "$MODE" = "normal" ]; then
@@ -35,40 +30,38 @@ PYEOF
 else
     VC2=$VC; VN2=$VN
 fi
-echo "== 版本：$VC2/$VN2"
+echo "== 鐗堟湰锛?VC2/$VN2"
 
-# ---------- 2) 构建 ----------
-# 服务器地址不再写死在源码里，只能靠构建参数注入：
-#   - 自用发版（本脚本）必须带这五个参数，否则装到电视上会变成「要手动填签名服务」
-#   - GitHub 上发布的公开包故意不带，源码和安装包里都不含任何地址
+# ---------- 2) 鏋勫缓 ----------
+# 鏈嶅姟鍣ㄥ湴鍧€涓嶅啀鍐欐鍦ㄦ簮鐮侀噷锛屽彧鑳介潬鏋勫缓鍙傛暟娉ㄥ叆锛?#   - 鑷敤鍙戠増锛堟湰鑴氭湰锛夊繀椤诲甫杩欎簲涓弬鏁帮紝鍚﹀垯瑁呭埌鐢佃涓婁細鍙樻垚銆岃鎵嬪姩濉鍚嶆湇鍔°€?#   - GitHub 涓婂彂甯冪殑鍏紑鍖呮晠鎰忎笉甯︼紝婧愮爜鍜屽畨瑁呭寘閲岄兘涓嶅惈浠讳綍鍦板潃
 SERVER_ARGS="-PsignUrl=http://192.168.1.54:9100"
 SERVER_ARGS="$SERVER_ARGS -PplayBases=http://192.168.1.54:8080,https://hgtv.fabao.xin"
-SERVER_ARGS="$SERVER_ARGS -PplayToken=hgtv-play-2026"
+SERVER_ARGS="$SERVER_ARGS -PplayToken=ROTATED_OUT_old_token"
 SERVER_ARGS="$SERVER_ARGS -PupdateBases=http://192.168.1.54:8080,https://hgtv.fabao.xin"
 SERVER_ARGS="$SERVER_ARGS -PhistoryBase=https://hgtv.fabao.xin"
 
 S=$(date +%s)
-OUT=$($GRADLE :pad:assembleTvRelease :pad:assemblePadDebug $SERVER_ARGS 2>&1) || { echo "$OUT" | grep -E '^e:|BUILD' | head -10; echo "!! 构建失败"; exit 1; }
+OUT=$($GRADLE :pad:assembleTvRelease :pad:assemblePadDebug $SERVER_ARGS 2>&1) || { echo "$OUT" | grep -E '^e:|BUILD' | head -10; echo "!! 鏋勫缓澶辫触"; exit 1; }
 BUILD_LINE=$(echo "$OUT" | grep -E 'BUILD' | head -1)
-echo "== 构建：$BUILD_LINE（$(( $(date +%s) - S )) 秒）"
+echo "== 鏋勫缓锛?BUILD_LINE锛?(( $(date +%s) - S )) 绉掞級"
 
-# ---------- 3) 签名 ----------
+# ---------- 3) 绛惧悕 ----------
 cd pad/build/outputs/apk/tv/release
 $BT/zipalign -f -p 4 pad-tv-release-unsigned.apk aligned.apk
 $BT/apksigner sign --ks /root/.android/debug.keystore --ks-pass pass:android \
     --key-pass pass:android --ks-key-alias androiddebugkey --out signed.apk aligned.apk
 CERT=$($BT/apksigner verify --print-certs signed.apk | grep -m1 'SHA-256 digest' || true)
 BADGE=$($BT/aapt2 dump badging signed.apk | grep -m1 'package: name' || true)
-echo "== 签名：$CERT"
-echo "== 包：$BADGE"
+echo "== 绛惧悕锛?CERT"
+echo "== 鍖咃細$BADGE"
 cd /opt/hongguo-redo
 
-# ---------- 4) 部署 ----------
+# ---------- 4) 閮ㄧ讲 ----------
 cp pad/build/outputs/apk/tv/release/signed.apk "$UP/app-tv-release.apk"
 cp pad/build/outputs/apk/pad/debug/pad-pad-debug.apk "$UP/hongguo-pad-$VN2.apk"
-echo "== 已部署到 $UP"
+echo "== 宸查儴缃插埌 $UP"
 
-# ---------- 5) 生成更新清单 ----------
+# ---------- 5) 鐢熸垚鏇存柊娓呭崟 ----------
 python3 - "$UP" "$VC2" "$VN2" "$NOTES" <<'PYEOF'
 import hashlib, json, os, sys
 UP, VC, VN, NOTES = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -93,7 +86,7 @@ def write(name, apk):
     }
     json.dump(d, open(os.path.join(UP, name), 'w', encoding='utf-8'),
               ensure_ascii=False, indent=1)
-    print(f"清单 {name}: {d['size']} 字节  sha256={d['sha256'][:16]}…")
+    print(f"娓呭崟 {name}: {d['size']} 瀛楄妭  sha256={d['sha256'][:16]}鈥?)
 
 write('version-hgpad.json', f'hongguo-pad-{VN}.apk')
 write('version-tv.json', 'app-tv-release.apk')

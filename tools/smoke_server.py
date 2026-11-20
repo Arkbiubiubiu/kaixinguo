@@ -1,19 +1,19 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""开心果服务端冒烟 / 黄金用例（Phase 0）。
+"""寮€蹇冩灉鏈嶅姟绔啋鐑?/ 榛勯噾鐢ㄤ緥锛圥hase 0锛夈€?
 
-用法（不要把 token 写进仓库）：
+鐢ㄦ硶锛堜笉瑕佹妸 token 鍐欒繘浠撳簱锛夛細
   KXG_BASE=http://192.168.1.54:8080 \
   KXG_TOKEN=... \
   KXG_VIDS=766...,766... \
   python3 tools/smoke_server.py
 
-覆盖：
-- /api/flags 服务端功能开关
-- /api/admin/tree 架构世界树
-- /api/history 最近真实播放合并（低集数/0秒旧记录/真实播放）
-- /api/playinfo 取流（带 X-Request-Id，验证 requestId 链路入口）
-- version-tv/hgpad manifest 的 path/size/sha/abis 结构
+瑕嗙洊锛?
+- /api/flags 鏈嶅姟绔姛鑳藉紑鍏?
+- /api/admin/tree 鏋舵瀯涓栫晫鏍?
+- /api/history 鏈€杩戠湡瀹炴挱鏀惧悎骞讹紙浣庨泦鏁?0绉掓棫璁板綍/鐪熷疄鎾斁锛?
+- /api/playinfo 鍙栨祦锛堝甫 X-Request-Id锛岄獙璇?requestId 閾捐矾鍏ュ彛锛?
+- version-tv/hgpad manifest 鐨?path/size/sha/abis 缁撴瀯
 """
 import json
 import os
@@ -25,7 +25,7 @@ import urllib.request
 BASE = os.environ.get("KXG_BASE", "http://192.168.1.54:8080").rstrip("/")
 TOKEN = os.environ.get("KXG_TOKEN", "")
 VIDS = [x.strip() for x in os.environ.get("KXG_VIDS", "").split(",") if x.strip()]
-PLAY_TOKEN = os.environ.get("KXG_PLAY_TOKEN", "hgtv-play-2026")
+PLAY_TOKEN = os.environ.get("KXG_PLAY_TOKEN", "ROTATED_OUT_old_token")
 
 
 def req(path, method="GET", body=None, headers=None):
@@ -54,7 +54,7 @@ def check(ok, name, detail=""):
 
 def main():
     if not TOKEN:
-        print("需要 KXG_TOKEN（看板 token）")
+        print("闇€瑕?KXG_TOKEN锛堢湅鏉?token锛?)
         return 2
 
     code, flags = get_json("/api/flags", {"X-Token": PLAY_TOKEN})
@@ -92,7 +92,7 @@ def main():
 
     req("/api/history?key=" + key, "POST", {"mode": "delete", "seriesIds": []}, h)
 
-    # 同集 0 秒记录不能压过真实秒数
+    # 鍚岄泦 0 绉掕褰曚笉鑳藉帇杩囩湡瀹炵鏁?
     key2 = secrets.token_hex(32)
     req("/api/history?key=" + key2, "POST", {"items": [row(10, 5000, 0)]}, h)
     _, out = req("/api/history?key=" + key2, "POST", {"items": [row(10, 1000, 5000)]}, h)
