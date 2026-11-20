@@ -47,7 +47,7 @@ N = [
     # L2 domains
     dict(id="D-CATALOG", layer="L2", name="内容目录", summary="首页/找剧/排行/新剧/日历的数据编排与缓存；新剧翻页必须带 session_id（只传 offset 上游会重复第 1 页）。", files=["HomeFeed.kt / FeedCache.kt", "Api.landpage/tab/search/rank/new"]),
     dict(id="D-DETAIL", layer="L2", name="详情/选集/季", summary="详情、集数映射、季切换、相关推荐、剧评。", files=["DetailScreen.kt 两端", "Api.ensureDetail/seasons/reviews/related"]),
-    dict(id="D-PLAY", layer="L2", name="播放编排", summary="选档、取流、预取、队列、无缝切集、看门狗、清晰度/倍速。", files=["PlayerScreen.kt / Player.kt", "PlaybackSession.kt", "PlaybackSourcePlanner.kt", "PlaybackGuard.kt", "PlayerUiState.kt", "PlaybackPrefetch.kt", "FeedPreload.kt"]),
+    dict(id="D-PLAY", layer="L2", name="播放编排", summary="选档、取流、预取、队列、无缝切集、看门狗、清晰度/倍速；**全 VVC 集先等转码 job 再选档**；**下一集未就绪不得预排后一集，防止播完跳过 N+1**。", files=["PlayerScreen.kt / Player.kt", "PlaybackSession.kt", "PlaybackSourcePlanner.kt", "PlaybackGuard.kt", "PlayerUiState.kt", "PlaybackPrefetch.kt", "FeedPreload.kt"]),
     dict(id="D-HISTORY", layer="L2", name="历史 / 续播", summary="记录真实播放、续播秒数、跨端合并、历史页。合并策略已收口到 HistoryRepository（PC/Android 共用）。", files=["HistoryStore.kt / PcHistoryStore.kt", "HistoryRepository.kt", "Api.historySync/reportProgress"]),
     dict(id="D-ACCOUNT", layer="L2", name="账号 / 书架", summary="登录、配对、收藏、点赞、追更、预约、云端状态。", files=["Login.kt / PcLogin.kt", "Api.shelf/follow/reserve/like/pair"]),
     dict(id="D-SOCIAL", layer="L2", name="评论 / 弹幕", summary="单集评论、剧评、回复、点赞、弹幕拉取/发送/渲染。", files=["CommentsPanel.kt", "Danmaku.kt", "Player.kt 弹幕层"]),

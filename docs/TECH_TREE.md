@@ -418,10 +418,12 @@ flowchart LR
     - TV 普通播放：按下键弹出控制条时自动把焦点落到播放/暂停键；每次按 ↓ 用 `chromeFocusTick` 强制重试；按钮行/浮层容器初次 `onFocusChanged(false)` 不再清掉 `focusOnShow`（安卓 2.2.200）。
     - 播放连接：两份 `Playback.kt` 的 `RemoteVideo` 网络 IOException（connection reset/EOF/超时）自动换新连接重试一次；PC 把“播放器正常断开”日志降级为 D（PC 1.2.86 / 安卓 2.2.201）。
     - VVC/AV1 首播等待：PC/安卓详情页加载完成后后台预热前 2 集（`PlaybackApi.tiers(vid, priority=false)`），让服务端提前排队转码；取流超过 3 秒仍未就绪，播放页在加载圈下显示“片源正在准备，首次播放可能需要几十秒…”，代替只转圈（PC 1.2.87 / 安卓 2.2.202）。
-    - 版本：PC 1.2.87 / 安卓 2.2.202（2026-11-19）。
+    - VVC 集转码等待：主播放路径（PC `normalSource()` / 安卓起播 effect）拿到空档位且存在 `pendingJob` 时，等 job 最多 60s 再取一次档位，不再把 202「转码中」当取流失败（PC 1.2.88 / 安卓 2.2.203）。
+    - 预取顺序约束：预取 N+1 失败时必须停止，不得继续把 N+2 挂进播放器队列；否则当前集播完 ExoPlayer 会直接播 N+2（用户看到“卡一下然后跳过一集”，2026-11-20 修，PC 1.2.88 / 安卓 2.2.203）。
+    - 版本：PC 1.2.88 / 安卓 2.2.203（2026-11-20）。
 
 13. **更新包统一走 GitHub Release 镜像**
-    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.87-2.2.202`，含 PC 1.2.87 / 安卓 & TV 2.2.202 的全部 ABI/通用包和清单。
+    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.88-2.2.203`，含 PC 1.2.88 / 安卓 & TV 2.2.203 的全部 ABI/通用包和清单。
     - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：固定 tag 的 `axisnow.gh-proxy.org/.../releases/download/<tag>` → `gh-proxy.org` → 樱花四条 → cpolar；tag 读 `/srv/hgtv-update/github-release-tag`。**不要用 `latest/download`：axisnow/CDN 会缓存旧内容**。
     - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 20MB 约 3 秒（7.29MB/s），樱花约 16 秒（1.25MB/s）。官网 `/get/<file>` 302 到同一固定 tag 镜像，不由服务器中转。
     - 以后发版必须同时上传 GitHub Release 资产，并更新 `/srv/hgtv-update/github-release-tag`；不要依赖 latest。

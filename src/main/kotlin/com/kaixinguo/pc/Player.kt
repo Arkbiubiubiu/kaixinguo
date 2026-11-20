@@ -473,7 +473,19 @@ fun PlayerScreen(
 
         val src = withContext(Dispatchers.IO) {
             fun normalSource(): PlaySource {
-                val list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                var list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                // 全 VVC 集要先等服务端转码：以前这里直接往下 play()，
+                // 202 转码中会被当成取流失败。等 job 完成再取一次档位。
+                if (list.isEmpty()) {
+                    val job = PlaybackApi.pendingJob(ep.vid)
+                    if (job != null) {
+                        val done = PlaybackApi.awaitTranscode(job, 60_000L)
+                        PlaybackApi.clearPendingJob(ep.vid)
+                        if (done) {
+                            list = runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                        }
+                    }
+                }
                 tiers = list
                 val picked = if (quality > 0) list.firstOrNull { it.height == quality }
                 else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }

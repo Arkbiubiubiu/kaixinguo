@@ -38,9 +38,12 @@ internal fun buildReady(
         // 全 VVC 集：服务端已排进异步转码 job，等它完成再取档位，
         // 下一集就不用落到同步 play() 的长等待。
         val job = PlaybackApi.pendingJob(ep.vid)
-        if (job != null && PlaybackApi.awaitTranscode(job, 60_000L)) {
+        if (job != null) {
+            val done = PlaybackApi.awaitTranscode(job, 60_000L)
             PlaybackApi.clearPendingJob(ep.vid)
-            ts = PlaybackApi.tiers(ep.vid)
+            // 就算 job 报了 failed 也再问一次：播放优先路径（priority=true）
+            // 会让服务端重新尝试转码，而不是把这一集永久判死。
+            ts = PlaybackApi.tiers(ep.vid, priority = !done)
         }
     }
     if (!alive()) return null

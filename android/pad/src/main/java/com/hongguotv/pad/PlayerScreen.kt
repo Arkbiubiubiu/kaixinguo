@@ -726,8 +726,23 @@ fun PlayerScreen(
         var created: Pair<RemoteVideo, StreamProxy>? = null
         try {
             // 档位表一次拿全（含直链/编码），切清晰度直接用表里的地址，不再请求上游
-            val ts = withContext(Dispatchers.IO) {
+            var ts = withContext(Dispatchers.IO) {
                 runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+            }
+            // 全 VVC 集：服务端要先转码才有档位。以前这里直接往下走 play()，失败后
+            // 外层就把这一集判死（预取队列只剩下一集，播完直接跳过去）。必须像预取
+            // 一样等 job，等完再取一次档位。
+            if (ts.isEmpty()) {
+                val job = PlaybackApi.pendingJob(ep.vid)
+                if (job != null) {
+                    val done = withContext(Dispatchers.IO) { PlaybackApi.awaitTranscode(job, 60_000L) }
+                    PlaybackApi.clearPendingJob(ep.vid)
+                    if (done) {
+                        ts = withContext(Dispatchers.IO) {
+                            runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                        }
+                    }
+                }
             }
             ps.tiers = ts
             val cap = if (defWant > 0) defWant else Store.maxHeight
@@ -908,6 +923,9 @@ fun PlayerScreen(
                 if (slot != null && prefetchSlot === slot) prefetchSlot = null
                 if (prefetchWant == want) prefetchWant = -1
             }
+            // 下一集没准备好就不要再往后排：否则播放器队列里只剩 N+2，
+            // 当前集播完会直接跳过 N+1（用户看到的就是「卡一下然后跳了一集」）。
+            if (produced == null) break
         }
     }
 
