@@ -107,12 +107,15 @@ class RemoteVideo(private val info: PlayInfo) {
      */
     private fun <T> retryIo(block: () -> T): T {
         var last: java.io.IOException? = null
-        for (attempt in 0 until 2) {
+        // 隧道会突发 reset：多给几次机会（250/600/1200ms 退避），
+        // 单次失败就把整条播放连接判死会直接黑屏。
+        val backoff = longArrayOf(250, 600, 1200)
+        for (attempt in 0 until 4) {
             try {
                 return block()
             } catch (e: java.io.IOException) {
                 last = e
-                if (attempt == 0) runCatching { Thread.sleep(250) }
+                if (attempt < backoff.size) runCatching { Thread.sleep(backoff[attempt]) }
             }
         }
         throw last ?: java.io.IOException("视频网络请求失败")
@@ -333,10 +336,17 @@ class StreamProxy(private val remote: RemoteVideo, port: Int = 0) {
                     var at = start
                     while (at <= end) {
                         val want = minOf(1024 * 1024L, end - at + 1).toInt()
-                        val data = remote.read(at, want)
+                        // 断流自动续拉：隧道偶发 reset 时同一位置重试 3 次（退避 0.4/0.8/1.2s），
+                        // 拉到了就继续推，不让视频进程读到 EOF（黑屏几秒）。
+                        var data = remote.read(at, want)
+                        var tries = 0
+                        while (data.isEmpty() && tries < 3) {
+                            Thread.sleep(400L * (tries + 1))
+                            data = remote.read(at, want)
+                            tries++
+                        }
                         if (data.isEmpty()) {
-                            // 短读：Content-Length 已声明完整长度，剩余字节发不出来时必须立刻断开，
-                            // 否则播放器会永久等待 body（黑屏/卡死）。断开后播放器可自行重试 Range。
+                            // 实在拉不到才断开；播放器会重试 Range，不会永久挂 body
                             Log.e("PadPlayer", "proxy short read at=$at end=$end（已发 ${at - start}B），断开连接")
                             return@use
                         }

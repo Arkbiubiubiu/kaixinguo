@@ -427,10 +427,11 @@ flowchart LR
     - 预取顺序约束：预取 N+1 失败时必须停止，不得继续把 N+2 挂进播放器队列；否则当前集播完 ExoPlayer 会直接播 N+2（用户看到“卡一下然后跳过一集”，2026-11-20 修，PC 1.2.88 / 安卓 2.2.203）。
     - **冷启动 HLS（安卓 2.2.204）**：没有 v4 缓存的 VVC 集第一次点开时，服务端先出 4 秒分片播放列表，几秒起播；后台转完整集写 v4，第二次起走整集 MP4。只有「冷启动的那一集」用 HLS，预取/下一集永远拿 MP4。
 
-    - 版本：PC 1.2.96 / 安卓 2.2.212（2026-11-21 完整回档）。
+    - 断流续拉（1.2.97 / 2.2.213）：`RemoteVideo` 的 `retryIo` 重试 2→4 次（250/600/1200ms 退避）；`StreamProxy` 推流遇到空块时同一位置再拉 3 次（0.4/0.8/1.2s），拉到了继续推，不再直接断连接导致几秒黑屏。
+    - 版本：PC 1.2.97 / 安卓 2.2.213（2026-11-21）。
 
 13. **更新包统一走 GitHub Release 镜像**
-    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.96-2.2.212`，含 PC 1.2.96 / 安卓 & TV 2.2.212 的全部 ABI/通用包和清单。
+    - 公开 Release：`Arkbiubiubiu/kaixinguo`，当前 tag `v1.2.97-2.2.213`，含 PC 1.2.97 / 安卓 & TV 2.2.213 的全部 ABI/通用包和清单。
     - `update-mirrors.json` 由 `mirror_watchdog.sh` 每 5 分钟写：固定 tag 的 `axisnow.gh-proxy.org/.../releases/download/<tag>` → `gh-proxy.org` → 樱花四条 → cpolar；tag 读 `/srv/hgtv-update/github-release-tag`。**不要用 `latest/download`：axisnow/CDN 会缓存旧内容**。
     - PC `PcUpdater`、安卓/TV `Updater` 都按 ABI/文件大小走 3 段 Range；实测 GitHub axisnow 20MB 约 3 秒（7.29MB/s），樱花约 16 秒（1.25MB/s）。官网 `/get/<file>` 302 到同一固定 tag 镜像，不由服务器中转。
     - 以后发版必须同时上传 GitHub Release 资产，并更新 `/srv/hgtv-update/github-release-tag`；不要依赖 latest。
