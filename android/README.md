@@ -1,237 +1,149 @@
-# 开心果（原「红果短剧 / 红果漫剧」）项目总览 README
+﻿# 寮€蹇冩灉锛堝師銆岀孩鏋滅煭鍓?/ 绾㈡灉婕墽銆嶏級椤圭洰鎬昏 README
 
-> 更新时间：2026-11-01。本文写给后续接手的 AI 或工程师，覆盖 Windows 本机、
-> 服务器 192.168.1.54 上的全部组件、构建发版流程、测试方法与已知坑。
-
+> 鏇存柊鏃堕棿锛?026-11-01銆傛湰鏂囧啓缁欏悗缁帴鎵嬬殑 AI 鎴栧伐绋嬪笀锛岃鐩?Windows 鏈満銆?> 鏈嶅姟鍣?192.168.1.54 涓婄殑鍏ㄩ儴缁勪欢銆佹瀯寤哄彂鐗堟祦绋嬨€佹祴璇曟柟娉曚笌宸茬煡鍧戙€?
 ---
 
-## 1. 项目是什么
-
-「开心果」是一个短剧/漫剧播放应用，数据来自红果（番茄小说系）的上游接口。
-一套客户端代码按 flavor 出两个包：
-
-| 包 | applicationId | 渠道 | 安装包 |
+## 1. 椤圭洰鏄粈涔?
+銆屽紑蹇冩灉銆嶆槸涓€涓煭鍓?婕墽鎾斁搴旂敤锛屾暟鎹潵鑷孩鏋滐紙鐣寗灏忚绯伙級鐨勪笂娓告帴鍙ｃ€?涓€濂楀鎴风浠ｇ爜鎸?flavor 鍑轰袱涓寘锛?
+| 鍖?| applicationId | 娓犻亾 | 瀹夎鍖?|
 |---|---|---|---|
-| Pad 版 | `com.hongguotv.pad` | pad flavor | `pad-pad-debug.apk`（debug 包直接发） |
-| TV 版 | `com.hongguotv.nativeapp` | tv flavor | `pad-tv-release-unsigned.apk`（需 zipalign + 签名） |
+| Pad 鐗?| `com.hongguotv.pad` | pad flavor | `pad-pad-debug.apk`锛坉ebug 鍖呯洿鎺ュ彂锛?|
+| TV 鐗?| `com.hongguotv.nativeapp` | tv flavor | `pad-tv-release-unsigned.apk`锛堥渶 zipalign + 绛惧悕锛?|
 
-- **applicationId 和签名证书不能换**：换了会断掉用户的更新通道和登录态。
-  TV release 签名证书 SHA256 = `7ff39ef970636015767b295cae8c027fc9108bf9be5c49542d90f33a9fd6aeb4`（debug keystore）。
-- 客户端语言：Kotlin + Jetpack Compose + Media3（ExoPlayer）。TV 端有完整的遥控器焦点体系。
-- 另有 Windows 版：`/opt/hongguo-win`（Tauri + Rust + React），本文以 Android 端为主。
+- **applicationId 鍜岀鍚嶈瘉涔︿笉鑳芥崲**锛氭崲浜嗕細鏂帀鐢ㄦ埛鐨勬洿鏂伴€氶亾鍜岀櫥褰曟€併€?  TV release 绛惧悕璇佷功 SHA256 = `7ff39ef970636015767b295cae8c027fc9108bf9be5c49542d90f33a9fd6aeb4`锛坉ebug keystore锛夈€?- 瀹㈡埛绔瑷€锛欿otlin + Jetpack Compose + Media3锛圗xoPlayer锛夈€俆V 绔湁瀹屾暣鐨勯仴鎺у櫒鐒︾偣浣撶郴銆?- 鍙︽湁 Windows 鐗堬細`/opt/hongguo-win`锛圱auri + Rust + React锛夛紝鏈枃浠?Android 绔负涓汇€?
+## 2. 纭€ц鍒欙紙鐢ㄦ埛鏄庣‘瑕佹眰锛屽繀椤婚伒瀹堬級
 
-## 2. 硬性规则（用户明确要求，必须遵守）
-
-1. **不准操作真机**：小米电视（MiTV-ASTP0）和小米平板一律不要 adb 安装/点按/截图。
-2. **只能测模拟器**：LDPlayer（`D:\LDPlayer14`），设备号 `emulator-5554`。
-3. 交付物：APK 放 `D:\开心果\{tv,pad}\` 并更新更新通道；真机由用户自己装。
-4. **APK 不放桌面**（2026-10-30 起）。
-5. **不主动发版**：改完 bug 只做编译和本地验证，等用户说"发版"再用 release.sh 发。
-6. 服务器上改 Python 必须**本地 Write + scp**，远端 shell 的 heredoc/printf 会吃转义。
-
-## 3. 服务器 192.168.1.54（Debian，8 核 / 7.3G 内存）
-
-### 3.1 怎么连
-
+1. **涓嶅噯鎿嶄綔鐪熸満**锛氬皬绫崇數瑙嗭紙MiTV-ASTP0锛夊拰灏忕背骞虫澘涓€寰嬩笉瑕?adb 瀹夎/鐐规寜/鎴浘銆?2. **鍙兘娴嬫ā鎷熷櫒**锛歀DPlayer锛坄D:\LDPlayer14`锛夛紝璁惧鍙?`emulator-5554`銆?3. 浜や粯鐗╋細APK 鏀?`D:\寮€蹇冩灉\{tv,pad}\` 骞舵洿鏂版洿鏂伴€氶亾锛涚湡鏈虹敱鐢ㄦ埛鑷繁瑁呫€?4. **APK 涓嶆斁妗岄潰**锛?026-10-30 璧凤級銆?5. **涓嶄富鍔ㄥ彂鐗?*锛氭敼瀹?bug 鍙仛缂栬瘧鍜屾湰鍦伴獙璇侊紝绛夌敤鎴疯"鍙戠増"鍐嶇敤 release.sh 鍙戙€?6. 鏈嶅姟鍣ㄤ笂鏀?Python 蹇呴』**鏈湴 Write + scp**锛岃繙绔?shell 鐨?heredoc/printf 浼氬悆杞箟銆?
+## 3. 鏈嶅姟鍣?192.168.1.54锛圖ebian锛? 鏍?/ 7.3G 鍐呭瓨锛?
+### 3.1 鎬庝箞杩?
 ```bash
-ssh root@192.168.1.54          # 本机已配好免密 key，直接连
+ssh root@192.168.1.54          # 鏈満宸查厤濂藉厤瀵?key锛岀洿鎺ヨ繛
 ```
 
-- 只有局域网内可直连；外网访问走 Cloudflared 隧道 `https://hgtv.fabao.xin`。
-- scp 用法同上：`scp 本地文件 root@192.168.1.54:/目标路径`。
-  ⚠️ Git Bash 会把以 `/` 开头的远端路径当本地路径处理（adb pull 踩过），
-  远端路径一律用 `root@host:/xxx` 写法。
+- 鍙湁灞€鍩熺綉鍐呭彲鐩磋繛锛涘缃戣闂蛋 Cloudflared 闅ч亾 `https://hgtv.fabao.xin`銆?- scp 鐢ㄦ硶鍚屼笂锛歚scp 鏈湴鏂囦欢 root@192.168.1.54:/鐩爣璺緞`銆?  鈿狅笍 Git Bash 浼氭妸浠?`/` 寮€澶寸殑杩滅璺緞褰撴湰鍦拌矾寰勫鐞嗭紙adb pull 韪╄繃锛夛紝
+  杩滅璺緞涓€寰嬬敤 `root@host:/xxx` 鍐欐硶銆?
+### 3.2 鐩綍鍦板浘
 
-### 3.2 目录地图
-
-| 路径 | 内容 |
+| 璺緞 | 鍐呭 |
 |---|---|
-| `/opt/hongguo-redo` | **Android 客户端源码**（Gradle 单模块 `:pad`，pad/tv 两个 flavor） |
-| `/opt/hongguo-redo/release.sh` | **发版一条龙脚本**（见 §5） |
-| `/opt/hgtv-update/serve.py` | **更新通道 + API 服务**，监听 `0.0.0.0:8080`（systemd 拉起） |
-| `/opt/hgtv-update/relay.py` | **代签中继**：客户端 → 中继 → 上游接口（带磁盘缓存） |
-| `/opt/hgtv-update/playinfo.py` | 取流入口，**现在只是转发壳**：转给 9110 的 streamsrv；旧的固定身份直连代码已停用（留着等上游放开） |
-| `127.0.0.1:9110` | **streamsrv**（Go，源码 `/opt/research/openhongguo/cmd/streamsrv`）：真正取流的服务，纯 Go 签名 + 匿名设备池。`/play` 取档位、`/seasons` 取季清单 |
-| `127.0.0.1:9100` | **签名机**（`sign_server` 二进制，POST /sign 返回带签名的 url+headers） |
-| `/srv/hgtv-update/` | **更新通道目录**：APK + `version-tv.json` / `version-hgpad.json` 清单 |
-| `/var/lib/hgtv-sync/` | feed-cache.json：上游响应的磁盘缓存（TTL 短） |
-| `/opt/hongguo-win` | Windows 版源码 |
-| `/opt/gradle/bin/gradle` | Gradle（版本 8.14.x，配好 JDK21） |
+| `/opt/hongguo-redo` | **Android 瀹㈡埛绔簮鐮?*锛圙radle 鍗曟ā鍧?`:pad`锛宲ad/tv 涓や釜 flavor锛?|
+| `/opt/hongguo-redo/release.sh` | **鍙戠増涓€鏉￠緳鑴氭湰**锛堣 搂5锛?|
+| `/opt/hgtv-update/serve.py` | **鏇存柊閫氶亾 + API 鏈嶅姟**锛岀洃鍚?`0.0.0.0:8080`锛坰ystemd 鎷夎捣锛?|
+| `/opt/hgtv-update/relay.py` | **浠ｇ涓户**锛氬鎴风 鈫?涓户 鈫?涓婃父鎺ュ彛锛堝甫纾佺洏缂撳瓨锛?|
+| `/opt/hgtv-update/playinfo.py` | 鍙栨祦鍏ュ彛锛?*鐜板湪鍙槸杞彂澹?*锛氳浆缁?9110 鐨?streamsrv锛涙棫鐨勫浐瀹氳韩浠界洿杩炰唬鐮佸凡鍋滅敤锛堢暀鐫€绛変笂娓告斁寮€锛?|
+| `127.0.0.1:9110` | **streamsrv**锛圙o锛屾簮鐮?`/opt/research/openhongguo/cmd/streamsrv`锛夛細鐪熸鍙栨祦鐨勬湇鍔★紝绾?Go 绛惧悕 + 鍖垮悕璁惧姹犮€俙/play` 鍙栨。浣嶃€乣/seasons` 鍙栧娓呭崟 |
+| `127.0.0.1:9100` | **绛惧悕鏈?*锛坄sign_server` 浜岃繘鍒讹紝POST /sign 杩斿洖甯︾鍚嶇殑 url+headers锛?|
+| `/srv/hgtv-update/` | **鏇存柊閫氶亾鐩綍**锛欰PK + `version-tv.json` / `version-hgpad.json` 娓呭崟 |
+| `/var/lib/hgtv-sync/` | feed-cache.json锛氫笂娓稿搷搴旂殑纾佺洏缂撳瓨锛圱TL 鐭級 |
+| `/opt/hongguo-win` | Windows 鐗堟簮鐮?|
+| `/opt/gradle/bin/gradle` | Gradle锛堢増鏈?8.14.x锛岄厤濂?JDK21锛?|
 | `/opt/android-sdk/build-tools/35.0.0/` | zipalign / apksigner / aapt2 |
-| `/root/.android/debug.keystore` | 签名 keystore（pass: `android`，alias: `androiddebugkey`） |
-| `/root/hgtv-backup-1031/` | 2026-10-31 大改前的源码备份 |
+| `/root/.android/debug.keystore` | 绛惧悕 keystore锛坧ass: `android`锛宎lias: `androiddebugkey`锛?|
+| `/root/hgtv-backup-1031/` | 2026-10-31 澶ф敼鍓嶇殑婧愮爜澶囦唤 |
 
-⚠️ `build.gradle.kts` / `gradle.properties` 已调优（堆 2G、build cache、关 lintVital），
-详见 §5.3；`systemctl`/`sc` 类命令在某些沙箱环境会被拦，重启服务前先确认。
+鈿狅笍 `build.gradle.kts` / `gradle.properties` 宸茶皟浼橈紙鍫?2G銆乥uild cache銆佸叧 lintVital锛夛紝
+璇﹁ 搂5.3锛沗systemctl`/`sc` 绫诲懡浠ゅ湪鏌愪簺娌欑鐜浼氳鎷︼紝閲嶅惎鏈嶅姟鍓嶅厛纭銆?
+### 3.3 瀹㈡埛绔€庝箞杩炴湇鍔″櫒
 
-### 3.3 客户端怎么连服务器
+- **灞€鍩熺綉**锛歚http://192.168.1.54:8080/...`锛堜紭鍏堬紝蹇級
+- **澶栫綉**锛歚https://hgtv.fabao.xin/...`锛圕loudflared 闅ч亾锛屽伓鍙戞彙鎵嬭秴鏃讹紝瀹㈡埛绔湁閲嶈瘯锛?- 绔偣涓€瑙堬紙鍏ㄩ儴鐢?`serve.py` 鎻愪緵锛岄渶 `X-Token: ROTATED_OUT_old_token` 鐨勮鏍囧嚭鏉ワ級锛?  - `/version-tv.json`銆乣/version-hgpad.json` 鈥斺€?鏇存柊娓呭崟
+  - `/app-tv-release.apk`銆乣/hongguo-pad-<鐗堟湰>.apk` 鈥斺€?瀹夎鍖咃紙鏀寔 Range 鏂偣缁紶锛?  - `/api/history?key=<sha256>` 鈥斺€?瑙傜湅鍘嗗彶璺ㄧ鍚屾锛堟寜璐﹀彿 uid 鐨?sha256 鍒嗘《锛孏ET 璇?/ POST 鍚堝苟 / `mode=delete` 鍒狅級
+  - `/api/playinfo` 鈥斺€?鍙栨祦/鍏ㄦ。浣嶏紙杞?9110 streamsrv锛夈€愰渶 token銆?  - `/api/fetch` 鈥斺€?**浠ｅ彇 + 鍏变韩缂撳瓨**锛宐ody `{"url":...}` 璧扮洿杩炪€乣{"origin","path","query","body"}` 璧颁唬绛俱€愰渶 token銆?  - `/api/sign` 鈥斺€?鎶?9100 绛惧悕鏈洪€忓埌鍏綉銆愰渶 token銆?  - `/api/seasons?id=` 鈥斺€?澶氬鍓х殑瀹屾暣瀛ｆ竻鍗曪紙杞?9110锛?  - `/api/rankmeta` 鈥斺€?**鎺掕姒滆彍鍗?*锛氬ぇ绫?/ 瀛愭 / 绛涢€夐」 / 鏈堟锛堜粠涓婃父 `cell_selector` 鎶藉嚭鏉ワ紝绾?38KB锛屾湇鍔″櫒缂撳瓨 10 鍒嗛挓锛?  - `/api/fetchstats` 鈥斺€?relay 缂撳瓨鐨勫懡涓?鏈懡涓?鍒锋柊璁℃暟
+  - `/api/family`銆乣/api/chart` 鈥斺€?**宸蹭笅绾匡紝鍥哄畾杩斿洖绌烘暟缁?*锛堟极鍓у簱 2026-10-31 鍏抽棴锛涘彛纰戞鏀圭敱瀹㈡埛绔槧灏勫畼鏂瑰瓙姒滐級
+  - `/sync` 鈥斺€?鏃х殑杩涘害/鏀惰棌鍚堝苟鎺ュ彛锛堟棭鏈熺増鏈敤锛岀幇褰瑰鎴风宸蹭笉璧帮級
 
-- **局域网**：`http://192.168.1.54:8080/...`（优先，快）
-- **外网**：`https://hgtv.fabao.xin/...`（Cloudflared 隧道，偶发握手超时，客户端有重试）
-- 端点一览（全部由 `serve.py` 提供，需 `X-Token: hgtv-play-2026` 的要标出来）：
-  - `/version-tv.json`、`/version-hgpad.json` —— 更新清单
-  - `/app-tv-release.apk`、`/hongguo-pad-<版本>.apk` —— 安装包（支持 Range 断点续传）
-  - `/api/history?key=<sha256>` —— 观看历史跨端同步（按账号 uid 的 sha256 分桶，GET 读 / POST 合并 / `mode=delete` 删）
-  - `/api/playinfo` —— 取流/全档位（转 9110 streamsrv）【需 token】
-  - `/api/fetch` —— **代取 + 共享缓存**，body `{"url":...}` 走直连、`{"origin","path","query","body"}` 走代签【需 token】
-  - `/api/sign` —— 把 9100 签名机透到公网【需 token】
-  - `/api/seasons?id=` —— 多季剧的完整季清单（转 9110）
-  - `/api/rankmeta` —— **排行榜菜单**：大类 / 子榜 / 筛选项 / 月榜（从上游 `cell_selector` 抽出来，约 38KB，服务器缓存 10 分钟）
-  - `/api/fetchstats` —— relay 缓存的命中/未命中/刷新计数
-  - `/api/family`、`/api/chart` —— **已下线，固定返回空数组**（漫剧库 2026-10-31 关闭；口碑榜改由客户端映射官方子榜）
-  - `/sync` —— 旧的进度/收藏合并接口（早期版本用，现役客户端已不走）
-
-## 4. 客户端源码地图（/opt/hongguo-redo/pad/src/main/java/com/hongguotv/pad/）
-
-| 文件 | 职责 |
+## 4. 瀹㈡埛绔簮鐮佸湴鍥撅紙/opt/hongguo-redo/pad/src/main/java/com/hongguotv/pad/锛?
+| 鏂囦欢 | 鑱岃矗 |
 |---|---|
-| `Api.kt` | 全部上游接口：搜索/找剧/详情/榜单/取流；`toCard`（列表条目→卡片）；续播位置上报 |
-| `Store.kt` | 本地状态：历史/收藏/追更、设置、续播位置（`markPos`/`posOf`，落盘 `pos_<vid>`）、`FindMemo`（找剧页跨页状态） |
-| `PlayerScreen.kt` | 播放器：预取下一集（本地代理 StreamProxy）、换集、遥控器键位、进度上报（30s 一次） |
-| `Playback.kt` | ExoPlayer/StreamProxy 细节 |
-| `App.kt` | 导航栈 + 侧栏 NavRail + **TV 焦点规则**（见 §6） |
-| `Theme.kt` | TvRoot（TV 密度压缩到 1280dp）、TvFocusIndication（焦点框）、TvDialogIndication（弹窗内焦点框）、TvFocusFrameOverlay |
-| `Updater.kt` | 更新弹窗：下载/校验/调起安装器，**弹窗内按钮用 TvDialogIndication** |
-| `MiscScreens.kt` | 找剧/榜单/历史/追更/预约/设置等页面（FindScreen 里有 readOnly 搜索框 + chipEntry） |
-| `DetailScreen.kt` / `Screens.kt` / `Creator.kt` | 详情/首页/创作者 |
-| `Danmaku.kt` | 弹幕层 |
+| `Api.kt` | 鍏ㄩ儴涓婃父鎺ュ彛锛氭悳绱?鎵惧墽/璇︽儏/姒滃崟/鍙栨祦锛沗toCard`锛堝垪琛ㄦ潯鐩啋鍗＄墖锛夛紱缁挱浣嶇疆涓婃姤 |
+| `Store.kt` | 鏈湴鐘舵€侊細鍘嗗彶/鏀惰棌/杩芥洿銆佽缃€佺画鎾綅缃紙`markPos`/`posOf`锛岃惤鐩?`pos_<vid>`锛夈€乣FindMemo`锛堟壘鍓ч〉璺ㄩ〉鐘舵€侊級 |
+| `PlayerScreen.kt` | 鎾斁鍣細棰勫彇涓嬩竴闆嗭紙鏈湴浠ｇ悊 StreamProxy锛夈€佹崲闆嗐€侀仴鎺у櫒閿綅銆佽繘搴︿笂鎶ワ紙30s 涓€娆★級 |
+| `Playback.kt` | ExoPlayer/StreamProxy 缁嗚妭 |
+| `App.kt` | 瀵艰埅鏍?+ 渚ф爮 NavRail + **TV 鐒︾偣瑙勫垯**锛堣 搂6锛?|
+| `Theme.kt` | TvRoot锛圱V 瀵嗗害鍘嬬缉鍒?1280dp锛夈€乀vFocusIndication锛堢劍鐐规锛夈€乀vDialogIndication锛堝脊绐楀唴鐒︾偣妗嗭級銆乀vFocusFrameOverlay |
+| `Updater.kt` | 鏇存柊寮圭獥锛氫笅杞?鏍￠獙/璋冭捣瀹夎鍣紝**寮圭獥鍐呮寜閽敤 TvDialogIndication** |
+| `MiscScreens.kt` | 鎵惧墽/姒滃崟/鍘嗗彶/杩芥洿/棰勭害/璁剧疆绛夐〉闈紙FindScreen 閲屾湁 readOnly 鎼滅储妗?+ chipEntry锛?|
+| `DetailScreen.kt` / `Screens.kt` / `Creator.kt` | 璇︽儏/棣栭〉/鍒涗綔鑰?|
+| `Danmaku.kt` | 寮瑰箷灞?|
 
-## 5. 构建与发版
-
-### 5.1 手动构建
+## 5. 鏋勫缓涓庡彂鐗?
+### 5.1 鎵嬪姩鏋勫缓
 
 ```bash
 ssh root@192.168.1.54
 cd /opt/hongguo-redo
 /opt/gradle/bin/gradle :pad:assembleTvRelease :pad:assemblePadDebug
-# TV release 需签名：
-cd pad/build/outputs/apk/tv/release
+# TV release 闇€绛惧悕锛?cd pad/build/outputs/apk/tv/release
 /opt/android-sdk/build-tools/35.0.0/zipalign -f -p 4 pad-tv-release-unsigned.apk aligned.apk
 /opt/android-sdk/build-tools/35.0.0/apksigner sign \
   --ks /root/.android/debug.keystore --ks-pass pass:android --key-pass pass:android \
   --ks-key-alias androiddebugkey --out signed.apk aligned.apk
 ```
 
-### 5.2 发版（推荐：一条命令）
+### 5.2 鍙戠増锛堟帹鑽愶細涓€鏉″懡浠わ級
 
 ```bash
-/opt/hongguo-redo/release.sh "2.2.31：
-· 变更一
-· 变更二"
-# 已手动改过 build.gradle.kts 的版本号时：release.sh --resume "说明"
+/opt/hongguo-redo/release.sh "2.2.31锛?路 鍙樻洿涓€
+路 鍙樻洿浜?
+# 宸叉墜鍔ㄦ敼杩?build.gradle.kts 鐨勭増鏈彿鏃讹細release.sh --resume "璇存槑"
 ```
 
-脚本做的事：版本号自增（versionCode+1、versionName 末位+1）→ 构建两端 → zipalign+签名 →
-部署到 `/srv/hgtv-update/`（`app-tv-release.apk` + `hongguo-pad-<版本>.apk`）→ 生成两个清单（含 size/sha256/notes）。
-⚠️ 脚本开了 `set -euo pipefail`：**禁止写「命令 | head」式管道**（head 提前退出触发 SIGPIPE 会静默杀脚本），
-一律先取进变量再 echo。
-
-### 5.3 构建性能（已调优，别回退）
-
-- 7.3G 内存的机器：Gradle 堆 `-Xmx2g`、`kotlin.daemon.jvmargs=-Xmx1g`、`org.gradle.caching=true`。
-  之前 4G 堆把内存打满、swap 4.6G，构建 2 分半。
-- `lint { checkReleaseBuilds = false }`：release 的 lintVital 分析占 35 秒，已关。
-- 剩余大头是 R8（~57 秒，单线程）。**不要关 R8**：包 4.3MB → 13.4MB，用户下载慢 3 倍。
-- 实测：改一行 → 全量 release ≈ 60-75 秒；构建缓存命中 ≈ 几秒。
-- **不要删 `pad/build/tmp/kotlin-classes/`**，那会强制全量重编。
-- ⚠️ Kotlin 增量编译对"纯注释/空白"改动可能直接跳过，测构建速度要用真实代码改动。
-
-### 5.4 更新清单格式
+鑴氭湰鍋氱殑浜嬶細鐗堟湰鍙疯嚜澧烇紙versionCode+1銆乿ersionName 鏈綅+1锛夆啋 鏋勫缓涓ょ 鈫?zipalign+绛惧悕 鈫?閮ㄧ讲鍒?`/srv/hgtv-update/`锛坄app-tv-release.apk` + `hongguo-pad-<鐗堟湰>.apk`锛夆啋 鐢熸垚涓や釜娓呭崟锛堝惈 size/sha256/notes锛夈€?鈿狅笍 鑴氭湰寮€浜?`set -euo pipefail`锛?*绂佹鍐欍€屽懡浠?| head銆嶅紡绠￠亾**锛坔ead 鎻愬墠閫€鍑鸿Е鍙?SIGPIPE 浼氶潤榛樻潃鑴氭湰锛夛紝
+涓€寰嬪厛鍙栬繘鍙橀噺鍐?echo銆?
+### 5.3 鏋勫缓鎬ц兘锛堝凡璋冧紭锛屽埆鍥為€€锛?
+- 7.3G 鍐呭瓨鐨勬満鍣細Gradle 鍫?`-Xmx2g`銆乣kotlin.daemon.jvmargs=-Xmx1g`銆乣org.gradle.caching=true`銆?  涔嬪墠 4G 鍫嗘妸鍐呭瓨鎵撴弧銆乻wap 4.6G锛屾瀯寤?2 鍒嗗崐銆?- `lint { checkReleaseBuilds = false }`锛歳elease 鐨?lintVital 鍒嗘瀽鍗?35 绉掞紝宸插叧銆?- 鍓╀綑澶уご鏄?R8锛垀57 绉掞紝鍗曠嚎绋嬶級銆?*涓嶈鍏?R8**锛氬寘 4.3MB 鈫?13.4MB锛岀敤鎴蜂笅杞芥參 3 鍊嶃€?- 瀹炴祴锛氭敼涓€琛?鈫?鍏ㄩ噺 release 鈮?60-75 绉掞紱鏋勫缓缂撳瓨鍛戒腑 鈮?鍑犵銆?- **涓嶈鍒?`pad/build/tmp/kotlin-classes/`**锛岄偅浼氬己鍒跺叏閲忛噸缂栥€?- 鈿狅笍 Kotlin 澧為噺缂栬瘧瀵?绾敞閲?绌虹櫧"鏀瑰姩鍙兘鐩存帴璺宠繃锛屾祴鏋勫缓閫熷害瑕佺敤鐪熷疄浠ｇ爜鏀瑰姩銆?
+### 5.4 鏇存柊娓呭崟鏍煎紡
 
 ```json
 {
  "versionCode": 150, "versionName": "2.2.30", "url": "",
- "notes": "多行更新说明", "path": "app-tv-release.apk",
- "size": 4451483, "sha256": "…"
+ "notes": "澶氳鏇存柊璇存槑", "path": "app-tv-release.apk",
+ "size": 4451483, "sha256": "鈥?
 }
 ```
 
-客户端：先试局域网清单，失败退外网；versionCode 大于本地才弹更新框。
-发版后核对：`curl https://hgtv.fabao.xin/version-tv.json`。
+瀹㈡埛绔細鍏堣瘯灞€鍩熺綉娓呭崟锛屽け璐ラ€€澶栫綉锛泇ersionCode 澶т簬鏈湴鎵嶅脊鏇存柊妗嗐€?鍙戠増鍚庢牳瀵癸細`curl https://hgtv.fabao.xin/version-tv.json`銆?
+## 6. TV 鐒︾偣浣撶郴锛堟渶瀹规槗韪╁潙鐨勯儴鍒嗭級
 
-## 6. TV 焦点体系（最容易踩坑的部分）
+- **鐒︾偣妗?*鏄叏灞€鍞竴鐨勶細鎺т欢鎶?`boundsInRoot()` 鎶ョ粰 `TvFocusFrame`锛屼富绐楀彛鏁村睆 Canvas 缁樺埗銆?  鏍峰紡锛?dp 鐧芥 + 鍗婇€忔槑榛戣‖搴曘€?- **Compose Dialog 鏄嫭绔?window**锛氬脊绐楀唴鎺т欢鐨?boundsInRoot 鏄脊绐楀潗鏍囩郴锛?  鎷垮埌涓荤獥鍙ｇ敾蹇呯劧閿欎綅 鈫?寮圭獥鍐呭蹇呴』鍖?`LocalIndication provides TvDialogIndication`锛堟湰鍦扮粯鍒讹級銆?- **`Modifier.focusRequester` 蹇呴』鏀惧湪 `clickable`/`focusable` 涔嬪墠**锛屾斁鍚庨潰姘歌繙鎸備笉涓婄洰鏍?  锛坮equestFocus 涓嶆姏寮傚父浣嗛潤榛樻棤鏁堚€斺€擿requestFocus()` 杩斿洖 Unit锛?  銆屾病鎶涘紓甯搞€嶁墵銆岀劍鐐硅惤涓婁簡銆嶏紝瑕佺敤 onFocusChanged 鍥炶皟纭锛夈€?- **鏂瑰悜閿湪渚ф爮绉诲姩鐒︾偣涓嶅垏椤?*锛屽彧鏈夌‘瀹氾紙clickable锛夋墠鍒囬〉銆備晶鏍忔寜 鈫?璧?`enterContent()`锛?  鍒囬〉 + 鍊?1dp 鐒︾偣璺虫澘鎶婄劍鐐归€佽繘鍐呭绗竴涓帶浠讹紝甯﹂噸璇曪紙椤甸潰鍙兘杩樺湪鍔犺浇锛夈€?- 鍐呭鍖猴紙椤跺眰椤碉級鎸?*杩斿洖** = 鐒︾偣鍥炰晶鏍忓綋鍓嶅垎绫伙紙`railEntry.requestFocus()`锛夛紝
+  鐢?onKeyEvent锛堝啋娉★級瀹炵幇锛屼笉鎶㈣緭鍏ユ/鎾斁鍣ㄧ殑杩斿洖锛涘啀鎸変竴娆℃墠鏄€€鍑恒€?- 鎵惧墽鎼滅储妗?TV 涓婇粯璁?`readOnly`锛氳仛鐒︿笉寮归敭鐩橈紝鎸夌‘瀹氭墠杩涜緭鍏ユ€侊紙`typing` 鐘舵€侊級銆?- 鐒︾偣璺虫澘锛氬唴瀹瑰尯宸︾紭 1dp 鍏ㄩ珮闅愬舰鏉★紝鈫?鏃惰浆鍙戝埌 `railEntry`锛堝嚑浣?Left 浼氳惤閿欓」锛夈€?- TV 瀵嗗害锛歍vRoot 鎶婇€昏緫瀹藉害鍘嬪埌 1280dp锛坉ensity = 瀹為檯鍍忕礌瀹?1280锛夈€?  **涓荤獥鍙ｅ拰 Dialog 鐨?density 鍙兘涓嶅悓**锛屽埆璺ㄧ獥鍙ｆ崲绠楀潗鏍囥€?
+## 7. 鏁版嵁涓庢寚鏍囷紙涓婃父鎺ュ彛瀹炴祴锛?
+- **鍗＄墖涓婄殑鏁板瓧 = 鐑害鍊?*锛氬彇鍊间紭鍏堢骇 鈶燻video_detail.hot_score` 鈶rec_text`锛?4993涓囩儹搴?锛?  鈶sub_title_list` 閲?`data_type=27`锛?1857涓?锛夆懀鍏滃簳 `play_cnt`銆?  鈿狅笍 `play_cnt` 鏄?*鎾斁娆℃暟**涓嶆槸鐑害锛堣鎯呴〉 4993涓囩儹搴?hot_score锛?86涓?play_cnt锛屼袱涓瓧娈碉級銆?- 鍒楄〃鎺ュ彛锛坰earch/tab/v銆乴andpage/v1/锛夌洿鎺ュ氨鏈夛細鎾斁娆℃暟銆佽瘎鍒嗐€佺儹搴︽枃鏈€佽瘎璁烘暟銆侀泦鏁般€佺煭绠€浠嬨€佸垎绫汇€?- 蹇呴』鎶撹鎯咃紙video_detail/v1/锛夋墠鏈夛細鐑害绮剧‘鏁板€笺€佽拷鍓т汉鏁?followed_cnt銆佺偣璧?digg_cnt銆?  瀹屾暣绠€浠嬨€佹紨鑱屽憳 main_creator_users銆佸垎闆嗚〃 video_list銆佸淇℃伅銆佸叧鑱斿皬璇淬€佸妗堛€?- 璇勫垎鍙兘鍑虹幇鍦?`score`锛堝垪琛級鎴?`secondary_infos`锛堣鎯咃紝澶氭暟鍓т负绌猴級鈥斺€旀寜鍐呭鍖归厤鏈€绋炽€?- 姒滃崟銆屽叏閮ㄣ€嶅垎绫?id 鏄?`all` 涓嶆槸 `*`锛涘悇澶х被鏈変笓灞炲瓙姒?id锛涙紨鍛樻杩斿洖鐨勬槸"浜?涓嶆槸鍓с€?- 鍒楄〃鍝嶅簲閲岀殑 `video_detail.video_list`锛堟暣閮ㄥ垎闆嗚〃锛夋浘鍗犲搷搴?96.6%锛屽垪琛ㄩ〉鐢ㄤ笉鍒般€?
+## 8. 娴嬭瘯鏂规硶
 
-- **焦点框**是全局唯一的：控件把 `boundsInRoot()` 报给 `TvFocusFrame`，主窗口整屏 Canvas 绘制。
-  样式：3dp 白框 + 半透明黑衬底。
-- **Compose Dialog 是独立 window**：弹窗内控件的 boundsInRoot 是弹窗坐标系，
-  拿到主窗口画必然错位 → 弹窗内容必须包 `LocalIndication provides TvDialogIndication`（本地绘制）。
-- **`Modifier.focusRequester` 必须放在 `clickable`/`focusable` 之前**，放后面永远挂不上目标
-  （requestFocus 不抛异常但静默无效——`requestFocus()` 返回 Unit，
-  「没抛异常」≠「焦点落上了」，要用 onFocusChanged 回调确认）。
-- **方向键在侧栏移动焦点不切页**，只有确定（clickable）才切页。侧栏按 → 走 `enterContent()`：
-  切页 + 借 1dp 焦点跳板把焦点送进内容第一个控件，带重试（页面可能还在加载）。
-- 内容区（顶层页）按**返回** = 焦点回侧栏当前分类（`railEntry.requestFocus()`），
-  用 onKeyEvent（冒泡）实现，不抢输入框/播放器的返回；再按一次才是退出。
-- 找剧搜索框 TV 上默认 `readOnly`：聚焦不弹键盘，按确定才进输入态（`typing` 状态）。
-- 焦点跳板：内容区左缘 1dp 全高隐形条，← 时转发到 `railEntry`（几何 Left 会落错项）。
-- TV 密度：TvRoot 把逻辑宽度压到 1280dp（density = 实际像素宽/1280）。
-  **主窗口和 Dialog 的 density 可能不同**，别跨窗口换算坐标。
+- 妯℃嫙鍣細LDPlayer `D:\LDPlayer14`锛宍adb.exe -s emulator-5554`銆傛祴璇曞伐鍏峰湪
+  `C:\Users\Ark\AppData\Local\Temp\tvfix\`锛歚audit.py`锛堟壒閲忔寜閿?鎴浘锛夈€乣grid.py`锛堟埅鍥剧綉鏍煎潗鏍囷級銆?  `locate.py`锛堝厓绱犲畾浣嶏級銆侾ad 鐗堢偣鍑诲潗鏍囨槸绾瘮渚嬫崲绠楋紙脳1.7778锛夛紱TV 鐗堟棤棰濆鍋忕Щ銆?- 鈿狅笍 **鐐瑰睆骞曠殑鍧愭爣鎹㈢畻**锛歚screencap` 鍑烘潵鐨勫浘鏄?1920脳1080锛岃€岀湅鍥炬椂鏄缉鏀捐繃鐨勶紙绾?1440脳810锛夛紝
+  鎵€浠ユ寜"鐪嬪埌鐨勫儚绱?鐐逛細鍋忋€傝澶囧潗鏍?= 鐪嬪埌鐨勫潗鏍?脳 1.3333銆備晶鏍忎節椤逛粠涓婂埌涓嬪ぇ绾﹀湪
+  y=153 / 261 / 343 / 424 / **500(鍘嗗彶)** / 580 / 659 / 733 / 813锛坸鈮?9锛夈€?  鐐规鐨勮〃鐜版槸"鐐逛簡娌″弽搴?锛屾帓鏌ユ椂鍏堟€€鐤戣繖閲屻€?- **鎹㈤泦榛戝抚妫€娴?*锛歚adb shell screenrecord` 褰曞睆 鈫?`adb exec-out cat /sdcard/x.mp4 > x.mp4` 鍙栧洖
+  锛堚殸锔?`adb pull /sdcard/...` 鍦?Git Bash 涓嬭矾寰勪細琚敼鍐欙紝蹇呴』鐢?exec-out cat锛夆啋
+  鏈嶅姟鍣?`ffmpeg -i x.mp4 -vf fps=20,scale=160:90` 鎷嗗抚 鈫?PIL 绠楁瘡甯у钩鍧囦寒搴︽壘鏆楀抚銆?- 妯℃嫙鍣ㄥ伓灏旈棯閫€/鎺夌嚎锛歚ldconsole quit --index 0` 鍚?`launch`锛岃捣鏉ュ悗 **1-2 鍒嗛挓鍐呭敖蹇祴瀹?*銆?- 妯℃嫙鍣ㄩ噸鍚悗搴旂敤鍙兘闇€瑕侀噸鏂伴厤瀵圭櫥褰曪紙鍋氳繃 `pm clear` 浼氭竻鐧诲綍鎬侊級銆?
+## 9. 浜や粯鐗╀笌鏂囨。浣嶇疆
 
-## 7. 数据与指标（上游接口实测）
-
-- **卡片上的数字 = 热度值**：取值优先级 ①`video_detail.hot_score` ②`rec_text`（"4993万热度"）
-  ③`sub_title_list` 里 `data_type=27`（"1857万"）④兜底 `play_cnt`。
-  ⚠️ `play_cnt` 是**播放次数**不是热度（详情页 4993万热度=hot_score，786万=play_cnt，两个字段）。
-- 列表接口（search/tab/v、landpage/v1/）直接就有：播放次数、评分、热度文本、评论数、集数、短简介、分类。
-- 必须抓详情（video_detail/v1/）才有：热度精确数值、追剧人数 followed_cnt、点赞 digg_cnt、
-  完整简介、演职员 main_creator_users、分集表 video_list、季信息、关联小说、备案。
-- 评分可能出现在 `score`（列表）或 `secondary_infos`（详情，多数剧为空）——按内容匹配最稳。
-- 榜单「全部」分类 id 是 `all` 不是 `*`；各大类有专属子榜 id；演员榜返回的是"人"不是剧。
-- 列表响应里的 `video_detail.video_list`（整部分集表）曾占响应 96.6%，列表页用不到。
-
-## 8. 测试方法
-
-- 模拟器：LDPlayer `D:\LDPlayer14`，`adb.exe -s emulator-5554`。测试工具在
-  `C:\Users\Ark\AppData\Local\Temp\tvfix\`：`audit.py`（批量按键+截图）、`grid.py`（截图网格坐标）、
-  `locate.py`（元素定位）。Pad 版点击坐标是纯比例换算（×1.7778）；TV 版无额外偏移。
-- ⚠️ **点屏幕的坐标换算**：`screencap` 出来的图是 1920×1080，而看图时是缩放过的（约 1440×810），
-  所以按"看到的像素"点会偏。设备坐标 = 看到的坐标 × 1.3333。侧栏九项从上到下大约在
-  y=153 / 261 / 343 / 424 / **500(历史)** / 580 / 659 / 733 / 813（x≈49）。
-  点歪的表现是"点了没反应"，排查时先怀疑这里。
-- **换集黑帧检测**：`adb shell screenrecord` 录屏 → `adb exec-out cat /sdcard/x.mp4 > x.mp4` 取回
-  （⚠️ `adb pull /sdcard/...` 在 Git Bash 下路径会被改写，必须用 exec-out cat）→
-  服务器 `ffmpeg -i x.mp4 -vf fps=20,scale=160:90` 拆帧 → PIL 算每帧平均亮度找暗帧。
-- 模拟器偶尔闪退/掉线：`ldconsole quit --index 0` 后 `launch`，起来后 **1-2 分钟内尽快测完**。
-- 模拟器重启后应用可能需要重新配对登录（做过 `pm clear` 会清登录态）。
-
-## 9. 交付物与文档位置
-
-| 位置 | 内容 |
+| 浣嶇疆 | 鍐呭 |
 |---|---|
-| `D:\开心果\tv\`、`D:\开心果\pad\` | 各版本 APK 存档（命名 `开心果TV-2.2.30.apk`） |
-| `D:\开心果\已知问题.md` | 已知问题清单（分五类，含已修记录） |
-| 本机 `C:\Users\Ark\AppData\Local\Temp\tvfix\` | 测试脚本与截图（临时目录，别放重要东西） |
-| 本桌面 `开心果-README.md` | 本文档 |
-| 服务器 `/opt/hongguo-redo/README.md` | 本文档的服务器副本 |
+| `D:\寮€蹇冩灉\tv\`銆乣D:\寮€蹇冩灉\pad\` | 鍚勭増鏈?APK 瀛樻。锛堝懡鍚?`寮€蹇冩灉TV-2.2.30.apk`锛?|
+| `D:\寮€蹇冩灉\宸茬煡闂.md` | 宸茬煡闂娓呭崟锛堝垎浜旂被锛屽惈宸蹭慨璁板綍锛?|
+| 鏈満 `C:\Users\Ark\AppData\Local\Temp\tvfix\` | 娴嬭瘯鑴氭湰涓庢埅鍥撅紙涓存椂鐩綍锛屽埆鏀鹃噸瑕佷笢瑗匡級 |
+| 鏈闈?`寮€蹇冩灉-README.md` | 鏈枃妗?|
+| 鏈嶅姟鍣?`/opt/hongguo-redo/README.md` | 鏈枃妗ｇ殑鏈嶅姟鍣ㄥ壇鏈?|
 
-## 10. 版本历史速览（截至 2.2.30 / versionCode 150）
+## 10. 鐗堟湰鍘嗗彶閫熻锛堟埅鑷?2.2.30 / versionCode 150锛?
+- 2.2.26 鍘嗗彶缁挱锛堣法閲嶅惎鎺ョ潃鐪?+ 杩涘害鍚屾鎵嬫満/Windows锛?- 2.2.27 鏇存柊寮圭獥鐒︾偣妗嗛敊浣嶄慨澶嶏紙TvDialogIndication锛? 鍗＄墖鏁板瓧鏀圭儹搴﹀€?- 2.2.29 寮圭獥鐒︾偣妗嗗渾瑙掕嚜閫傚簲锛堝皬鎺т欢涓嶅啀鍛堟き鍦嗭級
+- 2.2.30 **閬ユ帶鍣ㄧ劍鐐硅鍒欓噸鍋?*锛堜晶鏍?鈫?鍒囬〉杩涘唴瀹瑰甫閲嶈瘯銆佽繑鍥炲洖渚ф爮銆佸惎鍔ㄩ粯璁ょ劍鐐广€佹壘鍓ч潰鏉块鐑級
+- 鏇存棭锛氭挱鏀惧櫒閿綅锛堝乏鍙陈?s/纭畾鏆傚仠涓嶅脊鎺у埗鏉★級銆佽拷鏇撮敊璇€併€佹壘鍓?readOnly 鎼滅储妗?璺ㄩ〉淇濈暀銆佹崲闆嗘棤缂濄€佸彂鐗堣剼鏈瓑
 
-- 2.2.26 历史续播（跨重启接着看 + 进度同步手机/Windows）
-- 2.2.27 更新弹窗焦点框错位修复（TvDialogIndication）+ 卡片数字改热度值
-- 2.2.29 弹窗焦点框圆角自适应（小控件不再呈椭圆）
-- 2.2.30 **遥控器焦点规则重做**（侧栏 → 切页进内容带重试、返回回侧栏、启动默认焦点、找剧面板预热）
-- 更早：播放器键位（左右±5s/确定暂停不弹控制条）、追更错误态、找剧 readOnly 搜索框+跨页保留、换集无缝、发版脚本等
-
-## 11. 版本管理（git）
-
-- **仓库**：`/opt/hongguo-redo/.git`，主分支 `main`
-- **备份裸仓库**：`/mnt/data/git/kaxinguo-android.git`（本仓库里的 remote 叫 `backup`）
-- **改完代码**：
-  ```bash
+## 11. 鐗堟湰绠＄悊锛坓it锛?
+- **浠撳簱**锛歚/opt/hongguo-redo/.git`锛屼富鍒嗘敮 `main`
+- **澶囦唤瑁镐粨搴?*锛歚/mnt/data/git/kaxinguo-android.git`锛堟湰浠撳簱閲岀殑 remote 鍙?`backup`锛?- **鏀瑰畬浠ｇ爜**锛?  ```bash
   cd /opt/hongguo-redo
   git add -A
-  git commit -m "2.2.61：改了什么"
+  git commit -m "2.2.61锛氭敼浜嗕粈涔?
   git push backup main
   ```
-- **发版时打标签**（方便以后按版本回看）：
+- **鍙戠増鏃舵墦鏍囩**锛堟柟渚夸互鍚庢寜鐗堟湰鍥炵湅锛夛細
   ```bash
   git tag 2.2.61 && git push backup 2.2.61
   ```
-- **改坏了要回滚**：
-  ```bash
-  git checkout -- pad/src/main/java/com/hongguotv/pad/xxx.kt   # 撤一个文件
-  git reset --hard HEAD~1                                      # 撤最后一次提交
-  ```
-- **不进库**：`build/`、`.gradle/`、`local.properties`、任何 `*.apk` / `*.jks`（见 `.gitignore`）。
-  签名和本机 SDK 路径属于机器环境，不跟着代码走。
-- 首个提交 `e9ade48` 对应线上 2.2.60（versionCode 180）的源码状态，可直接当基准。
+- **鏀瑰潖浜嗚鍥炴粴**锛?  ```bash
+  git checkout -- pad/src/main/java/com/hongguotv/pad/xxx.kt   # 鎾や竴涓枃浠?  git reset --hard HEAD~1                                      # 鎾ゆ渶鍚庝竴娆℃彁浜?  ```
+- **涓嶈繘搴?*锛歚build/`銆乣.gradle/`銆乣local.properties`銆佷换浣?`*.apk` / `*.jks`锛堣 `.gitignore`锛夈€?  绛惧悕鍜屾湰鏈?SDK 璺緞灞炰簬鏈哄櫒鐜锛屼笉璺熺潃浠ｇ爜璧般€?- 棣栦釜鎻愪氦 `e9ade48` 瀵瑰簲绾夸笂 2.2.60锛坴ersionCode 180锛夌殑婧愮爜鐘舵€侊紝鍙洿鎺ュ綋鍩哄噯銆?
