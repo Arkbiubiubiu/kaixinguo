@@ -772,6 +772,10 @@ fun PlayerScreen(
                 px.start()
                 created = rvLocal to px
                 ps.duration = rvLocal.total
+            } else if (info.durationMs > 0) {
+                // HLS 播放列表在增长，播放器只能看到已转出的几秒；
+                // 进度条总长用服务端下发的整集时长
+                ps.duration = info.durationMs
             }
             // 同上：切集前先记住上一集看到哪儿
             if (ps.preparedVid.isNotEmpty() && ps.preparedIndex > 0) {
@@ -952,7 +956,9 @@ fun PlayerScreen(
         while (true) {
             runCatching {
                 position = player.currentPosition
-                if (player.duration > 0) ps.duration = player.duration
+                // 只增不减：HLS 冷启动时服务端给的整集时长比播放器当前看到的长，
+                // 不能被 player.duration（还在增长）覆盖回去
+                if (player.duration > ps.duration) ps.duration = player.duration
                 playing = player.isPlaying
                 if (playing) playedThisEpisode += 400L
                 // 卡顿看门狗：进度 8 秒没动（且不在准备/切集/暂停）就重新取流。

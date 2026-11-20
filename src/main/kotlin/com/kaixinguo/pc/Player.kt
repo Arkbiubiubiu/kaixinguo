@@ -554,7 +554,9 @@ fun PlayerScreen(
             when (src) {
                 is PlaySource.Stream -> src.proxy.url
                 is PlaySource.Hls -> src.info.url
-            }
+            },
+            // HLS 播放列表还在增长：进度条总长用服务端下发的整集时长
+            knownDurationMs = if (src is PlaySource.Hls) src.info.durationMs else 0L,
         )
         engine = eng
         // 换集/起播：新引擎从 0 开始播，暂停状态和「启动宽限」一起重置

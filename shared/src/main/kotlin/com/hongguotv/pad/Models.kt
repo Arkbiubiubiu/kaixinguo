@@ -25,6 +25,8 @@ data class PlayInfo(
     val size: Long = 0,
     /** 冷启动边转边播：url 是 HLS 播放列表，不是整集 MP4 */
     val hls: Boolean = false,
+    /** 整集真实时长（毫秒）；HLS 冷启动时进度条靠它 */
+    val durationMs: Long = 0L,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -45,6 +47,7 @@ data class PlayTier(
     val size: Long = 0L,
     val codec: String = "",
     val hls: Boolean = false,
+    val durationMs: Long = 0L,
 ) {
     /**
      * 能不能在本机播。
@@ -65,6 +68,7 @@ data class PlayTier(
         duration = 0,
         size = size,
         hls = hls,
+        durationMs = durationMs,
     )
 }
 

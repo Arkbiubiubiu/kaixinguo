@@ -715,6 +715,7 @@ object Api {
             duration = 0,
             size = data.optLong("size"),
             hls = data.optBoolean("hls"),
+            durationMs = data.optLong("duration"),
         )
     }
 
@@ -3596,6 +3597,7 @@ object Api {
                     size = o.optLong("size"),
                     codec = o.optString("codec"),
                     hls = o.optBoolean("hls"),
+                    durationMs = o.optLong("duration"),
                 )
             }.sortedByDescending { it.height }
         }.getOrDefault(emptyList())
