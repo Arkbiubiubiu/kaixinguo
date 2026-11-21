@@ -30,10 +30,77 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 刷剧候选池目标：连续深翻到这么多部"不同"的剧为止（太小会天天在那几部里打转）。 */
+/** 刷剧候选池目标：主分类连续深翻到这么多部"不同"的剧为止（太小会天天在那几部里打转）。 */
 private const val FEED_POOL_TARGET = 48
-/** 深翻页数上限：上游异常/翻不动时保底，别无限翻。 */
+/** 主分类深翻页数上限：上游异常/翻不动时保底，别无限翻。 */
 private const val FEED_POOL_MAX_PAGES = 8
+/** 跨分类更多样：另外两个分类各额外补这么多部（合并去重后混在一起）。 */
+private const val EXTRA_PER_CATEGORY = 16
+/** 额外分类的翻页上限（16 部通常 1~2 页就够）。 */
+private const val EXTRA_MAX_PAGES = 3
+
+/**
+ * 把某个分类从 [start]（为空则现拉首屏）往后深翻，边翻边塞进 [into]（按 seriesId 去重），
+ * 直到 [into] 的 distinct 达到 [targetDistinct] 或翻满 [maxPages] 页。返回最后一页游标（供续翻）。
+ * 全程容错：任一步失败就停，不抛异常。
+ */
+private fun fillFeedCategory(
+    type: String,
+    targetDistinct: Int,
+    maxPages: Int,
+    into: LinkedHashMap<String, SeriesCard>,
+    start: FeedPage?,
+): FeedPage? {
+    var cur: FeedPage? = start ?: runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
+    cur?.cards?.forEach { into.putIfAbsent(it.seriesId, it) }
+    var pages = 0
+    while (into.size < targetDistinct && pages < maxPages) {
+        val c = cur ?: break
+        if (!c.hasMore || c.cellId.isEmpty()) break
+        val next = runCatching {
+            Api.feedNext(
+                tabType = type,
+                cellId = c.cellId,
+                planId = c.planId,
+                sessionId = c.sessionId,
+                offset = c.nextOffset,
+                seen = into.keys.toList(),
+                refresh = true,
+            )
+        }.getOrNull() ?: break
+        pages++
+        next.cards.forEach { into.putIfAbsent(it.seriesId, it) }
+        val advanced = next.nextOffset > c.nextOffset
+        // 会话号/游标跟随最新一页（session 可能变，要用新的才能继续翻）
+        cur = next.copy(
+            sessionId = next.sessionId.ifEmpty { c.sessionId },
+            cellId = next.cellId.ifEmpty { c.cellId },
+            planId = next.planId.ifEmpty { c.planId },
+        )
+        // 游标没前进（翻不动了）就停，别用同一个 offset 空翻
+        if (!advanced) break
+    }
+    return cur
+}
+
+/**
+ * 建刷剧候选池：当前分类为主（深翻到 [FEED_POOL_TARGET]），另两个分类各补 [EXTRA_PER_CATEGORY] 部，
+ * 合并按 seriesId 去重（LinkedHashMap），返回 (池, 主分类最后游标)。
+ */
+private fun buildFeedPool(
+    primaryType: String,
+    otherTypes: List<String>,
+    first: FeedPage?,
+): Pair<LinkedHashMap<String, SeriesCard>, FeedPage?> {
+    val pool = LinkedHashMap<String, SeriesCard>()
+    // 主分类：复用已经拿到的首屏，不重复拉
+    val primaryLast = fillFeedCategory(primaryType, FEED_POOL_TARGET, FEED_POOL_MAX_PAGES, pool, first)
+    // 另外两个分类各补一部分（这是"跨分类更丰富"的主要来源）
+    otherTypes.forEach { t ->
+        fillFeedCategory(t, pool.size + EXTRA_PER_CATEGORY, EXTRA_MAX_PAGES, pool, null)
+    }
+    return pool to primaryLast
+}
 
 /**
  * 刷剧（Pad / TV 共用）：
@@ -78,7 +145,7 @@ fun FeedScreen(
             loading = false
             return@LaunchedEffect
         }
-        // 用户要求：每次进入刷剧都必须现拉，不显示旧列表；可以等 loading。
+        // 用户要求：每次进入刷剧都必须现拉，不显示旧列表。
         loading = true
         cards = emptyList()
         cursor = 0
@@ -87,71 +154,63 @@ fun FeedScreen(
         val cacheKey = "feed_${feedTypes[tab]}"
         val type = feedTypes[tab]
 
-        // ---- ① 建大候选池：首屏 + 连续深翻 feedNext，直到 distinct >= 48 或翻满 8 页 ----
-        // 原来只取首屏 offset=0 的小池（约 15 部），所以总在那几部之间打转。这里用返回的
-        // next_offset 连续翻页，把池子扩到 48+ 部，才有"每次/每天刷到更多不同剧"的基础。
-        // 全程容错：任何一步失败就停在手上已有的池，不崩；翻不动（游标不前进）就停。
-        val built = withContext(Dispatchers.IO) {
-            val pool = LinkedHashMap<String, SeriesCard>() // 按 seriesId 去重
-            var cur: FeedPage? = runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
-            cur?.cards?.forEach { pool.putIfAbsent(it.seriesId, it) }
-            var pages = 0
-            while (pool.size < FEED_POOL_TARGET && pages < FEED_POOL_MAX_PAGES) {
-                val c = cur ?: break
-                if (!c.hasMore || c.cellId.isEmpty()) break
-                val next = runCatching {
-                    Api.feedNext(
-                        tabType = type,
-                        cellId = c.cellId,
-                        planId = c.planId,
-                        sessionId = c.sessionId,
-                        offset = c.nextOffset,
-                        seen = pool.keys.toList(),
-                        refresh = true,
-                    )
-                }.getOrNull() ?: break
-                pages++
-                next.cards.forEach { pool.putIfAbsent(it.seriesId, it) }
-                val advanced = next.nextOffset > c.nextOffset
-                // 会话号/游标跟随最新一页（session 可能变，要用新的才能继续翻）
-                cur = next.copy(
-                    sessionId = next.sessionId.ifEmpty { c.sessionId },
-                    cellId = next.cellId.ifEmpty { c.cellId },
-                    planId = next.planId.ifEmpty { c.planId },
-                )
-                // 游标没前进（翻不动了）就停，别用同一个 offset 空翻
-                if (!advanced) break
-            }
-            pool to cur
+        // ---- ① 首屏秒开：只拉第一页，跨天去重后立即开播；不再等深翻凑池 ----
+        val first = withContext(Dispatchers.IO) {
+            runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
         }
-        val pool = built.first
-        val lastPage = built.second
-
-        // ---- ② 跨会话/跨天去重：优先没用"最近推过"的；过滤后太少就放宽用整池 ----
-        val seen = Store.feedSeenIds.toSet()
-        val fresh = pool.values.filter { it.seriesId !in seen }
-        val chosen = if (fresh.size >= 12) fresh else pool.values.toList()
-
-        // ---- ③ 打乱顺序，避免每天都是同一套排法 ----
-        val display = chosen.shuffled()
-
-        if (display.isNotEmpty()) {
-            cards = display
-            page = lastPage
+        val seen0 = Store.feedSeenIds.toSet()
+        val rawFirst = first?.cards ?: emptyList()
+        // 优先没用"最近推过"的；全被过滤光就退回整首屏，保证有内容
+        val firstDisplay = rawFirst.filter { it.seriesId !in seen0 }.shuffled()
+            .ifEmpty { rawFirst.shuffled() }
+        if (firstDisplay.isNotEmpty()) {
+            cards = firstDisplay
+            page = first
             cursor = 0
-            // ④ 本次展示的 seriesId 记入"最近推送"集合（FIFO，Store 内保留最近 300 个）
-            Store.feedSeenIds = seen.toMutableList().apply {
-                display.forEach { c -> val id = c.seriesId; remove(id); add(id) }
+            Store.feedSeenIds = seen0.toMutableList().apply {
+                firstDisplay.forEach { c -> val id = c.seriesId; remove(id); add(id) }
             }
-            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, display) } }
+            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, firstDisplay) } }
         } else {
             cards = emptyList()
             page = null
         }
-        loading = false
+        loading = false // 立即开播，深翻放后台
+
+        // ---- ② 后台继续深翻补池（主分类 + 另两分类各补一部分），完成后 append 到尾部 ----
+        // 不打断当前播放：不清空、不重排、不动 cursor，只往 cards 尾部加"没出现过的、优先没见过"的剧。
+        if (first != null) {
+            launch {
+                val built = withContext(Dispatchers.IO) {
+                    buildFeedPool(type, feedTypes.filter { it != type }, first)
+                }
+                val pool = built.first
+                val primaryLast = built.second
+                val shownIds = cards.map { it.seriesId }.toSet()
+                val seenNow = Store.feedSeenIds.toSet()
+                val unseen = pool.values
+                    .filter { it.seriesId !in shownIds && it.seriesId !in seenNow }
+                    .shuffled()
+                val fallback = pool.values
+                    .filter { it.seriesId !in shownIds }
+                    .shuffled()
+                // 赋值前再按"此刻的 cards"过滤一次，避免和用户 step() 追加的重复
+                val shownNow = cards.map { it.seriesId }.toSet()
+                val appended = (if (unseen.isNotEmpty()) unseen else fallback)
+                    .filter { it.seriesId !in shownNow }
+                if (appended.isNotEmpty()) {
+                    cards = cards + appended // append 到尾部
+                    if (primaryLast != null) page = primaryLast // 更新 step 尾部续翻游标
+                    Store.feedSeenIds = Store.feedSeenIds.toMutableList().apply {
+                        appended.forEach { c -> val id = c.seriesId; remove(id); add(id) }
+                    }
+                    withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, cards) } }
+                }
+            }
+        }
     }
 
-    // 预载后面 5 部：换剧时直接用准备好的解密代理，起播几乎无感
+    // 预载后面若干部（FeedPreload.AHEAD=8）：换剧时直接用准备好的解密代理，起播几乎无感
     LaunchedEffect(cursor, cards) {
         if (cards.isNotEmpty()) FeedPreload.request(cards, cursor + 1)
     }
@@ -241,7 +300,7 @@ fun FeedScreen(
                     onSwitch = { _, _ -> },
                     onDetail = { UiMemo.feedReturnKeep = true; onOpenDetail(current.seriesId) },
                     feedMode = true,
-                    feedLabel = "第 ${cursor + 1} 部 · 共 ${cards.size} 部",
+                    feedLabel = "第 ${cursor + 1} 部/共 ${cards.size} 部",
                     onFeedStep = { dir -> step(dir) },
                     onFeedFull = {
                         UiMemo.feedReturnKeep = true

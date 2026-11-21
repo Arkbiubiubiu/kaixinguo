@@ -62,6 +62,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -1701,24 +1702,58 @@ fun PlayerScreen(
                 }
             }
         }
-        // 刷剧模式：控制台不出现，只留底部一行标题/集数 + 细进度条（纯展示，不参与焦点）
+        // 刷剧模式：控制台不出现，只留底部信息条（小封面 + 剧名/评分 + 集数·第几部 + 细进度条，纯展示不参与焦点）
         if (feed) {
+            val fd = DetailCache.get(seriesId)
+            val feedCover = fd?.cover?.takeIf { it.isNotBlank() }.orEmpty()
             Column(
                 Modifier.align(Alignment.BottomStart)
                     .padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
             ) {
-                Text(
-                    title.ifBlank { "刷剧" },
-                    color = Color.White.copy(alpha = 0.82f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    "第 ${index} 集" + (feedLabel?.let { " · $it" } ?: ""),
-                    color = Color.White.copy(alpha = 0.55f),
-                    fontSize = 12.sp,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 小封面缩略图（约 64×36 圆角）；没拿到封面就留个半透明占位
+                    Box(
+                        Modifier.width(64.dp).height(36.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0x33FFFFFF)),
+                    ) {
+                        if (feedCover.isNotEmpty()) {
+                            AsyncImage(
+                                model = feedCover,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                title.ifBlank { fd?.title ?: "刷剧" },
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            val feedScore = fd?.score?.takeIf { it.isNotBlank() }
+                            if (feedScore != null) {
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    feedScore,
+                                    color = Color(0xFFFFD24A),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "第 ${index} 集" + (feedLabel?.let { " · $it" } ?: ""),
+                            color = Color.White.copy(alpha = 0.55f),
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Box(
                     Modifier.fillMaxWidth().height(2.dp)

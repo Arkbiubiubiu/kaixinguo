@@ -164,6 +164,9 @@ fun PlayerScreen(
     onWheelStep: ((Int) -> Unit)? = null,
     /** 系列剧 tab：点名跳到另一季/另一部 */
     onSwitchSeries: (String) -> Unit = {},
+    /** 刷剧底部信息条：当前第几部 / 共几部（0-based） */
+    feedIndex: Int = 0,
+    feedTotal: Int = 0,
 ) {
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
@@ -1096,50 +1099,67 @@ fun PlayerScreen(
                 .onPointerEvent(PointerEventType.Enter) { chromeHovered = true }
                 .onPointerEvent(PointerEventType.Exit) { chromeHovered = false },
         ) {
-            // 左下：@剧名 / 第N集 / 简介两行（数值对齐旧版 immersive-info-overlay）
+            // 左下：刷剧模式显示「小封面 + 剧名 + 第X集·第Y部/共Z部 + 进度条 + 评分」；
+            // 普通播放页保持原「@剧名 / 第N集 / 简介」。
             val intro = detail?.intro.orEmpty()
             val seriesTitle = title.ifBlank { "播放" }
             Column(Modifier.widthIn(max = 620.dp).padding(end = 80.dp)) {
-                // 标题区（@剧名 + 第N集）点一下进详情：旧版就有这个入口，
-                // 重写播放器时只留了刷剧页那颗胶囊，正片里的入口漏了
-                Column(
-                    Modifier.pointerHoverIcon(PointerIcon.Hand)
-                        .clickable(enabled = chromeVisible) { onDetail() },
-                ) {
-                    Text(
-                        "@$seriesTitle",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                if (onWheelStep != null) {
+                    val durMs = engine?.info?.durationMs ?: 0L
+                    FeedInfoRow(
+                        coverUrl = detail?.cover.orEmpty(),
+                        title = seriesTitle,
+                        sub = "第 $index 集" + when {
+                            feedTotal > 0 -> " · 第 ${feedIndex + 1} 部 / 共 $feedTotal 部"
+                            episodes.isNotEmpty() -> " · 全 ${detail?.episodeCount ?: episodes.size} 集"
+                            else -> ""
+                        },
+                        score = detail?.score.orEmpty(),
+                        progress = if (durMs > 0) (tick.toFloat() / durMs).coerceIn(0f, 1f) else 0f,
+                        onClick = { if (chromeVisible) onDetail() },
                     )
-                    Text(
-                        "第 $index 集" + if (episodes.isNotEmpty()) " · 全 ${detail?.episodeCount ?: episodes.size} 集" else "",
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 12.sp,
-                    )
-                }
-                if (intro.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Row(Modifier.widthIn(max = 420.dp), verticalAlignment = Alignment.Bottom) {
+                } else {
+                    // 标题区（@剧名 + 第N集）点一下进详情：旧版就有这个入口，
+                    // 重写播放器时只留了刷剧页那颗胶囊，正片里的入口漏了
+                    Column(
+                        Modifier.pointerHoverIcon(PointerIcon.Hand)
+                            .clickable(enabled = chromeVisible) { onDetail() },
+                    ) {
                         Text(
-                            intro,
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 12.sp,
-                            lineHeight = 18.sp,
-                            maxLines = if (introExpanded) 6 else 2,
+                            "@$seriesTitle",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
                         )
-                        if (intro.length > 40) {
-                            Spacer(Modifier.width(8.dp))
+                        Text(
+                            "第 $index 集" + if (episodes.isNotEmpty()) " · 全 ${detail?.episodeCount ?: episodes.size} 集" else "",
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 12.sp,
+                        )
+                    }
+                    if (intro.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Row(Modifier.widthIn(max = 420.dp), verticalAlignment = Alignment.Bottom) {
                             Text(
-                                if (introExpanded) "收起" else "展开",
-                                color = Color.White.copy(alpha = 0.6f),
+                                intro,
+                                color = Color.White.copy(alpha = 0.7f),
                                 fontSize = 12.sp,
-                                modifier = Modifier.clickable { introExpanded = !introExpanded },
+                                lineHeight = 18.sp,
+                                maxLines = if (introExpanded) 6 else 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                             )
+                            if (intro.length > 40) {
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (introExpanded) "收起" else "展开",
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.clickable { introExpanded = !introExpanded },
+                                )
+                            }
                         }
                     }
                 }
@@ -2007,6 +2027,63 @@ private fun BackPill(text: String, onClick: () -> Unit) {
     ) {
         Icon(Icons.Filled.ChevronLeft, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
         Text(text, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** 刷剧底部信息条：小封面(64×36 圆角) + 剧名 + 「第X集 · 第Y部/共Z部」 + 进度条 + 评分。 */
+@Composable
+private fun FeedInfoRow(
+    coverUrl: String,
+    title: String,
+    sub: String,
+    score: String,
+    progress: Float,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.pointerHoverIcon(PointerIcon.Hand).clickable { onClick() },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RemoteImage(
+            url = coverUrl,
+            modifier = Modifier.size(width = 64.dp, height = 36.dp).clip(RoundedCornerShape(6.dp)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.widthIn(max = 360.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (score.isNotBlank() && score != "0") {
+                    Spacer(Modifier.width(8.dp))
+                    Text("★ $score", color = Palette.star, fontSize = 12.sp)
+                }
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                sub,
+                color = Color.White.copy(alpha = 0.82f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(5.dp))
+            Box(
+                Modifier.width(180.dp).height(3.dp).clip(RoundedCornerShape(2.dp))
+                    .background(Color(0x55FFFFFF)),
+            ) {
+                Box(
+                    Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp)
+                        .clip(RoundedCornerShape(2.dp)).background(Palette.accent),
+                )
+            }
+        }
     }
 }
 

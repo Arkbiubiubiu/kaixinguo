@@ -4,12 +4,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * 刷剧预载：在后台把「后面 5 部」的详情、档位和解密代理头部先准备好。
+ * 刷剧预载：在后台把「后面 8 部」的详情、档位和解密代理头部先准备好。
  *
  * 为什么需要：刷剧是上下换剧，每次换一部都要重新
  * 拉详情 → 拉档位 → 下载 512KB 索引 → 解析样本表，隧道只有 1MB/s 左右，
@@ -17,8 +18,8 @@ import kotlinx.coroutines.launch
  * 起播几乎无感。
  *
  * 约束：
- * - 一次只预载一部（错峰 700ms），避免和正在播的那一路抢带宽；
- * - 只准备「头部」不预读画面，预载 5 部大约只多占 2~3MB 流量、几 MB 内存；
+ * - 最多 2 部并发预载（漫剧走 CDN 直连、带宽大，双路能把带宽吃得更满），仍避免饿死正在播的那一路；
+ * - 只准备「头部」不预读画面，预载 8 部大约只多占 3~5MB 流量、几 MB 内存；
  * - 解不了的片源（VVC/AV1 私有封装）记进 dead，不再重复尝试。
  */
 object FeedPreload {
@@ -26,7 +27,11 @@ object FeedPreload {
     class Ready(val seriesId: String, val info: PlayInfo, val remote: RemoteVideo)
 
     /** 往后预载几部 */
-    const val AHEAD = 5
+    const val AHEAD = 8
+    /** 其中前几部做「完整预载」（档位 + 解密头部），其余只拉详情 */
+    const val FULL_COUNT = 4
+    /** 预载并发上限（≤2：漫剧走 CDN 直连带宽大，双路能更吃满；又不至于饿死正在播的那一路） */
+    private const val PRELOAD_CONCURRENCY = 2
 
     private val ready = LinkedHashMap<String, Ready>()
     private val dead = HashSet<String>()
@@ -55,14 +60,22 @@ object FeedPreload {
             job = scope.launch {
                 // 先等起播那一波过去（首屏、档位、索引），再开始预载
                 delay(1_500)
-                ids.forEachIndexed { index, id ->
+                // 有限并发（≤ PRELOAD_CONCURRENCY=2）：每批 2 部同时预载，批内并行、批间串行。
+                // 漫剧走 CDN 直连、带宽大，双路能把带宽吃得更满；仍不超 2 路，别饿死正在播的那一路。
+                val indexed = ids.withIndex().toList()
+                var i = 0
+                while (i < indexed.size) {
                     if (!isActive) return@launch
-                    if (synchronized(lock) { ready.containsKey(id) || id in dead }) return@forEachIndexed
-                    // 只给最近 2 部做「完整预载」（档位 + 解密头部）；其余只拉详情。
-                    // 每部 playinfo 都要让 oroplay 现场注册匿名设备（慢且偶发 502），
-                    // 5 部全都拉档位会跟正在播的那一路抢串行锁，反而拖慢首屏。
-                    runCatching { build(id, full = index < 2) }
-                    delay(900)
+                    val batch = indexed.subList(i, minOf(i + PRELOAD_CONCURRENCY, indexed.size))
+                    batch.map { (index, id) ->
+                        async {
+                            if (!isActive) return@async
+                            if (synchronized(lock) { ready.containsKey(id) || id in dead }) return@async
+                            // 只给最近 FULL_COUNT 部做「完整预载」（档位 + 解密头部）；其余只拉详情。
+                            runCatching { build(id, full = index < FULL_COUNT) }
+                        }
+                    }.forEach { it.await() }
+                    i += PRELOAD_CONCURRENCY
                 }
             }
         }
