@@ -398,10 +398,12 @@ fun PlayerScreen(
     LaunchedEffect(engine, firstNewFrame) {
         if (holdVisible && engine != null && firstNewFrame != null) holdVisible = false
     }
-    // 兜底：新流一直没有画面（只有声音/失败）时 800ms 也得收掉，不能一直盖着
+    // 兜底：新流一直没有画面（只有声音/失败）时也要收掉，不能一直盖着。
+    // 放宽到 2.5s：PC 每集要新起 ffmpeg 解码进程，正常要 ~1s 才出首帧；
+    // 800ms 太短会退回转圈。正常情况首帧一到就由上面的 firstNewFrame 撤掉。
     LaunchedEffect(tick) {
         if (holdVisible) {
-            kotlinx.coroutines.delay(800)
+            kotlinx.coroutines.delay(2_500)
             holdVisible = false
         }
     }
@@ -932,7 +934,7 @@ fun PlayerScreen(
             )
         }
 
-        if (loading) {
+        if (loading && !holdVisible) {
             Column(
                 Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
