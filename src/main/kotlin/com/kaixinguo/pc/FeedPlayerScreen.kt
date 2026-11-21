@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -104,6 +104,55 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
+/**
+ * 刷剧候选池加载（只动取数与挑选，不碰播放/取流）：
+ *   1) 首屏 Api.firstPage(type, refresh=true)；
+ *   2) 按 nextOffset 连续 feedNext 深翻，直到 distinct ≥ [FEED_POOL_MIN] 或翻满 [FEED_MAX_PAGES] 页；
+ *   3) LinkedHashMap 按 seriesId 去重；runCatching 容错，失败就停在已有池；游标不动就 break 防死循环。
+ * 返回 (候选池, 最后游标)——最后游标给「换剧到列表尾」继续 feedNext 用。
+ */
+private const val FEED_POOL_MIN = 48
+private const val FEED_MAX_PAGES = 8
+
+private suspend fun loadFeedPool(tabType: String): Pair<List<SeriesCard>, FeedPage?> =
+    withContext(Dispatchers.IO) {
+        val first = runCatching { Api.firstPage(tabType, refresh = true) }.getOrNull()
+            ?: return@withContext (emptyList<SeriesCard>() to null)
+        val pool = LinkedHashMap<String, SeriesCard>()
+        first.cards.forEach { if (it.seriesId.isNotBlank()) pool[it.seriesId] = it }
+        var cur = first
+        var pages = 1
+        while (pool.size < FEED_POOL_MIN && pages < FEED_MAX_PAGES &&
+            cur.hasMore && cur.cellId.isNotEmpty()
+        ) {
+            val prevOffset = cur.nextOffset
+            val next = runCatching {
+                Api.feedNext(
+                    tabType = tabType,
+                    cellId = cur.cellId,
+                    planId = cur.planId,
+                    sessionId = cur.sessionId,
+                    offset = cur.nextOffset,
+                    seen = pool.keys,
+                    refresh = true,
+                )
+            }.getOrNull() ?: break
+            var added = 0
+            next.cards.forEach { c ->
+                if (c.seriesId.isNotBlank() && pool.putIfAbsent(c.seriesId, c) == null) added++
+            }
+            // 游标没前进、也没新增 → 上游到底，停（防死循环）。
+            if (next.nextOffset == prevOffset && added == 0) break
+            cur = next.copy(
+                sessionId = next.sessionId.ifEmpty { cur.sessionId },
+                cellId = next.cellId.ifEmpty { cur.cellId },
+                planId = next.planId.ifEmpty { cur.planId },
+            )
+            pages++
+        }
+        pool.values.toList() to cur
+    }
+
 @Composable
 internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> Unit, onExit: () -> Unit) {
     // 三端默认漫剧；顺序与顶部 tab 一致：漫剧 / 真人剧 / 推荐。
@@ -128,21 +177,23 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
             loading = false
             return@LaunchedEffect
         }
-        // 用户要求：每次进入刷剧都必须现拉，不显示旧列表；可以等 loading。
+        // 每次进入刷剧都必须现拉，不显示旧列表；可以等 loading。
         loading = true
         cards = emptyList()
         cursor = 0
         feedCursor = null
-        val page = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
-        }
-        if (page?.cards?.isNotEmpty() == true) {
-            cards = page.cards
-            feedCursor = page
-            cursor = 0
-        } else {
-            cards = emptyList()
-        }
+
+        // 深翻凑候选池（distinct ≥ 48 或翻满 8 页），再做跨天去重 + 打乱。
+        val (rawPool, finalCursor) = loadFeedPool(feedTypes[tab])
+        // 跨天去重：优先过滤掉最近推过的（feed_seen_ids）；过滤后不足 12 就放宽用整池兜底。
+        val seen = PcStore.feedSeenIds().toHashSet()
+        val deduped = rawPool.filter { it.seriesId !in seen }
+        val shown = (if (deduped.size >= 12) deduped else rawPool).shuffled()
+        cards = shown
+        feedCursor = finalCursor
+        cursor = 0
+        // 本次展示的 seriesId 写回持久化（最近 300，FIFO）。
+        PcStore.recordFeedSeen(shown.map { it.seriesId })
         loading = false
     }
 
@@ -186,7 +237,15 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
 
     val current = cards.getOrNull(cursor)
     when {
-        loading -> CenterLoading()
+        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(
+                    color = Palette.accent, strokeWidth = 3.dp, modifier = Modifier.size(36.dp),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("正在加载…", color = Palette.dim, fontSize = 14.sp)
+            }
+        }
         current == null -> EmptyState(
             title = "没有拿到推荐",
             hint = "检查网络后重试",

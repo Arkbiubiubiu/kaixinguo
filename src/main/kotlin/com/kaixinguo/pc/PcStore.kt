@@ -378,4 +378,25 @@ object PcStore : AccountState {
 
     private fun readSet(key: String): LinkedHashSet<String> =
         LinkedHashSet(str(key).split('\u0001').filter { it.isNotBlank() })
+
+    // ---------------- 刷剧「跨天去重」：最近推过的 seriesId（FIFO，最多 300） ----------------
+
+    /** 最近在刷剧里推过的 seriesId，按推入先后（旧→新）。 */
+    fun feedSeenIds(): List<String> =
+        str("feed_seen_ids", "").split('\u0001').filter { it.isNotBlank() }
+
+    /** 把本次展示的 seriesId 追加进 feed_seen_ids：去重保序，只保留最近 300 个。 */
+    fun recordFeedSeen(ids: List<String>) {
+        if (ids.isEmpty()) return
+        val ordered = LinkedHashSet<String>()
+        feedSeenIds().forEach { if (it.isNotBlank()) ordered.add(it) }
+        ids.forEach { sid ->
+            if (sid.isNotBlank()) {
+                ordered.remove(sid)   // 重新推到的挪到末尾 = 最新
+                ordered.add(sid)
+            }
+        }
+        val kept = ordered.toList().takeLast(300)
+        put("feed_seen_ids", kept.joinToString("\u0001"))
+    }
 }

@@ -268,7 +268,7 @@ def upload(files, manifests):
         local = sha256(path)
         p = subprocess.run(
             ["ssh", SERVER, "sha256sum %s/%s" % (SERVER_DIR, os.path.basename(path))],
-            capture_output=True, text=True)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if p.returncode != 0 or local not in p.stdout:
             die("远端校验失败: " + name)
     print("上传并校验通过: %d 个文件" % (len(files) + len(manifests)))
@@ -280,7 +280,7 @@ def prune_remote(keep=2):
     try:
         p = subprocess.run(
             ["ssh", SERVER, "/usr/local/bin/ark-prune-pkgs.sh %d" % keep],
-            capture_output=True, text=True)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
         msg = (p.stdout or "").strip() or (p.stderr or "").strip()
         if p.returncode == 0:
             print("远端旧包清理:", msg)
