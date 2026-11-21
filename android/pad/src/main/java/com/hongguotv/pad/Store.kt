@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -241,6 +241,19 @@ object Store : AccountState {
         list.add(0, word)
         searchHistory = list
     }
+
+    // ---------------- 刷剧：最近已推送（跨会话/跨天去重用） ----------------
+
+    /**
+     * 刷剧最近推送过的 seriesId（FIFO，保留最近 300 个）。
+     * 进入刷剧时优先展示"没推过的"，避免隔天刷来刷去还是那几部；存最近 300 个防无限增长。
+     */
+    var feedSeenIds: List<String>
+        get() = p().getString("feed_seen_ids", "").orEmpty()
+            .split(SEP).filter { it.isNotBlank() }
+        set(v) = p().edit()
+            .putString("feed_seen_ids", v.takeLast(300).joinToString(SEP))
+            .apply()
 
     // ---------------- 集合类（收藏/点赞/追更/预约） ----------------
     // 实现已拆到 ShelfStore.kt；这里保留同名方法，调用方零改动。

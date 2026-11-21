@@ -30,6 +30,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** 刷剧候选池目标：连续深翻到这么多部"不同"的剧为止（太小会天天在那几部里打转）。 */
+private const val FEED_POOL_TARGET = 48
+/** 深翻页数上限：上游异常/翻不动时保底，别无限翻。 */
+private const val FEED_POOL_MAX_PAGES = 8
+
 /**
  * 刷剧（Pad / TV 共用）：
  *
@@ -80,16 +85,68 @@ fun FeedScreen(
         page = null
         FeedPreload.clear()
         val cacheKey = "feed_${feedTypes[tab]}"
-        val p = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
+        val type = feedTypes[tab]
+
+        // ---- ① 建大候选池：首屏 + 连续深翻 feedNext，直到 distinct >= 48 或翻满 8 页 ----
+        // 原来只取首屏 offset=0 的小池（约 15 部），所以总在那几部之间打转。这里用返回的
+        // next_offset 连续翻页，把池子扩到 48+ 部，才有"每次/每天刷到更多不同剧"的基础。
+        // 全程容错：任何一步失败就停在手上已有的池，不崩；翻不动（游标不前进）就停。
+        val built = withContext(Dispatchers.IO) {
+            val pool = LinkedHashMap<String, SeriesCard>() // 按 seriesId 去重
+            var cur: FeedPage? = runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
+            cur?.cards?.forEach { pool.putIfAbsent(it.seriesId, it) }
+            var pages = 0
+            while (pool.size < FEED_POOL_TARGET && pages < FEED_POOL_MAX_PAGES) {
+                val c = cur ?: break
+                if (!c.hasMore || c.cellId.isEmpty()) break
+                val next = runCatching {
+                    Api.feedNext(
+                        tabType = type,
+                        cellId = c.cellId,
+                        planId = c.planId,
+                        sessionId = c.sessionId,
+                        offset = c.nextOffset,
+                        seen = pool.keys.toList(),
+                        refresh = true,
+                    )
+                }.getOrNull() ?: break
+                pages++
+                next.cards.forEach { pool.putIfAbsent(it.seriesId, it) }
+                val advanced = next.nextOffset > c.nextOffset
+                // 会话号/游标跟随最新一页（session 可能变，要用新的才能继续翻）
+                cur = next.copy(
+                    sessionId = next.sessionId.ifEmpty { c.sessionId },
+                    cellId = next.cellId.ifEmpty { c.cellId },
+                    planId = next.planId.ifEmpty { c.planId },
+                )
+                // 游标没前进（翻不动了）就停，别用同一个 offset 空翻
+                if (!advanced) break
+            }
+            pool to cur
         }
-        if (p?.cards?.isNotEmpty() == true) {
-            cards = p.cards
-            page = p
+        val pool = built.first
+        val lastPage = built.second
+
+        // ---- ② 跨会话/跨天去重：优先没用"最近推过"的；过滤后太少就放宽用整池 ----
+        val seen = Store.feedSeenIds.toSet()
+        val fresh = pool.values.filter { it.seriesId !in seen }
+        val chosen = if (fresh.size >= 12) fresh else pool.values.toList()
+
+        // ---- ③ 打乱顺序，避免每天都是同一套排法 ----
+        val display = chosen.shuffled()
+
+        if (display.isNotEmpty()) {
+            cards = display
+            page = lastPage
             cursor = 0
-            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, p.cards) } }
+            // ④ 本次展示的 seriesId 记入"最近推送"集合（FIFO，Store 内保留最近 300 个）
+            Store.feedSeenIds = seen.toMutableList().apply {
+                display.forEach { c -> val id = c.seriesId; remove(id); add(id) }
+            }
+            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, display) } }
         } else {
             cards = emptyList()
+            page = null
         }
         loading = false
     }
