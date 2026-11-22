@@ -9,6 +9,7 @@ LAYERS = [
     ("L4", "平台适配", "#7a9cff"),
     ("L5", "服务端入口", "#b58cff"),
     ("L6", "解析与上游", "#9aa4b2"),
+    ("L7", "存储/安全/监控/运维", "#ff8f6b"),
 ]
 
 N = [
@@ -93,16 +94,69 @@ N = [
     dict(id="R-V5", layer="L6", name="v5 纯 HTTP 签名", summary="N3urda/aston314 GPL 实现：匿名设备注册 + Android v04.10.03 Medusa/Helios/Khronos v5 签名 + gzip mobile 模型；VVC/AV1 集用模型 fallback_api 的 codec_type=3/1 取 1080P HEVC/H.265；HTTP 9119，单设备、1.2s 间隔、空响应 90s 冷却。", files=["/opt/research/v5/v5resolver.js", "playback-v5-sign.js", "playback-v5-carrier.js", "mobile-playback-v5.js", "9119", "v5resolver.service"]),
     dict(id="R-ORACLE", layer="L6", name="Android 官方 App oracle", summary="redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；作为 R-ORO 的**兜底**，v5 失败时按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。", files=["/opt/research/oracle_parent.py", "resolve_one.py", "oracle_resolver.js", "oracle.service", "redroid container", "9120"]),
     dict(id="R-SIGN", layer="L6", name="签名/设备池", summary="上游签名、设备身份注册/轮换、Argus/Ladon。", files=["9100/9101/9099", "playback-sign.js", "playback-device.js"]),
-    dict(id="R-TRANSCODE", layer="L6", name="VVC/AV1 转码", summary="下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；**画质对齐同行：不放大、VAAPI CQP23（x264 veryfast CRF23 兜底）、AAC 音频 copy、maxrate 4.5Mbps、接近 16:9 归一到 1920，输出 _v4.mp4；磁盘剩 <8GB 自动删最旧**；容器标 av01 但 1 秒解码失败时按 VVC 重抽；输出必须 ffprobe 有视频轨，否则删除报错。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
+    dict(id="R-TRANSCODE", layer="L6", name="VVC/AV1 转码", summary="【解码=软解(CPU，VVC 无硬解、HEVC 解码也软解)；编码=核显 VAAPI h264_vaapi 硬编(/dev/dri/renderD128, CQP23, maxrate4.5M, profile high)，失败回退 libx264 veryfast CRF23】下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；**画质对齐同行：不放大、VAAPI CQP23（x264 veryfast CRF23 兜底）、AAC 音频 copy、maxrate 4.5Mbps、接近 16:9 归一到 1920，输出 _v4.mp4；磁盘剩 <8GB 自动删最旧**；容器标 av01 但 1 秒解码失败时按 VVC 重抽；输出必须 ffprobe 有视频轨，否则删除报错。", files=["do_transcode.py", "extract_vvc.py", "DecryptMp4.java"]),
     dict(id="R-LIVE", layer="L6", name="冷启动边转边播（已停用）", summary="**2026-11-21 已回滚，KXG_HLS=1 才启用**；没有 v4 缓存的 VVC 集：**do_live.py** 下载/解密后直接写 4 秒 fMP4 分片 + EVENT 播放列表（index.m3u8），客户端几秒起播；后台跑完把分片拼回 _v4.mp4 供下次秒开；用户换集会杀掉旧的边转进程，warm 转码会让路；分片目录 3 小时清理。", files=["do_live.py", "live/<vid>/index.m3u8"]),
     dict(id="U-CONTENT", layer="L6", name="番茄内容接口", summary="首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。", files=["api5-normal-lq.fqnovel.com"]),
     dict(id="U-PLAY", layer="L6", name="番茄播放模型", summary="multi_video_model、fallback_api、video_meta/codec_type。", files=["multi_video_model/v1"]),
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),
     dict(id="U-PASSPORT", layer="L6", name="登录/MFA", summary="短信登录、MFA、cookies。", files=["番茄 passport"]),
-    dict(id="I-TUNNEL", layer="L6", name="公网通道", summary="Cloudflare（hgtv.fabao.xin / tc.fabao.xin→8081 / kxg.fabao.xin）、樱花 frpc（仅 dl.fabao.xin 真证书，44468）；cpolar 已删；小请求主走樱花(dl)、转码大文件走 CF(tc→8081)。", files=["frpc@…", "cloudflared"]),
+    dict(id="I-TUNNEL", layer="L6", name="公网通道", summary="Cloudflare（hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081）、樱花 frpc（仅 dl.fabao.xin:44468 真证书）；cpolar 已删、frp-bar 自签关。小请求走樱花(dl)；**转码视频当前实际仍交付 dl.fabao.xin:44468（tc 已就绪但未在 oroplay 生效）**。", files=["frpc@…", "cloudflared"]),
     dict(id="I-GITHUB", layer="L6", name="GitHub Release 更新镜像", summary="公开 kaixinguo Release 资产；axisnow/gh-proxy 加速；固定 tag 地址（/srv/hgtv-update/github-release-tag，禁用会被 CDN 缓存的 latest/download）；下载线路 axisnow→gh-proxy→dl.fabao.xin(真证书兜底)，已去 frp-bar 自签/cpolar；客户端不再信任所有证书；PC/安卓/TV 3 段。", files=["github.com/Arkbiubiubiu/kaixinguo/releases", "axisnow.gh-proxy.org", "gh-proxy.org", "dl.fabao.xin:44468"]),
     dict(id="I-STATE", layer="L6", name="服务端状态", summary="历史、房间、feed-cache、heat、clientlogs、access 流水、admin token。", files=["/var/lib/hgtv-sync"]),
     dict(id="I-SYSTEMD", layer="L6", name="守护/备份", summary="systemd units、镜像 watchdog、隧道 watchdog、备份。", files=["systemd", "mirror_watchdog.sh"]),
+    # ================= 架构树补全 2026-11-22：新增节点（覆盖各领域遗漏子系统）=================
+    # -- L1 PC 页面补 --
+    dict(id="P-SETTINGS", layer="L1", name="PC 设置页", summary="外观/播放(自动下一集/看完删除/最小化暂停/连播预取集数/清晰度上限/默认倍速)/磁盘清缓存/服务配置(取流/签名/token/历史基址/更新源/设备身份)/关于+检查更新。设置走 PcStore 可观察镜像，改完立即生效。", files=["SettingsScreen.kt:108 SettingsPage", "SettingsScreen.kt:400 ServiceField"]),
+    dict(id="P-CREATOR", layer="L1", name="PC 演职员页", summary="演职员资料+作品列表；user_id 取真名，按 tab_type=11/29 双通道搜索兜底并过滤 0 集条目。", files=["CreatorPage.kt:63 CreatorScreen"]),
+    # -- L1/L2 Android 补 --
+    dict(id="A-INIT", layer="L1", name="Android 启动/初始化/权限/生命周期", summary="Store.init、注入 App 全局态、FeedCache.init、LogUploader.start、后台 DeviceResolver.init(Go取流)、后台 Api.fetchFlags；冷启动先画 LaunchScreen 首帧再组 TvRoot{App()}；onStart/onStop→AppLifecycle(退后台暂停)；Android13+ 运行期请求 POST_NOTIFICATIONS + 建「追更提醒」渠道 + 调度 FollowNotifyWorker(12h/联网/KEEP)。", files=["MainActivity.kt", "FollowNotifyWorker.kt:schedule", "App.kt"]),
+    dict(id="A-TV-FOCUS", layer="L1", name="TV 焦点体系 / 遥控器键位", summary="TvRoot 整屏单点焦点框(TvFocusFrame)；侧栏 NavRail 锁+1dp 焦点跳板+返回语义(压栈出栈/进板块回导航层/顶层再退出)；播放器 tvKeys/feedKeys/媒体键 KEYCODE_MEDIA_*/数字键快进；Pad 不锁、无焦点框、触屏优先。", files=["Theme.kt:TvRoot/TvFocusFrame", "App.kt:NavRail/BackHandler", "PlayerScreen.kt:tvKeys/feedKeys"]),
+    dict(id="A-MEMO", layer="L2", name="浏览状态记忆 UiMemo", summary="页面按需组合、切页销毁局部 state；UiMemo 单例保留刷剧现场(feedTab/cursor/cards/page/feedReturnKeep)、各列表滚动、首页/新剧/排行/历史/收藏/追更/预约的 tab·筛选·游标·已加载；RETURN_TTL_MS=5min 内返回不重拉。", files=["UiMemo.kt"]),
+    dict(id="A-PLAY-SESSION", layer="L2", name="播放页状态分层", summary="UI 状态(PlayerUiState：控制条/浮层/提示/评论/输入) 与 单集会话(PlaybackSession：preparedIndex/tiers/curDef/duration/preparing/failed/attempt/switching) 分层；UI 只订阅状态。", files=["PlaybackSession.kt", "PlayerUiState.kt"]),
+    dict(id="A-PLAY-SOURCE", layer="L2", name="选档 / 预取编排", summary="ReadyEpisode/buildReady/nextup：选档上限、拉头部+样本表+本地代理、按集号判重、N+1 未就绪即停(禁预排 N+2 防跳集)、dropReady 关代理；详情页预热前 2 集档位让服务端提前转码。", files=["PlaybackSourcePlanner.kt", "PlayerScreen.kt:buildReady"]),
+    # -- L3 共享核心补（shared 单源）--
+    dict(id="C-HIST", layer="L3", name="历史合并(单源)", summary="shared HistoryRepository：at 最新者胜、positionMs=0 不覆盖真实进度、试看保护(低集数+<60s 不顶高进度)、空 cover/title 不覆盖、同 seriesId 一条、LIMIT1500/SCHEMA3；只合并不存储，服务端 history_store.py 同规则；HistoryShadow PC 侧影子 diff。", files=["shared/src/main/kotlin/com/hongguotv/pad/HistoryRepository.kt", "shared/src/main/kotlin/com/hongguotv/pad/HistoryShadow.kt"]),
+    dict(id="C-GUARD", layer="L3", name="播放保护/看门狗(单源)", summary="shared PlaybackGuard：PlaybackErrorPolicy 错误可恢复分类 + StallWatchdog 8s 卡顿最多2次；错误恢复与卡顿共用重试预算；平台只重建自己引擎。", files=["shared/src/main/kotlin/com/hongguotv/pad/PlaybackGuard.kt"]),
+    dict(id="C-DOMAIN", layer="L3", name="领域门面", summary="shared ApiDomains facade(Phase5 strangler)：PlaybackApi/HistoryApi/AccountApi/SocialApi/CatalogApi 转调 Api；领域只依赖各 facade。", files=["shared/src/main/kotlin/com/hongguotv/pad/ApiDomains.kt"]),
+    dict(id="C-SHELF", layer="L3", name="书架(单源)", summary="shared ShelfRepository：收藏/点赞/追更/预约统一(PC 19 / Android 10 引用)；云端权威+本地离线镜像+订阅基线。", files=["shared/src/main/kotlin/com/hongguotv/pad/ShelfRepository.kt"]),
+    dict(id="C-SEASON", layer="L3", name="季服务(单源)", summary="shared SeasonService：季清单/补季/下一季/主创校验。", files=["shared/src/main/kotlin/com/hongguotv/pad/SeasonService.kt"]),
+    dict(id="C-PASSPORT", layer="L3", name="Passport 登录协议(单源)", summary="shared PassportClient：短信/MFA/passport 协议/错误码(如 1003 设备不符)。", files=["shared/src/main/kotlin/com/hongguotv/pad/PassportClient.kt"]),
+    dict(id="C-UPDCORE", layer="L3", name="更新清单核心(单源)", summary="shared UpdateManifest：一份 manifest schema(packages+abis) 供两端解析。", files=["shared/src/main/kotlin/com/hongguotv/pad/UpdateManifest.kt"]),
+    dict(id="C-PARITY", layer="L3", name="双副本一致性守门", summary="tools/check_api_parity.py：两份 Api.kt(阈值340)/Playback.kt(阈值20)/sign 忽略空白 diff，超阈值报红；建议收紧+白名单(LocalResolverProvider/MULTI_URL/日志级别)。", files=["tools/check_api_parity.py"]),
+    # -- L4 PC 平台补 --
+    dict(id="X-PC-WINDOW", layer="L4", name="PC 窗口/DPI/单实例/生命周期", summary="原生标题栏 DWM 染色；单实例 app.lock(抢不到退出)；Density 固定 1f；竖屏/小窗/真全屏由 UiMode 改窗口几何；最小化→AppLifecycle 暂停、回前台不续播。", files=["Main.kt:246 main()", "Main.kt:281 Window", "AppLifecycle.kt:11"]),
+    dict(id="X-PC-CACHE", layer="L4", name="PC 封面缓存/清理", summary="封面内存 LRU + 磁盘 %APPDATA%/KaixinguoPC/covers；启动后台 autoClean(30天/3000张)，设置页可清；RemoteImage 占位/回退，HEIC 经 ffmpeg 转 PNG。", files=["Image.kt:39 Covers", "Image.kt:60 autoClean"]),
+    dict(id="X-PC-LOG", layer="L4", name="PC 日志落盘/回传", summary="Log.sink→println+DiagLog 落 app.log(>5MB 滚动)；ClientLog 每 10 分钟增量(≤256KB/次、失败静默)到 /api/clientlog，标准证书校验。", files=["Main.kt:694 DiagLog", "ClientLog.kt:18 start"]),
+    dict(id="X-PC-RESOLVER", layer="L4", name="PC 本机取流服务", summary="随包 streamsrv.exe 只监听 127.0.0.1:38120；注册匿名设备取直链后作废；启动最多等 4s health；用户自填取流地址时不启动。", files=["Resolver.kt:16 Resolver"]),
+    # -- L4 Android 平台补 --
+    dict(id="X-AN-NOTIFY", layer="L4", name="追更/预约 系统通知", summary="CoroutineWorker 周期(12h/联网/KEEP)：后台拉起先补 Store.init+App 全局态，未登录 success；调 Store.checkFollowUpdates() 有新增发「追更提醒」；Android13+ 无权限跳过；静默不崩。", files=["FollowNotifyWorker.kt"]),
+    dict(id="X-AN-NET", layer="L4", name="网络安全配置(明文收窄)", summary="res/xml/network_security_config.xml：默认只 HTTPS；仅 localhost/127.0.0.1(本机代理) 与 192.168.1.54(局域网签名/取流/更新) 允许明文；Manifest networkSecurityConfig 取代全局 usesCleartextTraffic。", files=["res/xml/network_security_config.xml", "AndroidManifest.xml"]),
+    # -- L4 发布/工具链补 --
+    dict(id="X-RELEASE", layer="L4", name="发布流水线", summary="tools/release.py 一条命令：bump→gradle 构建(tv/pad universal+3ABI、pc MSI)→verify_dex→stage→release_manifest 清单→scp+远端 sha 校验→prune_remote(留2版)→publish_github(gh release+写 github-release-tag)→copy_to_desktop。五参校验缺失即失败；私参不打印不入库。", files=["tools/release.py"]),
+    dict(id="X-MANIFEST", layer="L4", name="发布清单生成", summary="tools/release_manifest.py 由 APK 目录生成 version-tv/hgpad.json：path/size/sha256 + abis(arm64-v8a/armeabi-v7a/x86_64 各带 path/size/sha256)。", files=["tools/release_manifest.py"]),
+    dict(id="X-PRIVATE-ENV", layer="L4", name="私参文件 release.env", summary="本地 KEY=VALUE(D:/kaixinguo-backup/private/release.env，不入库)：SIGN_URL/PLAY_BASES/PLAY_TOKEN/UPDATE_BASES/HISTORY_BASE/DEVICE_*；release.py 读取注入构建，不打印不入库。", files=["release.env（本地·不入库）"]),
+    dict(id="X-SIGN-KEYSTORE", layer="L4", name="签名 keystore", summary="android/debug.keystore(store/key=android, alias=androiddebugkey)；release 也用此签名保证老设备覆盖升级不被拒；PC 走 Compose MSI。", files=["android/debug.keystore"]),
+    dict(id="X-DESKTOP-OUT", layer="L4", name="桌面留包目录「开心果apk」", summary="~/Desktop/开心果apk：copy_to_desktop 只放最新 TV/Pad 两个通用包、旧 APK 自动清理。", files=["Desktop/开心果apk"]),
+    # -- L5/L6 服务端补 --
+    dict(id="V-FLAGS", layer="L5", name="特性开关", summary="GET /api/flags 返回 flags.json(history_v2/resolver_v2/player_session_v2 等)。", files=["/opt/hgtv-update/serve.py:load_flags", "/var/lib/hgtv-sync/flags.json"]),
+    dict(id="V-TRANSCODEAPI", layer="L5", name="转码 job 查询代理", summary="GET /api/transcode/status?id= → playinfo.job_status → streamsrv/oroplay transcode；只回 job 不回直链；完成后客户端重取 playinfo 命中缓存。", files=["/opt/hgtv-update/playinfo.py:job_status"]),
+    dict(id="R-DEVICEPOOL", layer="L6", name="签名设备池", summary="匿名设备身份注册/轮换/持久化：playback-device.js + streamsrv PROFILE_DIR=/var/lib/hgtv-sync/ohg-pool(每 vid 取址用新身份、失败换新)。", files=["/opt/research/playback-device.js", "/var/lib/hgtv-sync/ohg-pool"]),
+    dict(id="R-DECRYPT", layer="L6", name="CENC 解密(服务端)", summary="Java DecryptMp4：加密 MP4 + spade_a → 派生内容密钥 → AES-CTR 出 dec.mp4；与客户端 C-MEDIA 同算法。", files=["/opt/research/transcode/DecryptMp4.java"]),
+    dict(id="R-EXTRACT", layer="L6", name="VVC 抽 Annex-B", summary="extract_vvc.py：解密 MP4 抽 video.266+audio.aac+meta(fps)；仅 VVC 需要；H.264/HEVC/AV1 直接喂 MP4。", files=["/opt/research/transcode/extract_vvc.py"]),
+    dict(id="I-CF", layer="L6", name="Cloudflare 隧道", summary="cloudflared(cf-start.sh)+config.yml ingress：hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081；cf-watchdog 守护。", files=["/etc/cloudflared/config.yml"]),
+    dict(id="I-FRP", layer="L6", name="樱花 frpc 隧道", summary="frpc@<instance>：只暴露 dl.fabao.xin:44468(真证书)，承接小请求/更新包/转码交付；frp-bar 自签已关、cpolar 已删。", files=["frpc@<instance>.service"]),
+    dict(id="I-MIRROR", layer="L6", name="更新镜像发现", summary="mirror_watchdog 每~5min 写 update-mirrors.json(axisnow→gh-proxy→dl)，读 github-release-tag 固定 tag；只发现镜像、不改 manifest 的 path/sha/abis。", files=["/opt/hgtv-update/mirror_watchdog.sh", "/srv/hgtv-update/update-mirrors.json"]),
+    # -- L7 存储/安全/监控/运维 --
+    dict(id="I-SECRETS", layer="L7", name="密钥/私参/Token", summary="不入库不进日志：CF DNS token、8081 自签私钥、看板 admin token(600,query)、服务器 X-Token(playinfo TOKEN+TOKEN_OLD 轮换)、客户端构建 -P 私参。", files=["playinfo.py:TOKEN/TOKEN_OLD", "/var/lib/hgtv-sync/admin.token"]),
+    dict(id="I-TLS", layer="L7", name="证书管理", summary="dual_server 按 SNI 选证书：dl/kxg.fabao.xin 用 Let's Encrypt，其余用自签 kxg-selfsigned；公网 CF 边缘另配。", files=["/etc/letsencrypt/live/dl.fabao.xin"]),
+    dict(id="I-MONITOR", layer="L7", name="监控/守护", summary="streamwatch(timer~30min)+stream-status.log 巡检流；cf-watchdog(timer~5min) 守护 cloudflared；看板 /api/admin/stats 汇总设备/端口/请求量。", files=["/usr/local/bin/streamwatch", "cf-watchdog.sh"]),
+    dict(id="I-CLEANUP", layer="L7", name="定时清理", summary="ark-cleanup(timer 每日04:33) 清 apt/docker/journal/tmp；转码侧 7天/200文件 + 磁盘<8GB 删最旧。", files=["/usr/local/bin/ark-cleanup.sh"]),
+    dict(id="I-BACKUP", layer="L7", name="备份/回滚", summary="改前快照 /root/kxg-unify-backup-YYYYMMDD(源文件+二进制)；/var/lib/hgtv-sync 与 /srv/hgtv-update 可整体快照。", files=["/root/kxg-unify-backup-20261121"]),
+    dict(id="I-ARCHIVE", layer="L7", name="归档/数据盘", summary="srv-hgtv-archive.mount 归档盘；data-redroid.mount 为 oracle redroid 容器数据盘；主盘 nvme 承载 /srv 与 /var/lib/hgtv-sync。", files=["srv-hgtv-archive.mount"]),
+    # -- L7 工具链/发版保障 --
+    dict(id="X-GATE-VERSIONS", layer="L7", name="版本一致性门禁", summary="tools/check_versions.py：源码↔服务器清单↔本机安装；verify_artifacts 校验 abis≥3、manifest sha256 与本地 dist 一致。", files=["tools/check_versions.py"]),
+    dict(id="X-TREE", layer="L7", name="架构树生成/校验", summary="docs/build_tech_tree.py 由节点/边生成 tech-tree.html；tools/check_tree.py 校验 TECH_TREE.md 节点 id↔html tree-data↔引用文件存在；改完须重跑并 scp 到 /srv/hgtv-update/tech-tree.html。", files=["docs/build_tech_tree.py", "tools/check_tree.py"]),
+    dict(id="X-DOC-DISCIPLINE", layer="L7", name="文档与发版纪律", summary="AGENTS.md(发版纪律)、docs/TECH_TREE.md(权威清单·§9 版本基线)、README、REMEDIATION_PLAN；改发版参数/版本须同步 §9 与 tech-tree.html。", files=["AGENTS.md", "docs/TECH_TREE.md"]),
 ]
 
 EDGES = [
@@ -188,6 +242,55 @@ EDGES = [
     ("R-ORO","R-LIVE","冷启动边转边播"), ("R-LIVE","C-MEDIA","解密算法副本"), ("R-LIVE","U-CDN","下载加密 MP4"), ("R-LIVE","V-STATIC","HLS 分片 + 回写 v4"),
     ("I-TUNNEL","V-DUAL","公网入口"),
     ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"), ("I-SYSTEMD","R-V5","守护"), ("I-SYSTEMD","R-ORACLE","守护"),
+    # ===== 架构树补全 2026-11-22：新增边 =====
+    # 发布流水线/工具链
+    ("X-RELEASE","X-BUILD","构建/bump版本"), ("X-RELEASE","X-PRIVATE-ENV","读私参"), ("X-RELEASE","X-MANIFEST","生成清单"),
+    ("X-RELEASE","V-STATIC","上传+远端sha+prune"), ("X-RELEASE","I-GITHUB","publish 上传资产"), ("X-RELEASE","I-MIRROR","写 github-release-tag"),
+    ("X-RELEASE","X-DESKTOP-OUT","桌面留包"), ("X-BUILD","X-SIGN-KEYSTORE","签名配置"),
+    ("X-GATE-VERSIONS","X-BUILD","读源码版本"), ("X-GATE-VERSIONS","V-STATIC","比对清单/sha/abi"), ("X-GATE-VERSIONS","S-PC","比对本机安装"),
+    ("C-PARITY","C-API","diff 守门"), ("C-PARITY","C-PROXY","diff 守门"), ("C-PARITY","C-SIGN","sign diff 守门"), ("X-BUILD","C-PARITY","发版前校验"),
+    ("X-TREE","X-DOC-DISCIPLINE","校验节点/文档"), ("X-TREE","V-ADMIN","tech-tree→看板"),
+    ("I-MIRROR","I-GITHUB","镜像/tag"), ("I-MIRROR","V-STATIC","读tag/写update-mirrors"), ("D-UPDATE","I-MIRROR","发现 update-mirrors"),
+    # PC 页面/平台
+    ("P-SHELL","P-SETTINGS","页面"), ("P-SHELL","P-CREATOR","路由"), ("P-SHELL","X-PC-WINDOW","窗口/DPI/单实例"),
+    ("P-SHELL","X-PC-LOG","启动日志"), ("P-SHELL","X-PC-RESOLVER","启动本机取流"),
+    ("P-SETTINGS","D-SETTINGS","设置"), ("P-SETTINGS","D-UPDATE","检查更新"), ("P-SETTINGS","X-PC-STORE","持久化"),
+    ("P-SETTINGS","X-PC-CACHE","清缓存"), ("P-SETTINGS","C-STATE","applyServiceConfig"),
+    ("P-CREATOR","D-CATALOG","演职员作品"), ("P-CREATOR","C-API","资料/作品"),
+    ("P-DETAIL","D-HISTORY","继续看"), ("P-DETAIL","C-API","前2集档位预热"),
+    ("P-PLAYER","X-PC-ENGINE","ffmpeg 解码"), ("P-PLAYER","X-PC-PREFETCH","预取接管"), ("P-PLAYER","X-PC-STORE","续播/设置"),
+    ("P-PLAYER","X-PC-LOG","播放日志"), ("P-PLAYER","X-PC-WINDOW","最小化暂停"),
+    ("P-FEED","P-PLAYER","embedded 复用"), ("P-FEED","D-DETAIL","下一部详情预热"), ("P-FEED","C-API","取池/档位预热"),
+    ("P-HISTORY","X-PC-STORE","本地历史"), ("P-LIBRARY","X-PC-STORE","书架本地"), ("P-LOGIN","X-PC-STORE","账号持久化"), ("P-LOGIN","C-SIGN","passport 签名"),
+    ("X-PC-ENGINE","C-PROXY","本地流"), ("X-PC-RESOLVER","C-STATE","playBase/token"), ("X-PC-CACHE","U-CDN","封面下载"), ("X-PC-LOG","V-SERVE","/api/clientlog"),
+    # Android 启动/焦点/领域
+    ("S-PAD","A-INIT","启动"), ("S-TV","A-INIT","启动"), ("A-INIT","A-SHELL","组合 App()"), ("A-INIT","X-AN-STORE","Store.init"),
+    ("A-INIT","X-AN-GO","DeviceResolver.init"), ("A-INIT","X-AN-UPD","LogUploader.start"), ("A-INIT","C-API","fetchFlags"),
+    ("A-INIT","X-AN-NOTIFY","建渠道+调度"), ("A-INIT","X-AN-NET","装载网络配置"),
+    ("A-SHELL","A-TV-FOCUS","焦点/返回/遥控器"), ("A-SHELL","A-MEMO","状态记忆"),
+    ("A-FEED","X-AN-CACHE","预载/缓存"), ("A-FEED","A-MEMO","刷剧现场"),
+    ("A-DETAIL","A-PLAY-SOURCE","预热前2集"), ("A-DETAIL","A-MEMO","详情滚动/页签"),
+    ("A-PLAYER","A-PLAY-SESSION","状态分层"), ("A-PLAYER","A-PLAY-SOURCE","选档/预取"), ("A-PLAYER","A-CHROME","控制条"), ("A-PLAYER","X-AN-NET","本机代理明文"),
+    ("A-PLAY-SESSION","A-CHROME","读状态"), ("A-PLAY-SOURCE","C-API","playinfo/档位"), ("A-PLAY-SOURCE","C-PROXY","头部/本地代理"),
+    ("X-AN-NOTIFY","D-ACCOUNT","追更更新数"), ("X-AN-NOTIFY","X-AN-STORE","基线fb_*"), ("X-AN-NOTIFY","C-API","followUpdates"),
+    ("X-AN-NET","C-PROXY","放行localhost明文"), ("X-AN-NET","C-API","放行192.168.1.54明文"),
+    ("A-MISC","A-MEMO","列表返回现场"), ("A-LOGIN","A-TV-FOCUS","TV配对码前置"),
+    # 共享核心
+    ("D-HISTORY","C-HIST","合并策略"), ("X-PC-STORE","C-HIST","merge"), ("X-AN-STORE","C-HIST","merge"), ("C-HIST","V-HIST","合并规则同源"),
+    ("D-PLAY","C-GUARD","看门狗/错误分类"), ("C-GUARD","X-PC-ENGINE","重试重建"), ("C-GUARD","X-AN-EXO","重试重建"),
+    ("D-CATALOG","C-DOMAIN","CatalogApi"), ("D-PLAY","C-DOMAIN","PlaybackApi"), ("D-HISTORY","C-DOMAIN","HistoryApi"), ("D-ACCOUNT","C-DOMAIN","AccountApi"), ("D-SOCIAL","C-DOMAIN","SocialApi"), ("C-DOMAIN","C-API","转调"),
+    ("D-ACCOUNT","C-SHELF","收藏/追更/预约"), ("X-PC-STORE","C-SHELF","书架"), ("X-AN-STORE","C-SHELF","书架"),
+    ("D-DETAIL","C-SEASON","季"), ("D-ACCOUNT","C-PASSPORT","登录协议"), ("D-UPDATE","C-UPDCORE","manifest schema"),
+    # 服务端/隧道/上游/运维
+    ("V-API","V-FLAGS","/api/flags"), ("V-API","V-TRANSCODEAPI","/api/transcode/status"), ("V-TRANSCODEAPI","R-STREAM","转发job查询"), ("R-STREAM","R-ORO","/transcode代理"), ("V-FLAGS","I-STATE","flags.json"),
+    ("R-SIGN","R-DEVICEPOOL","设备身份"), ("R-STREAM","R-DEVICEPOOL","PROFILE_DIR设备池"),
+    ("R-TRANSCODE","R-DECRYPT","解密"), ("R-DECRYPT","C-MEDIA","同一算法"), ("R-TRANSCODE","R-EXTRACT","VVC抽Annex-B"),
+    ("I-TUNNEL","I-CF","CF线路"), ("I-TUNNEL","I-FRP","樱花线路"), ("I-CF","V-DUAL","tc→8081"), ("I-CF","V-SERVE","hgtv/kxg→8080"), ("I-FRP","V-DUAL","dl→8081"), ("I-FRP","V-STATIC","更新包/转码交付"),
+    ("I-MONITOR","V-STATIC","stream-status.log"), ("I-MONITOR","V-ADMIN","指标来源"), ("I-CLEANUP","V-STATIC","清转码/旧包"), ("I-CLEANUP","I-STATE","清临时/日志"),
+    ("I-BACKUP","I-STATE","状态快照"), ("I-BACKUP","V-STATIC","发布物备份"),
+    ("I-SECRETS","V-DUAL","X-Token/私钥"), ("I-SECRETS","V-API","X-Token校验"), ("I-SECRETS","V-ADMIN","admin.token"), ("I-SECRETS","R-SIGN","签名设备私参"), ("I-SECRETS","X-BUILD","构建期-P"),
+    ("I-TLS","V-DUAL","SNI证书"), ("I-ARCHIVE","V-STATIC","归档"),
+    ("I-SYSTEMD","I-CF","守护cloudflared"), ("I-SYSTEMD","I-FRP","守护frpc"), ("I-SYSTEMD","I-MIRROR","守护mirror"), ("I-SYSTEMD","I-MONITOR","streamwatch/cf-watchdog"), ("I-SYSTEMD","I-CLEANUP","ark-cleanup定时"),
 ]
 
 PLAN = [
@@ -869,6 +972,30 @@ def write_plan_md():
     print("wrote", dest, len(lines), "lines")
 
 
+import re as _re
+
+def sync_md_index():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TECH_TREE.md")
+    try:
+        txt = open(p, encoding="utf-8").read()
+    except OSError:
+        return
+    rows = ["<!-- NODEINDEX:START -->", "## 全量节点索引（自动生成·以此为准）", "",
+            "| 层 | id | 名称 | 摘要 |", "|---|---|---|---|"]
+    for n in N:
+        s = (n.get("summary") or "").replace("|", "/").replace("\n", " ")
+        rows.append("| %s | `%s` | %s | %s |" % (n.get("layer", ""), n["id"], n.get("name", ""), s))
+    rows.append("<!-- NODEINDEX:END -->")
+    block = "\n".join(rows)
+    if "<!-- NODEINDEX:START -->" in txt:
+        txt = _re.sub(r"<!-- NODEINDEX:START -->.*?<!-- NODEINDEX:END -->", lambda m: block, txt, flags=_re.S)
+    else:
+        txt = txt.rstrip() + "\n\n" + block + "\n"
+    open(p, "w", encoding="utf-8").write(txt)
+    print("synced node index into TECH_TREE.md:", len(N))
+
+
+sync_md_index()
 write_plan_md()
 
 out = HTML.replace("__DATA__", data_json)

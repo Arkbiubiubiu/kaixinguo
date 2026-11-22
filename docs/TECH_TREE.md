@@ -449,3 +449,129 @@ flowchart LR
 
 - PC锛歚1.2.100`锛坄build.gradle.kts` 鐨?`pcVersion`锛?- Android锛歚2.2.216`锛坄android/pad/build.gradle.kts` 鐨?`versionCode=336`锛?- 鏈嶅姟绔細`hgtv-update`锛?080锛夈€乣dual-server`锛?081锛夈€乣streamsrv`锛?110锛夈€乣oroplay`锛?118锛?- 鍏綉锛氬皬璇锋眰璧版ū鑺?`dl.fabao.xin:44468`锛涜浆鐮佸ぇ鏂囦欢璧?CF `tc.fabao.xin`锛涘畼缃?鐪嬫澘 `hgtv.fabao.xin` / `kxg.fabao.xin`锛坒rp-bar 鑷宸插叧銆乧polar 宸插垹锛?
 > 姣忔鍙戠増鍙敼鏈€鍚庝竴鑺傜殑鐗堟湰鍜屽搴旇妭鐐癸紱涓嶈鍦ㄨ繖妫垫爲閲屽啓 token銆乧ookie銆佺閽ャ€?
+
+<!-- NODEINDEX:START -->
+## 全量节点索引（自动生成·以此为准）
+
+| 层 | id | 名称 | 摘要 |
+|---|---|---|---|
+| L0 | `S-PC` | PC 桌面端 | Windows 客户端，Compose Desktop + 本机 ffmpeg。三端功能基准之一。 |
+| L0 | `S-PAD` | Android Pad | 平板触屏客户端，包名 com.hongguotv.pad。与 TV 共用同一套源码。 |
+| L0 | `S-TV` | Android TV | 电视遥控器客户端，flavor tv，包名 com.hongguotv.nativeapp。 |
+| L0 | `S-WEB` | 官网 / 下载页 | 三端下载入口，读取版本清单并跳转下载节点。 |
+| L0 | `S-ADMIN` | 管理看板 | 设备数、版本、接入端口、请求量、VVC 使用；顶部「架构世界树」页签。 |
+| L1 | `P-SHELL` | PC 应用壳 / 路由 | 窗口、侧栏、页面切换、返回栈、打赏浮层。所有 PC 页面从这里进入。 |
+| L1 | `P-HOME` | PC 首页 | 推荐/漫剧/真人剧三 tab、hero、卡片流、换一批、继续看；tab/列表/hero/滚动存 UiMemo，详情返回保留现场。 |
+| L1 | `P-FIND` | PC 找剧 / 搜索 | 搜索、联想、筛选、结果列表；条件/结果/分页/滚动存 FindMemo+UiMemo，详情返回不丢。 |
+| L1 | `P-RANK` | PC 排行榜 | 榜单分类、筛选、月榜、演员榜；大类/子榜/筛选/列表/分页/滚动全部记忆，详情返回保留。 |
+| L1 | `P-NEW` | PC 新剧 / 日历 | 新剧列表、上线日历；视图/分类/日期/分页/滚动存 PageMemo，从详情返回保留现场。 |
+| L1 | `P-HISTORY` | PC 历史页 | 本地/云端历史、筛选、管理、继续播。 |
+| L1 | `P-LIBRARY` | PC 追更/预约/我的 | 追更提醒、预约、收藏/点赞入口、账号同步码。 |
+| L1 | `P-DETAIL` | PC 详情页 | 详情、选集、季、剧评、相关推荐、继续看。 |
+| L1 | `P-PLAYER` | PC 播放器 | 起播、切集、清晰度、倍速、队列、预取、看门狗、历史、弹幕、评论。 |
+| L1 | `P-FEED` | PC 刷剧 | 整屏连播、换剧、预览不记历史；**后 5 部第一集真实流预取（warmFeed），进页即预拉下一页**。 |
+| L1 | `P-LOGIN` | PC 登录/配对 | 短信 MFA、账号 cookies、匹配码同步。 |
+| L1 | `P-DONATE` | PC 打赏浮层 | 展示打赏码，不接支付 SDK。 |
+| L1 | `A-SHELL` | Android App / 导航 | 初始化、路由栈、侧栏、返回、Pad/TV 适配。 |
+| L1 | `A-HOME` | Android 首页 | 三 tab、hero、卡片、继续看。 |
+| L1 | `A-FEED` | Android 刷剧 | 整屏连播、上下换剧；后 5 部详情、最近 2 部完整预载（回档 2.2.203 口径）。 |
+| L1 | `A-DETAIL` | Android 详情页 | 详情、选集、季、剧评、相关推荐、继续看。 |
+| L1 | `A-PLAYER` | Android 播放页 | 起播、队列、预取、无缝切集、看门狗、历史、进度上报。 |
+| L1 | `A-CHROME` | Android 播放控制条 | 进度条、播放/暂停、上下集、倍速、清晰度、选集、弹幕设置。 |
+| L1 | `A-MISC` | Android 其余页面 | 找剧、排行、新剧、历史、收藏/点赞、追更、预约、我的、设置、演职员；新剧页视图/分类/日期/滚动存 UiMemo，返回不丢。 |
+| L1 | `A-SOCIAL` | Android 评论/弹幕/打赏 | 单集评论、剧评、弹幕窗口/发送、打赏码。 |
+| L1 | `A-LOGIN` | Android 登录/配对 | 短信 MFA、账号 cookies、匹配码。 |
+| L2 | `D-CATALOG` | 内容目录 | 首页/找剧/排行/新剧/日历的数据编排与缓存；新剧翻页必须带 session_id（只传 offset 上游会重复第 1 页）。 |
+| L2 | `D-DETAIL` | 详情/选集/季 | 详情、集数映射、季切换、相关推荐、剧评。 |
+| L2 | `D-PLAY` | 播放编排 | 选档、取流、预取、队列、无缝切集、看门狗、清晰度/倍速；**全 VVC 集先等转码 job 再选档**；**下一集未就绪不得预排后一集，防止播完跳过 N+1**。 |
+| L2 | `D-HISTORY` | 历史 / 续播 | 记录真实播放、续播秒数、跨端合并、历史页。合并策略已收口到 HistoryRepository（PC/Android 共用）。 |
+| L2 | `D-ACCOUNT` | 账号 / 书架 | 登录、配对、收藏、点赞、追更、预约、云端状态。 |
+| L2 | `D-SOCIAL` | 评论 / 弹幕 | 单集评论、剧评、回复、点赞、弹幕拉取/发送/渲染。 |
+| L2 | `D-SETTINGS` | 设置 / 缓存 | 播放设置、服务配置、缓存清理、关于/更新入口。 |
+| L2 | `D-UPDATE` | 更新 | 检查清单、下载、sha256、安装/重启。 |
+| L2 | `D-LOG` | 客户端日志 | 本地日志、脱敏、上传到 /api/clientlog。 |
+| L3 | `C-API` | API / 签名 / 缓存 | 所有上游内容接口、服务器代取、取流、历史、书架、评论、弹幕、缓存。两份物理副本，修改必须同步。 |
+| L3 | `C-SIGN` | 本机签名 | 生成上游要求的签名头/设备头（Argus/Gorgon/Helios/AesV3）。 |
+| L3 | `C-MODEL` | 模型 / 小缓存 | SeriesCard/SeriesDetail/Episode/PlayTier；详情 LRU 60；榜单元数据兜底。 |
+| L3 | `C-MEDIA` | CENC 解密 | 解析 MP4 样本表、派生内容密钥、AES-CTR 解密。PC/Android 逐字一致。 |
+| L3 | `C-PROXY` | 直链代理 | 拉 1MB 头部、准备样本表、本地 HTTP 代理、Range/短读处理。 |
+| L3 | `C-STATE` | 全局契约 | loggedIn、cookies、maxHeight、playBases、historyBase、设备身份、历史接口。 |
+| L3 | `C-UI` | 主题 / 组件 | 颜色、字体、卡片、按钮、焦点、布局口径。 |
+| L4 | `X-PC-STORE` | PC 本地库 | 设置、账号、历史、收藏/点赞/追更/预约、缓存统计。 |
+| L4 | `X-PC-ENGINE` | PC 播放引擎 | 启动/控制 ffmpeg 进程、探测、seek、音量、倍速、暂停。 |
+| L4 | `X-PC-PREFETCH` | PC 预取 | 预热下一集直链/头部/代理，最多按设置 N 集；**刷剧 warmFeed 预载其他剧第一集**。 |
+| L4 | `X-PC-UPD` | PC 平台服务 | MSI 更新、日志上传、ffmpeg 路径解析。 |
+| L4 | `X-AN-STORE` | Android 本地库 | SharedPreferences：设置、账号、历史、书架、缓存清理。 |
+| L4 | `X-AN-EXO` | Android 播放引擎 | Media3 ExoPlayer 1.4.1 + 播放列表、硬解/软解、首帧、错误恢复。 |
+| L4 | `X-AN-GO` | Android 本机取流 | gomobile Go 绑定，本机签名/取流兜底；LocalResolverProvider。 |
+| L4 | `X-AN-CACHE` | Android 缓存/预载 | 刷剧首屏磁盘缓存 24h；后 5 部只拉详情、最近 2 部完整预载（回档 2.2.203 口径）。 |
+| L4 | `X-AN-UPD` | Android 平台服务 | APK 清单/ABI 选择/下载/sha/安装、日志上传。 |
+| L4 | `X-BUILD` | 构建 / 签名 / 参数 | 版本号、私有 -P 参数、flavor、ABI 拆分、MSI、签名。 |
+| L5 | `V-DUAL` | 双协议网关 | /api/admin* 反代 8080（静态/看板），其余 /api/* 与 /sign 反代 8082（内容 API）；静态/官网；/get/* 302 到下载节点；**静态 Range 支持 keep-alive**（播放器连续 Range 不再每条重建 TLS）。 |
+| L5 | `V-SERVE` | 静态 / 看板进程 | ROLE=static（8080）：静态 Range、/admin、/api/admin*；其余 /api/* 反代 V-API。看板重启不影响取流。 |
+| L5 | `V-API` | 内容 API 进程 | ROLE=api（8082）：fetch/sign/playinfo/history/heat/rankmeta/seasons/flags/transcode；不提供静态和看板。 |
+| L5 | `V-RELAY` | 上游代取/缓存 | 代签、代拉、TTL/SWR/磁盘缓存、feed-cache。 |
+| L5 | `V-PLAYINFO` | 取流中转 | 30min 成功缓存、15s 负缓存、快速重试；202 pending + job 轮询（异步转码）。 |
+| L5 | `V-HEAT` | 热度/榜单元数据 | 热度 6h 缓存、榜单元数据 10min、缺热度回填。 |
+| L5 | `V-HIST` | 历史/房间/日志 | 历史合并、客户端日志、访问流水；Phase 12 已删除 /sync 与 room-*.json。 |
+| L5 | `V-STATIC` | 静态/发布物 | APK/MSI、version-*.json、官网、/transcode/*、镜像清单。 |
+| L5 | `V-ADMIN` | 看板 | 运行数据 + 架构世界树；/api/admin/tree 读取 /srv/hgtv-update/tech-tree.html。 |
+| L6 | `R-STREAM` | 签名取流服务 | /play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。 |
+| L6 | `R-ORO` | 真签名解析 | **v5 优先**：优先调 R-V5（纯 HTTP v5 签名）取全部清晰度，失败/空/超时回 R-ORACLE；**已转码的 vid 直接发 `/transcode/*_v4.mp4`（画质版），不再打上游；旧 `_v3` 只作转码失败兜底**；bytevc1（HEVC）直接透传，VVC/AV1 先要兼容 fallback（codec_type=3/1），最后才转码；返回前强制过滤 bytevc2；旧 video_tab 仅诊断兜底；转码 job 可查询（30min/200 条）。 |
+| L6 | `R-V5` | v5 纯 HTTP 签名 | N3urda/aston314 GPL 实现：匿名设备注册 + Android v04.10.03 Medusa/Helios/Khronos v5 签名 + gzip mobile 模型；VVC/AV1 集用模型 fallback_api 的 codec_type=3/1 取 1080P HEVC/H.265；HTTP 9119，单设备、1.2s 间隔、空响应 90s 冷却。 |
+| L6 | `R-ORACLE` | Android 官方 App oracle | redroid Android 13 容器 + 官方红果 App + Frida 同步 Java 调用；作为 R-ORO 的**兜底**，v5 失败时按 vid 取 1080p/720p 等全部档位，HTTP 9120，容器/systemd 开机自启。 |
+| L6 | `R-SIGN` | 签名/设备池 | 上游签名、设备身份注册/轮换、Argus/Ladon。 |
+| L6 | `R-TRANSCODE` | VVC/AV1 转码 | 【解码=软解(CPU，VVC 无硬解、HEVC 解码也软解)；编码=核显 VAAPI h264_vaapi 硬编(/dev/dri/renderD128, CQP23, maxrate4.5M, profile high)，失败回退 libx264 veryfast CRF23】下载加密 MP4 → Java 解密 → H.264/HEVC/AV1 直接解 MP4（AV1 裸流会音频-only），VVC 才抽 Annex-B → ffmpeg H.264；**画质对齐同行：不放大、VAAPI CQP23（x264 veryfast CRF23 兜底）、AAC 音频 copy、maxrate 4.5Mbps、接近 16:9 归一到 1920，输出 _v4.mp4；磁盘剩 <8GB 自动删最旧**；容器标 av01 但 1 秒解码失败时按 VVC 重抽；输出必须 ffprobe 有视频轨，否则删除报错。 |
+| L6 | `R-LIVE` | 冷启动边转边播（已停用） | **2026-11-21 已回滚，KXG_HLS=1 才启用**；没有 v4 缓存的 VVC 集：**do_live.py** 下载/解密后直接写 4 秒 fMP4 分片 + EVENT 播放列表（index.m3u8），客户端几秒起播；后台跑完把分片拼回 _v4.mp4 供下次秒开；用户换集会杀掉旧的边转进程，warm 转码会让路；分片目录 3 小时清理。 |
+| L6 | `U-CONTENT` | 番茄内容接口 | 首页/详情/搜索/排行/日历/追更/评论/弹幕/历史/演职员。 |
+| L6 | `U-PLAY` | 番茄播放模型 | multi_video_model、fallback_api、video_meta/codec_type。 |
+| L6 | `U-CDN` | 视频/图片 CDN | 加密 MP4、封面、头像。 |
+| L6 | `U-PASSPORT` | 登录/MFA | 短信登录、MFA、cookies。 |
+| L6 | `I-TUNNEL` | 公网通道 | Cloudflare（hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081）、樱花 frpc（仅 dl.fabao.xin:44468 真证书）；cpolar 已删、frp-bar 自签关。小请求走樱花(dl)；**转码视频当前实际仍交付 dl.fabao.xin:44468（tc 已就绪但未在 oroplay 生效）**。 |
+| L6 | `I-GITHUB` | GitHub Release 更新镜像 | 公开 kaixinguo Release 资产；axisnow/gh-proxy 加速；固定 tag 地址（/srv/hgtv-update/github-release-tag，禁用会被 CDN 缓存的 latest/download）；下载线路 axisnow→gh-proxy→dl.fabao.xin(真证书兜底)，已去 frp-bar 自签/cpolar；客户端不再信任所有证书；PC/安卓/TV 3 段。 |
+| L6 | `I-STATE` | 服务端状态 | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token。 |
+| L6 | `I-SYSTEMD` | 守护/备份 | systemd units、镜像 watchdog、隧道 watchdog、备份。 |
+| L1 | `P-SETTINGS` | PC 设置页 | 外观/播放(自动下一集/看完删除/最小化暂停/连播预取集数/清晰度上限/默认倍速)/磁盘清缓存/服务配置(取流/签名/token/历史基址/更新源/设备身份)/关于+检查更新。设置走 PcStore 可观察镜像，改完立即生效。 |
+| L1 | `P-CREATOR` | PC 演职员页 | 演职员资料+作品列表；user_id 取真名，按 tab_type=11/29 双通道搜索兜底并过滤 0 集条目。 |
+| L1 | `A-INIT` | Android 启动/初始化/权限/生命周期 | Store.init、注入 App 全局态、FeedCache.init、LogUploader.start、后台 DeviceResolver.init(Go取流)、后台 Api.fetchFlags；冷启动先画 LaunchScreen 首帧再组 TvRoot{App()}；onStart/onStop→AppLifecycle(退后台暂停)；Android13+ 运行期请求 POST_NOTIFICATIONS + 建「追更提醒」渠道 + 调度 FollowNotifyWorker(12h/联网/KEEP)。 |
+| L1 | `A-TV-FOCUS` | TV 焦点体系 / 遥控器键位 | TvRoot 整屏单点焦点框(TvFocusFrame)；侧栏 NavRail 锁+1dp 焦点跳板+返回语义(压栈出栈/进板块回导航层/顶层再退出)；播放器 tvKeys/feedKeys/媒体键 KEYCODE_MEDIA_*/数字键快进；Pad 不锁、无焦点框、触屏优先。 |
+| L2 | `A-MEMO` | 浏览状态记忆 UiMemo | 页面按需组合、切页销毁局部 state；UiMemo 单例保留刷剧现场(feedTab/cursor/cards/page/feedReturnKeep)、各列表滚动、首页/新剧/排行/历史/收藏/追更/预约的 tab·筛选·游标·已加载；RETURN_TTL_MS=5min 内返回不重拉。 |
+| L2 | `A-PLAY-SESSION` | 播放页状态分层 | UI 状态(PlayerUiState：控制条/浮层/提示/评论/输入) 与 单集会话(PlaybackSession：preparedIndex/tiers/curDef/duration/preparing/failed/attempt/switching) 分层；UI 只订阅状态。 |
+| L2 | `A-PLAY-SOURCE` | 选档 / 预取编排 | ReadyEpisode/buildReady/nextup：选档上限、拉头部+样本表+本地代理、按集号判重、N+1 未就绪即停(禁预排 N+2 防跳集)、dropReady 关代理；详情页预热前 2 集档位让服务端提前转码。 |
+| L3 | `C-HIST` | 历史合并(单源) | shared HistoryRepository：at 最新者胜、positionMs=0 不覆盖真实进度、试看保护(低集数+<60s 不顶高进度)、空 cover/title 不覆盖、同 seriesId 一条、LIMIT1500/SCHEMA3；只合并不存储，服务端 history_store.py 同规则；HistoryShadow PC 侧影子 diff。 |
+| L3 | `C-GUARD` | 播放保护/看门狗(单源) | shared PlaybackGuard：PlaybackErrorPolicy 错误可恢复分类 + StallWatchdog 8s 卡顿最多2次；错误恢复与卡顿共用重试预算；平台只重建自己引擎。 |
+| L3 | `C-DOMAIN` | 领域门面 | shared ApiDomains facade(Phase5 strangler)：PlaybackApi/HistoryApi/AccountApi/SocialApi/CatalogApi 转调 Api；领域只依赖各 facade。 |
+| L3 | `C-SHELF` | 书架(单源) | shared ShelfRepository：收藏/点赞/追更/预约统一(PC 19 / Android 10 引用)；云端权威+本地离线镜像+订阅基线。 |
+| L3 | `C-SEASON` | 季服务(单源) | shared SeasonService：季清单/补季/下一季/主创校验。 |
+| L3 | `C-PASSPORT` | Passport 登录协议(单源) | shared PassportClient：短信/MFA/passport 协议/错误码(如 1003 设备不符)。 |
+| L3 | `C-UPDCORE` | 更新清单核心(单源) | shared UpdateManifest：一份 manifest schema(packages+abis) 供两端解析。 |
+| L3 | `C-PARITY` | 双副本一致性守门 | tools/check_api_parity.py：两份 Api.kt(阈值340)/Playback.kt(阈值20)/sign 忽略空白 diff，超阈值报红；建议收紧+白名单(LocalResolverProvider/MULTI_URL/日志级别)。 |
+| L4 | `X-PC-WINDOW` | PC 窗口/DPI/单实例/生命周期 | 原生标题栏 DWM 染色；单实例 app.lock(抢不到退出)；Density 固定 1f；竖屏/小窗/真全屏由 UiMode 改窗口几何；最小化→AppLifecycle 暂停、回前台不续播。 |
+| L4 | `X-PC-CACHE` | PC 封面缓存/清理 | 封面内存 LRU + 磁盘 %APPDATA%/KaixinguoPC/covers；启动后台 autoClean(30天/3000张)，设置页可清；RemoteImage 占位/回退，HEIC 经 ffmpeg 转 PNG。 |
+| L4 | `X-PC-LOG` | PC 日志落盘/回传 | Log.sink→println+DiagLog 落 app.log(>5MB 滚动)；ClientLog 每 10 分钟增量(≤256KB/次、失败静默)到 /api/clientlog，标准证书校验。 |
+| L4 | `X-PC-RESOLVER` | PC 本机取流服务 | 随包 streamsrv.exe 只监听 127.0.0.1:38120；注册匿名设备取直链后作废；启动最多等 4s health；用户自填取流地址时不启动。 |
+| L4 | `X-AN-NOTIFY` | 追更/预约 系统通知 | CoroutineWorker 周期(12h/联网/KEEP)：后台拉起先补 Store.init+App 全局态，未登录 success；调 Store.checkFollowUpdates() 有新增发「追更提醒」；Android13+ 无权限跳过；静默不崩。 |
+| L4 | `X-AN-NET` | 网络安全配置(明文收窄) | res/xml/network_security_config.xml：默认只 HTTPS；仅 localhost/127.0.0.1(本机代理) 与 192.168.1.54(局域网签名/取流/更新) 允许明文；Manifest networkSecurityConfig 取代全局 usesCleartextTraffic。 |
+| L4 | `X-RELEASE` | 发布流水线 | tools/release.py 一条命令：bump→gradle 构建(tv/pad universal+3ABI、pc MSI)→verify_dex→stage→release_manifest 清单→scp+远端 sha 校验→prune_remote(留2版)→publish_github(gh release+写 github-release-tag)→copy_to_desktop。五参校验缺失即失败；私参不打印不入库。 |
+| L4 | `X-MANIFEST` | 发布清单生成 | tools/release_manifest.py 由 APK 目录生成 version-tv/hgpad.json：path/size/sha256 + abis(arm64-v8a/armeabi-v7a/x86_64 各带 path/size/sha256)。 |
+| L4 | `X-PRIVATE-ENV` | 私参文件 release.env | 本地 KEY=VALUE(D:/kaixinguo-backup/private/release.env，不入库)：SIGN_URL/PLAY_BASES/PLAY_TOKEN/UPDATE_BASES/HISTORY_BASE/DEVICE_*；release.py 读取注入构建，不打印不入库。 |
+| L4 | `X-SIGN-KEYSTORE` | 签名 keystore | android/debug.keystore(store/key=android, alias=androiddebugkey)；release 也用此签名保证老设备覆盖升级不被拒；PC 走 Compose MSI。 |
+| L4 | `X-DESKTOP-OUT` | 桌面留包目录「开心果apk」 | ~/Desktop/开心果apk：copy_to_desktop 只放最新 TV/Pad 两个通用包、旧 APK 自动清理。 |
+| L5 | `V-FLAGS` | 特性开关 | GET /api/flags 返回 flags.json(history_v2/resolver_v2/player_session_v2 等)。 |
+| L5 | `V-TRANSCODEAPI` | 转码 job 查询代理 | GET /api/transcode/status?id= → playinfo.job_status → streamsrv/oroplay transcode；只回 job 不回直链；完成后客户端重取 playinfo 命中缓存。 |
+| L6 | `R-DEVICEPOOL` | 签名设备池 | 匿名设备身份注册/轮换/持久化：playback-device.js + streamsrv PROFILE_DIR=/var/lib/hgtv-sync/ohg-pool(每 vid 取址用新身份、失败换新)。 |
+| L6 | `R-DECRYPT` | CENC 解密(服务端) | Java DecryptMp4：加密 MP4 + spade_a → 派生内容密钥 → AES-CTR 出 dec.mp4；与客户端 C-MEDIA 同算法。 |
+| L6 | `R-EXTRACT` | VVC 抽 Annex-B | extract_vvc.py：解密 MP4 抽 video.266+audio.aac+meta(fps)；仅 VVC 需要；H.264/HEVC/AV1 直接喂 MP4。 |
+| L6 | `I-CF` | Cloudflare 隧道 | cloudflared(cf-start.sh)+config.yml ingress：hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081；cf-watchdog 守护。 |
+| L6 | `I-FRP` | 樱花 frpc 隧道 | frpc@<instance>：只暴露 dl.fabao.xin:44468(真证书)，承接小请求/更新包/转码交付；frp-bar 自签已关、cpolar 已删。 |
+| L6 | `I-MIRROR` | 更新镜像发现 | mirror_watchdog 每~5min 写 update-mirrors.json(axisnow→gh-proxy→dl)，读 github-release-tag 固定 tag；只发现镜像、不改 manifest 的 path/sha/abis。 |
+| L7 | `I-SECRETS` | 密钥/私参/Token | 不入库不进日志：CF DNS token、8081 自签私钥、看板 admin token(600,query)、服务器 X-Token(playinfo TOKEN+TOKEN_OLD 轮换)、客户端构建 -P 私参。 |
+| L7 | `I-TLS` | 证书管理 | dual_server 按 SNI 选证书：dl/kxg.fabao.xin 用 Let's Encrypt，其余用自签 kxg-selfsigned；公网 CF 边缘另配。 |
+| L7 | `I-MONITOR` | 监控/守护 | streamwatch(timer~30min)+stream-status.log 巡检流；cf-watchdog(timer~5min) 守护 cloudflared；看板 /api/admin/stats 汇总设备/端口/请求量。 |
+| L7 | `I-CLEANUP` | 定时清理 | ark-cleanup(timer 每日04:33) 清 apt/docker/journal/tmp；转码侧 7天/200文件 + 磁盘<8GB 删最旧。 |
+| L7 | `I-BACKUP` | 备份/回滚 | 改前快照 /root/kxg-unify-backup-YYYYMMDD(源文件+二进制)；/var/lib/hgtv-sync 与 /srv/hgtv-update 可整体快照。 |
+| L7 | `I-ARCHIVE` | 归档/数据盘 | srv-hgtv-archive.mount 归档盘；data-redroid.mount 为 oracle redroid 容器数据盘；主盘 nvme 承载 /srv 与 /var/lib/hgtv-sync。 |
+| L7 | `X-GATE-VERSIONS` | 版本一致性门禁 | tools/check_versions.py：源码↔服务器清单↔本机安装；verify_artifacts 校验 abis≥3、manifest sha256 与本地 dist 一致。 |
+| L7 | `X-TREE` | 架构树生成/校验 | docs/build_tech_tree.py 由节点/边生成 tech-tree.html；tools/check_tree.py 校验 TECH_TREE.md 节点 id↔html tree-data↔引用文件存在；改完须重跑并 scp 到 /srv/hgtv-update/tech-tree.html。 |
+| L7 | `X-DOC-DISCIPLINE` | 文档与发版纪律 | AGENTS.md(发版纪律)、docs/TECH_TREE.md(权威清单·§9 版本基线)、README、REMEDIATION_PLAN；改发版参数/版本须同步 §9 与 tech-tree.html。 |
+<!-- NODEINDEX:END -->
