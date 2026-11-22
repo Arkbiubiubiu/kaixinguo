@@ -715,7 +715,7 @@ flowchart LR
 | L5 | `V-HEAT` | 热度/榜单元数据 | 热度 6h 缓存、榜单元数据 10min、缺热度回填。 |
 | L5 | `V-HIST` | 历史/房间/日志 | 历史合并、客户端日志、访问流水；Phase 12 已删除 /sync 与 room-*.json。 |
 | L5 | `V-STATIC` | 静态/发布物 | APK/MSI、version-*.json、官网、/transcode/*、镜像清单。 |
-| L5 | `V-ADMIN` | 看板 | 运行数据 + 架构世界树 + **运行健康/主动告警**；/api/admin/tree 读 /srv/hgtv-update/tech-tree.html；/api/admin/health 汇总健康(见 V-HEALTH)。 |
+| L5 | `V-ADMIN` | 看板 | **三个 tab：运行数据 / 运行健康 / 架构世界树**；运行数据=设备/端口/请求量；运行健康=见 V-HEALTH；架构世界树=/api/admin/tree 读 /srv/hgtv-update/tech-tree.html。 |
 | L6 | `R-STREAM` | 签名取流服务 | /play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。 |
 | L6 | `R-ORO` | 真签名解析 | **v5 优先**：优先调 R-V5（纯 HTTP v5 签名）取全部清晰度，失败/空/超时回 R-ORACLE；**已转码的 vid 直接发 `/transcode/*_v4.mp4`（画质版），不再打上游；旧 `_v3` 只作转码失败兜底**；bytevc1（HEVC）直接透传，VVC/AV1 先要兼容 fallback（codec_type=3/1），最后才转码；返回前强制过滤 bytevc2；旧 video_tab 仅诊断兜底；转码 job 可查询（30min/200 条）。 |
 | L6 | `R-V5` | v5 纯 HTTP 签名 | N3urda/aston314 GPL 实现：匿名设备注册 + Android v04.10.03 Medusa/Helios/Khronos v5 签名 + gzip mobile 模型；VVC/AV1 集用模型 fallback_api 的 codec_type=3/1 取 1080P HEVC/H.265；HTTP 9119，单设备、1.2s 间隔、空响应 90s 冷却。 |
@@ -759,7 +759,7 @@ flowchart LR
 | L4 | `X-DESKTOP-OUT` | 桌面留包目录「开心果apk」 | ~/Desktop/开心果apk：copy_to_desktop 只放最新 TV/Pad 两个通用包、旧 APK 自动清理。 |
 | L5 | `V-FLAGS` | 特性开关 | GET /api/flags 返回 flags.json(history_v2/resolver_v2/player_session_v2 等)。 |
 | L5 | `V-TRANSCODEAPI` | 转码 job 查询代理 | GET /api/transcode/status?id= → playinfo.job_status → streamsrv/oroplay transcode；只回 job 不回直链；完成后客户端重取 playinfo 命中缓存。 |
-| L5 | `V-HEALTH` | 运行健康聚合 / 主动告警 | GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板'运行健康'区块红/黄/绿灯+总览+告警清单，前端 30s 轮询。只读采集。 |
+| L5 | `V-HEALTH` | 运行健康聚合 / 主动告警 | GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板「运行健康」独立 tab(与「运行数据」「架构世界树」并列):红/黄/绿灯+总览+告警清单，仅该 tab 激活时 30s 轮询。只读采集。 |
 | L6 | `R-DEVICEPOOL` | 签名设备池 | 匿名设备身份注册/轮换/持久化：playback-device.js + streamsrv PROFILE_DIR=/var/lib/hgtv-sync/ohg-pool(每 vid 取址用新身份、失败换新)。 |
 | L6 | `R-DECRYPT` | CENC 解密(服务端) | Java DecryptMp4：加密 MP4 + spade_a → 派生内容密钥 → AES-CTR 出 dec.mp4；与客户端 C-MEDIA 同算法。 |
 | L6 | `R-EXTRACT` | VVC 抽 Annex-B | extract_vvc.py：解密 MP4 抽 video.266+audio.aac+meta(fps)；仅 VVC 需要；H.264/HEVC/AV1 直接喂 MP4。 |
