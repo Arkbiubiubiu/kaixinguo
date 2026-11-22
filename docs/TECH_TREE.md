@@ -727,7 +727,7 @@ flowchart LR
 | L6 | `U-PLAY` | 番茄播放模型 | multi_video_model、fallback_api、video_meta/codec_type。 |
 | L6 | `U-CDN` | 视频/图片 CDN | 加密 MP4、封面、头像。 |
 | L6 | `U-PASSPORT` | 登录/MFA | 短信登录、MFA、cookies。 |
-| L6 | `I-TUNNEL` | 公网通道 | Cloudflare（hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081）、樱花 frpc（仅 dl.fabao.xin:44468 真证书）；cpolar 已删、frp-bar 自签关。小请求走樱花(dl)；**转码视频当前实际仍交付 dl.fabao.xin:44468（tc 已就绪但未在 oroplay 生效）**。 |
+| L6 | `I-TUNNEL` | 公网通道 | Cloudflare（hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081）、樱花 frpc（仅 dl.fabao.xin:44468 真证书）；cpolar 已删、frp-bar 自签关。小请求走樱花(dl)；**转码视频交付按 R-TRANSROUTE 的健康路由在 dl/tc 间自动切换（迟滞防抖、默认 dl）**。 |
 | L6 | `I-GITHUB` | GitHub Release 更新镜像 | 公开 kaixinguo Release 资产；axisnow/gh-proxy 加速；固定 tag 地址（/srv/hgtv-update/github-release-tag，禁用会被 CDN 缓存的 latest/download）；下载线路 axisnow→gh-proxy→dl.fabao.xin(真证书兜底)，已去 frp-bar 自签/cpolar；客户端不再信任所有证书；PC/安卓/TV 3 段。 |
 | L6 | `I-STATE` | 服务端状态 | 历史、房间、feed-cache、heat、clientlogs、access 流水、admin token。 |
 | L6 | `I-SYSTEMD` | 守护/备份 | systemd units、镜像 watchdog、隧道 watchdog、备份。 |
@@ -765,6 +765,7 @@ flowchart LR
 | L6 | `I-CF` | Cloudflare 隧道 | cloudflared(cf-start.sh)+config.yml ingress：hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081；cf-watchdog 守护。 |
 | L6 | `I-FRP` | 樱花 frpc 隧道 | frpc@<instance>：只暴露 dl.fabao.xin:44468(真证书)，承接小请求/更新包/转码交付；frp-bar 自签已关、cpolar 已删。 |
 | L6 | `I-MIRROR` | 更新镜像发现 | mirror_watchdog 每~5min 写 update-mirrors.json(axisnow→gh-proxy→dl)，读 github-release-tag 固定 tag；只发现镜像、不改 manifest 的 path/sha/abis。 |
+| L6 | `R-TRANSROUTE` | 转码交付双隧道健康路由 | transcode-route.py 每 2 分钟实测 dl(樱花) 与 tc(CF) 两条隧道吞吐(各 Range 2MB)，写 /srv/hgtv-update/transcode-route.json；迟滞防抖：默认 dl，当前 base 失败或 challenger>1.8x 才切，单次抖动不切、都坏回退 dl。oroplay/do_transcode/do_live 拼转码 url 时读 json.base(读不到回退 dl)。零客户端改动(两条都到同一 8081 origin)。 |
 | L7 | `I-SECRETS` | 密钥/私参/Token | 不入库不进日志：CF DNS token、8081 自签私钥、看板 admin token(600,query)、服务器 X-Token(playinfo TOKEN+TOKEN_OLD 轮换)、客户端构建 -P 私参。 |
 | L7 | `I-TLS` | 证书管理 | dual_server 按 SNI 选证书：dl/kxg.fabao.xin 用 Let's Encrypt，其余用自签 kxg-selfsigned；公网 CF 边缘另配。 |
 | L7 | `I-MONITOR` | 监控/守护 | streamwatch(timer~30min)+stream-status.log 巡检流；cf-watchdog(timer~5min) 守护 cloudflared；看板 /api/admin/stats 汇总设备/端口/请求量。 |

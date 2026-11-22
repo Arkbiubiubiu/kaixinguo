@@ -100,7 +100,7 @@ N = [
     dict(id="U-PLAY", layer="L6", name="番茄播放模型", summary="multi_video_model、fallback_api、video_meta/codec_type。", files=["multi_video_model/v1"]),
     dict(id="U-CDN", layer="L6", name="视频/图片 CDN", summary="加密 MP4、封面、头像。", files=["字节 CDN"]),
     dict(id="U-PASSPORT", layer="L6", name="登录/MFA", summary="短信登录、MFA、cookies。", files=["番茄 passport"]),
-    dict(id="I-TUNNEL", layer="L6", name="公网通道", summary="Cloudflare（hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081）、樱花 frpc（仅 dl.fabao.xin:44468 真证书）；cpolar 已删、frp-bar 自签关。小请求走樱花(dl)；**转码视频当前实际仍交付 dl.fabao.xin:44468（tc 已就绪但未在 oroplay 生效）**。", files=["frpc@…", "cloudflared"]),
+    dict(id="I-TUNNEL", layer="L6", name="公网通道", summary="Cloudflare（hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081）、樱花 frpc（仅 dl.fabao.xin:44468 真证书）；cpolar 已删、frp-bar 自签关。小请求走樱花(dl)；**转码视频交付按 R-TRANSROUTE 的健康路由在 dl/tc 间自动切换（迟滞防抖、默认 dl）**。", files=["frpc@…", "cloudflared"]),
     dict(id="I-GITHUB", layer="L6", name="GitHub Release 更新镜像", summary="公开 kaixinguo Release 资产；axisnow/gh-proxy 加速；固定 tag 地址（/srv/hgtv-update/github-release-tag，禁用会被 CDN 缓存的 latest/download）；下载线路 axisnow→gh-proxy→dl.fabao.xin(真证书兜底)，已去 frp-bar 自签/cpolar；客户端不再信任所有证书；PC/安卓/TV 3 段。", files=["github.com/Arkbiubiubiu/kaixinguo/releases", "axisnow.gh-proxy.org", "gh-proxy.org", "dl.fabao.xin:44468"]),
     dict(id="I-STATE", layer="L6", name="服务端状态", summary="历史、房间、feed-cache、heat、clientlogs、access 流水、admin token。", files=["/var/lib/hgtv-sync"]),
     dict(id="I-SYSTEMD", layer="L6", name="守护/备份", summary="systemd units、镜像 watchdog、隧道 watchdog、备份。", files=["systemd", "mirror_watchdog.sh"]),
@@ -146,6 +146,7 @@ N = [
     dict(id="I-CF", layer="L6", name="Cloudflare 隧道", summary="cloudflared(cf-start.sh)+config.yml ingress：hgtv/kxg.fabao.xin→8080、tc.fabao.xin→8081；cf-watchdog 守护。", files=["/etc/cloudflared/config.yml"]),
     dict(id="I-FRP", layer="L6", name="樱花 frpc 隧道", summary="frpc@<instance>：只暴露 dl.fabao.xin:44468(真证书)，承接小请求/更新包/转码交付；frp-bar 自签已关、cpolar 已删。", files=["frpc@<instance>.service"]),
     dict(id="I-MIRROR", layer="L6", name="更新镜像发现", summary="mirror_watchdog 每~5min 写 update-mirrors.json(axisnow→gh-proxy→dl)，读 github-release-tag 固定 tag；只发现镜像、不改 manifest 的 path/sha/abis。", files=["/opt/hgtv-update/mirror_watchdog.sh", "/srv/hgtv-update/update-mirrors.json"]),
+    dict(id="R-TRANSROUTE", layer="L6", name="转码交付双隧道健康路由", summary="transcode-route.py 每 2 分钟实测 dl(樱花) 与 tc(CF) 两条隧道吞吐(各 Range 2MB)，写 /srv/hgtv-update/transcode-route.json；迟滞防抖：默认 dl，当前 base 失败或 challenger>1.8x 才切，单次抖动不切、都坏回退 dl。oroplay/do_transcode/do_live 拼转码 url 时读 json.base(读不到回退 dl)。零客户端改动(两条都到同一 8081 origin)。", files=["/opt/hgtv-update/transcode-route.py", "/srv/hgtv-update/transcode-route.json", "transcode-route.timer"]),
     # -- L7 存储/安全/监控/运维 --
     dict(id="I-SECRETS", layer="L7", name="密钥/私参/Token", summary="不入库不进日志：CF DNS token、8081 自签私钥、看板 admin token(600,query)、服务器 X-Token(playinfo TOKEN+TOKEN_OLD 轮换)、客户端构建 -P 私参。", files=["playinfo.py:TOKEN/TOKEN_OLD", "/var/lib/hgtv-sync/admin.token"]),
     dict(id="I-TLS", layer="L7", name="证书管理", summary="dual_server 按 SNI 选证书：dl/kxg.fabao.xin 用 Let's Encrypt，其余用自签 kxg-selfsigned；公网 CF 边缘另配。", files=["/etc/letsencrypt/live/dl.fabao.xin"]),
@@ -242,6 +243,8 @@ EDGES = [
     ("R-ORO","R-LIVE","冷启动边转边播"), ("R-LIVE","C-MEDIA","解密算法副本"), ("R-LIVE","U-CDN","下载加密 MP4"), ("R-LIVE","V-STATIC","HLS 分片 + 回写 v4"),
     ("I-TUNNEL","V-DUAL","公网入口"),
     ("I-SYSTEMD","V-SERVE","守护"), ("I-SYSTEMD","V-API","守护"), ("I-SYSTEMD","V-DUAL","守护"), ("I-SYSTEMD","R-STREAM","守护"), ("I-SYSTEMD","R-ORO","守护"), ("I-SYSTEMD","R-V5","守护"), ("I-SYSTEMD","R-ORACLE","守护"),
+    # 转码交付双隧道健康路由
+    ("R-TRANSROUTE","R-ORO","提供 url base"), ("R-TRANSROUTE","R-TRANSCODE","提供 url base"), ("R-TRANSROUTE","I-CF","测 tc 隧道"), ("R-TRANSROUTE","I-FRP","测 dl 隧道"), ("I-SYSTEMD","R-TRANSROUTE","timer 每2min"),
     # ===== 架构树补全 2026-11-22：新增边 =====
     # 发布流水线/工具链
     ("X-RELEASE","X-BUILD","构建/bump版本"), ("X-RELEASE","X-PRIVATE-ENV","读私参"), ("X-RELEASE","X-MANIFEST","生成清单"),
