@@ -300,10 +300,10 @@ class RemoteVideo(private val info: PlayInfo) {
     companion object {
         private const val BLOCK = 1 shl 20
         // 前向预读保持领先播放位置约 6 块（≈6MB），足够覆盖十几秒，又不至于猛拉整部。
-        private const val READ_AHEAD_BLOCKS = 6
+        private const val READ_AHEAD_BLOCKS = 10
 
-        /** 缓存块数（16MB）：短剧整部 5~12MB，基本等于整片缓存。 */
-        private const val CACHE_BLOCKS = 16
+        /** 缓存块数（24MB）：短剧整部 5~12MB、个别长集到 30MB，留足余量。 */
+        private const val CACHE_BLOCKS = 24
 
         private const val USER_AGENT =
             "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C)"

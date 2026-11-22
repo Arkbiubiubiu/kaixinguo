@@ -82,8 +82,8 @@ class VideoEngine(private val sourceUrl: String) {
     private var outHeight = 720
     private var outWidth = 1280
 
-    // 6 帧缓冲够 25fps 平滑（约 240ms）；原来 24 帧按每帧 1.2-3.7MB 算占 28-88MB/引擎
-    private val queue = ArrayBlockingQueue<TimedFrame>(6)
+    // 16 帧缓冲（约 0.6s）吸收短时网络/解码抖动；原来 6 帧偏小，抖一下就见底卡顿
+    private val queue = ArrayBlockingQueue<TimedFrame>(16)
     private lateinit var bitmap: Bitmap
 
     private class TimedFrame(val atMs: Long, val bytes: ByteArray)
@@ -234,15 +234,18 @@ class VideoEngine(private val sourceUrl: String) {
             if (playing) {
                 val now = clockMs()
                 positionMs = now
-                var painted = false
+                // 把"已到点"的帧全部取出，但只保留最新的一帧来画；落后的旧帧直接丢弃。
+                // 否则解码/取流被拖慢后，恢复时会把欠下的一堆帧连续快速画出 → 就是"强行加速"。
+                var lastDue: TimedFrame? = null
                 while (true) {
                     val head = queue.peek() ?: break
                     if (head.atMs > now) break
                     queue.poll()
-                    paint(head.bytes)
-                    painted = true
+                    lastDue = head
                 }
-                if (!painted && queue.isEmpty() && videoProc?.isAlive == false) {
+                if (lastDue != null) {
+                    paint(lastDue.bytes)
+                } else if (queue.isEmpty() && videoProc?.isAlive == false) {
                     // 解码进程结束且队列空 → 播完
                     if (!stopping) {
                         playing = false
@@ -279,6 +282,7 @@ class VideoEngine(private val sourceUrl: String) {
         val exe = Ffmpeg.binary() ?: return
         val cmd = listOf(
             exe.absolutePath, "-hide_banner", "-loglevel", "error",
+            "-hwaccel", "d3d11va",
             "-ss", "%.3f".format(atMs / 1000.0),
             "-i", sourceUrl,
             "-an",
