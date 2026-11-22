@@ -643,7 +643,7 @@ flowchart LR
 
 ## 9. 版本基线
 
-- PC：`1.2.108`（`build.gradle.kts` 的 `pcVersion`）
+- PC：`1.2.109`（`build.gradle.kts` 的 `pcVersion`）
 - Android：`2.2.220`（`android/pad/build.gradle.kts` 的 `versionCode=340`）
 - 服务端：`hgtv-update`（8080）、`dual-server`（8081）、`streamsrv`（9110）、`oroplay`（9118）
 - 公网：小请求走樱花 `dl.fabao.xin:44468`；转码大文件走 CF `tc.fabao.xin`；官网/看板 `hgtv.fabao.xin` / `kxg.fabao.xin`（frp-bar 自签已关、cpolar 已删）

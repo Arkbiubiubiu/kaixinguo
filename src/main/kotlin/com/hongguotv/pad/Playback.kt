@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import java.io.BufferedInputStream
 import java.io.File
@@ -44,8 +44,19 @@ class RemoteVideo(private val info: PlayInfo) {
     private val blockLock = Any()
     private val inflight = HashMap<Long, CountDownLatch>()
 
+    // 前向预读：后台把当前块之后的整部顺序拉进缓存（短剧仅 5~12MB，16MB 缓存装得下）。
+    // 这样播到中段/后段都从内存读，不会因为某块 CDN 现取慢而卡一下。
+    private val readAheadStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val readAheadPool = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "pad-readahead").apply { isDaemon = true }
+    }
+    // 播放器已经请求到的最大块位置（只增不减），预读线程据此只保持领先 ~READ_AHEAD_BLOCKS 块。
+    @Volatile
+    private var maxReqBlock = 0L
+
     fun close() {
         closed = true
+        runCatching { readAheadPool.shutdownNow() }
         synchronized(blockLock) { cache.clear() }
     }
 
@@ -155,6 +166,9 @@ class RemoteVideo(private val info: PlayInfo) {
     }
 
     fun read(at: Long, want: Int): ByteArray {
+        val rb = (maxOf(0L, at) / BLOCK) * BLOCK
+        if (rb > maxReqBlock) maxReqBlock = rb
+        if (readAheadStarted.compareAndSet(false, true)) startReadAhead()
         if (at >= total) return ByteArray(0)
         val size = minOf(want.toLong(), total - at).toInt()
         if (size <= 0) return ByteArray(0)
@@ -228,6 +242,28 @@ class RemoteVideo(private val info: PlayInfo) {
         }.apply { isDaemon = true; name = "pad-warmtail" }.start()
     }
 
+    /**
+     * 有界前向预读：始终只保持领先"播放器已请求到的块"约 READ_AHEAD_BLOCKS 块（≈6MB），
+     * 块拉进缓存（block 自带去重/解密/缓存）。播到中段/后段直接从内存读，不再被某块现取慢卡一下；
+     * 又不会对长集一次性猛拉整片、抢带宽。
+     */
+    private fun startReadAhead() {
+        readAheadPool.execute {
+            var cursor = (maxReqBlock / BLOCK) * BLOCK
+            while (!closed) {
+                val base = (maxReqBlock / BLOCK) * BLOCK
+                if (cursor < base) cursor = base                        // 前跳后不回头补旧块
+                val target = minOf(base + READ_AHEAD_BLOCKS * BLOCK, total)
+                if (cursor < target) {
+                    runCatching { block(cursor) }
+                    cursor += BLOCK
+                } else {
+                    runCatching { Thread.sleep(80) }
+                }
+            }
+        }
+    }
+
     private fun probeLength(): Long = runCatching {
         retryIo {
             val req = Request.Builder().url(info.url).header("Range", "bytes=0-0")
@@ -263,6 +299,8 @@ class RemoteVideo(private val info: PlayInfo) {
 
     companion object {
         private const val BLOCK = 1 shl 20
+        // 前向预读保持领先播放位置约 6 块（≈6MB），足够覆盖十几秒，又不至于猛拉整部。
+        private const val READ_AHEAD_BLOCKS = 6
 
         /** 缓存块数（16MB）：短剧整部 5~12MB，基本等于整片缓存。 */
         private const val CACHE_BLOCKS = 16
