@@ -69,9 +69,6 @@ class VideoEngine(private val sourceUrl: String) {
 
     private var baseMs = 0L
     private var baseNanos = 0L
-    // 音频接管主时钟那一刻，已经走过的真实播放毫秒（相对 baseNanos）。
-    // 用它给"音频帧位置"补上"音频起播前的延迟"，避免时钟回跳、位置系统性偏慢。
-    private var audioAnchorMs = 0L
 
     @Volatile
     private var pausedAtMs = 0L
@@ -134,7 +131,6 @@ class VideoEngine(private val sourceUrl: String) {
         stopping = false
         baseMs = atMs
         baseNanos = System.nanoTime()
-        audioAnchorMs = 0L
         positionMs = atMs
         pausedAtMs = atMs
         // 先不起「在播」：等视频首帧到了再放行，否则声音先走、时钟先跑，
@@ -219,15 +215,19 @@ class VideoEngine(private val sourceUrl: String) {
     private fun clockMs(): Long {
         val line = audioLine
         val elapsed = if (line != null) {
-            // 音频时钟 = 音频起播前已走过的时间(audioAnchorMs) + 音频已播帧数换算的毫秒。
-            // 不补 audioAnchorMs 的话，音频一接管就从 0 起算，位置会回跳、系统性偏慢，
-            // 短集(≈45s)片尾因此够不到 95%，被误判成"断流"弹窗。
-            audioAnchorMs + (line.longFramePosition * 1000.0 / 48_000.0).toLong()
+            (line.longFramePosition * 1000.0 / 48_000.0).toLong()
         } else {
             (System.nanoTime() - baseNanos) / 1_000_000L
         }
         return baseMs + (elapsed * speed).toLong()
     }
+
+    /**
+     * 真实已播内容的绝对毫秒（按挂钟从本集起播算起）。
+     * 只用于「是否播到片尾」的判定：音频时钟有起播延迟会略慢，用这个挂钟兜住，
+     * 避免画面已经放到片尾、却因时钟偏慢被误判成断流。不参与画面/声音同步。
+     */
+    fun playbackElapsedMs(): Long = baseMs + (System.nanoTime() - baseNanos) / 1_000_000L
 
     private suspend fun pumpLoop() {
         while (true) {
@@ -361,8 +361,6 @@ class VideoEngine(private val sourceUrl: String) {
                 applyGain(line)
                 line.start()
             }.onFailure { return@Thread }
-            // 音频真正开始出音的这一刻：记下相对 baseNanos 的真实毫秒，作为时钟锚点
-            audioAnchorMs = (System.nanoTime() - baseNanos) / 1_000_000L
             audioLine = line
 
             val buf = ByteArray(16 * 1024)

@@ -573,7 +573,12 @@ fun PlayerScreen(
             // 都会走到这里。以前一律当播完自动跳下一集，连续断就一路跳到最后一集，
             // 历史被写坏。现在只有位置到片尾（≥95%）才算播完。
             val dur = runCatching { eng.info?.durationMs ?: 0L }.getOrDefault(0L)
-            val pos = runCatching { eng.positionMs }.getOrDefault(0L)
+            // 位置取「音频时钟」和「真实已播挂钟」里较大的那个：音频起播有延迟会让时钟略慢，
+            // 用挂钟兜住，避免画面已放到片尾却因时钟偏慢被误判成断流。
+            val pos = maxOf(
+                runCatching { eng.positionMs }.getOrDefault(0L),
+                runCatching { eng.playbackElapsedMs() }.getOrDefault(0L),
+            )
             val finished = dur <= 0L || pos >= dur * 95 / 100
             when {
                 !finished && !retryUsed -> {
