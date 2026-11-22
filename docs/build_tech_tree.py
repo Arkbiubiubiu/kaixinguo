@@ -86,7 +86,7 @@ N = [
     dict(id="V-HEAT", layer="L5", name="热度/榜单元数据", summary="热度 6h 缓存、榜单元数据 10min、缺热度回填。", files=["heat.py", "serve.py: chart/rankmeta"]),
     dict(id="V-HIST", layer="L5", name="历史/房间/日志", summary="历史合并、客户端日志、访问流水；Phase 12 已删除 /sync 与 room-*.json。", files=["history_store.py", "serve.py: /api/history (ROLE=api)", "serve.py: clientlog"]),
     dict(id="V-STATIC", layer="L5", name="静态/发布物", summary="APK/MSI、version-*.json、官网、/transcode/*、镜像清单。", files=["/srv/hgtv-update"]),
-    dict(id="V-ADMIN", layer="L5", name="看板", summary="运行数据 + 架构世界树 + **运行健康/主动告警**；/api/admin/tree 读 /srv/hgtv-update/tech-tree.html；/api/admin/health 汇总健康(见 V-HEALTH)。", files=["admin.py", "serve.py: /api/admin (ROLE=static)", "admin.token"]),
+    dict(id="V-ADMIN", layer="L5", name="看板", summary="**三个 tab：运行数据 / 运行健康 / 架构世界树**；运行数据=设备/端口/请求量；运行健康=见 V-HEALTH；架构世界树=/api/admin/tree 读 /srv/hgtv-update/tech-tree.html。", files=["admin.py", "serve.py: /api/admin (ROLE=static)", "admin.token"]),
 
     # L6
     dict(id="R-STREAM", layer="L6", name="签名取流服务", summary="/play 缓存 25min/400 条；只走 oroplay；bvc2-only 返回 202 pending；/transcode 代理 job 查询。", files=["/opt/research/openhongguo/cmd/streamsrv", "9110"]),
@@ -140,7 +140,7 @@ N = [
     # -- L5/L6 服务端补 --
     dict(id="V-FLAGS", layer="L5", name="特性开关", summary="GET /api/flags 返回 flags.json(history_v2/resolver_v2/player_session_v2 等)。", files=["/opt/hgtv-update/serve.py:load_flags", "/var/lib/hgtv-sync/flags.json"]),
     dict(id="V-TRANSCODEAPI", layer="L5", name="转码 job 查询代理", summary="GET /api/transcode/status?id= → playinfo.job_status → streamsrv/oroplay transcode；只回 job 不回直链；完成后客户端重取 playinfo 命中缓存。", files=["/opt/hgtv-update/playinfo.py:job_status"]),
-    dict(id="V-HEALTH", layer="L5", name="运行健康聚合 / 主动告警", summary="GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板'运行健康'区块红/黄/绿灯+总览+告警清单，前端 30s 轮询。只读采集。", files=["/opt/hgtv-update/admin.py:_health_payload", "/api/admin/health"]),
+    dict(id="V-HEALTH", layer="L5", name="运行健康聚合 / 主动告警", summary="GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板"运行健康"**独立 tab**(与"运行数据""架构世界树"并列):红/黄/绿灯+总览+告警清单，仅该 tab 激活时 30s 轮询。只读采集。", files=["/opt/hgtv-update/admin.py:_health_payload", "/api/admin/health"]),
     dict(id="R-DEVICEPOOL", layer="L6", name="签名设备池", summary="匿名设备身份注册/轮换/持久化：playback-device.js + streamsrv PROFILE_DIR=/var/lib/hgtv-sync/ohg-pool(每 vid 取址用新身份、失败换新)。", files=["/opt/research/playback-device.js", "/var/lib/hgtv-sync/ohg-pool"]),
     dict(id="R-DECRYPT", layer="L6", name="CENC 解密(服务端)", summary="Java DecryptMp4：加密 MP4 + spade_a → 派生内容密钥 → AES-CTR 出 dec.mp4；与客户端 C-MEDIA 同算法。", files=["/opt/research/transcode/DecryptMp4.java"]),
     dict(id="R-EXTRACT", layer="L6", name="VVC 抽 Annex-B", summary="extract_vvc.py：解密 MP4 抽 video.266+audio.aac+meta(fps)；仅 VVC 需要；H.264/HEVC/AV1 直接喂 MP4。", files=["/opt/research/transcode/extract_vvc.py"]),
