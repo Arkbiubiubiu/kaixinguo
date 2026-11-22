@@ -1,4 +1,4 @@
-﻿package com.kaixinguo.pc
+package com.kaixinguo.pc
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +69,9 @@ class VideoEngine(private val sourceUrl: String) {
 
     private var baseMs = 0L
     private var baseNanos = 0L
+    // 音频接管主时钟那一刻，已经走过的真实播放毫秒（相对 baseNanos）。
+    // 用它给"音频帧位置"补上"音频起播前的延迟"，避免时钟回跳、位置系统性偏慢。
+    private var audioAnchorMs = 0L
 
     @Volatile
     private var pausedAtMs = 0L
@@ -131,6 +134,7 @@ class VideoEngine(private val sourceUrl: String) {
         stopping = false
         baseMs = atMs
         baseNanos = System.nanoTime()
+        audioAnchorMs = 0L
         positionMs = atMs
         pausedAtMs = atMs
         // 先不起「在播」：等视频首帧到了再放行，否则声音先走、时钟先跑，
@@ -215,7 +219,10 @@ class VideoEngine(private val sourceUrl: String) {
     private fun clockMs(): Long {
         val line = audioLine
         val elapsed = if (line != null) {
-            (line.longFramePosition * 1000.0 / 48_000.0).toLong()
+            // 音频时钟 = 音频起播前已走过的时间(audioAnchorMs) + 音频已播帧数换算的毫秒。
+            // 不补 audioAnchorMs 的话，音频一接管就从 0 起算，位置会回跳、系统性偏慢，
+            // 短集(≈45s)片尾因此够不到 95%，被误判成"断流"弹窗。
+            audioAnchorMs + (line.longFramePosition * 1000.0 / 48_000.0).toLong()
         } else {
             (System.nanoTime() - baseNanos) / 1_000_000L
         }
@@ -354,6 +361,8 @@ class VideoEngine(private val sourceUrl: String) {
                 applyGain(line)
                 line.start()
             }.onFailure { return@Thread }
+            // 音频真正开始出音的这一刻：记下相对 baseNanos 的真实毫秒，作为时钟锚点
+            audioAnchorMs = (System.nanoTime() - baseNanos) / 1_000_000L
             audioLine = line
 
             val buf = ByteArray(16 * 1024)
