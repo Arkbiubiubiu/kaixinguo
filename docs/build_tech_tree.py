@@ -156,7 +156,7 @@ N = [
     # -- L7 工具链/发版保障 --
     dict(id="X-GATE-VERSIONS", layer="L7", name="版本一致性门禁", summary="tools/check_versions.py：源码↔服务器清单↔本机安装；verify_artifacts 校验 abis≥3、manifest sha256 与本地 dist 一致。", files=["tools/check_versions.py"]),
     dict(id="X-TREE", layer="L7", name="架构树生成/校验", summary="docs/build_tech_tree.py 由节点/边生成 tech-tree.html；tools/check_tree.py 校验 TECH_TREE.md 节点 id↔html tree-data↔引用文件存在；改完须重跑并 scp 到 /srv/hgtv-update/tech-tree.html。", files=["docs/build_tech_tree.py", "tools/check_tree.py"]),
-    dict(id="X-DOC-DISCIPLINE", layer="L7", name="文档与发版纪律", summary="AGENTS.md(发版纪律)、docs/TECH_TREE.md(权威清单·§9 版本基线)、README、REMEDIATION_PLAN；改发版参数/版本须同步 §9 与 tech-tree.html。", files=["AGENTS.md", "docs/TECH_TREE.md"]),
+    dict(id="X-DOC-DISCIPLINE", layer="L7", name="文档与发版纪律", summary="【维护铁律】每次改动软件（任何模块/参数/流程）必须同步更新本树对应节点(改 build_tech_tree.py 的 NODES/EDGES 摘要)，随后重跑 docs/build_tech_tree.py + tools/check_tree.py，并 scp tech-tree.html 到 /srv/hgtv-update/，保证树永远等于最新真相。另：AGENTS.md(发版纪律)、docs/TECH_TREE.md(权威清单·§9 版本基线·全量节点索引)、README、REMEDIATION_PLAN；改发版参数/版本须同步 §9。", files=["AGENTS.md", "docs/TECH_TREE.md"]),
 ]
 
 EDGES = [

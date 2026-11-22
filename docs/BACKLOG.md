@@ -23,3 +23,8 @@
 ## 最近已完成（留档）
 - 2026-11-21 发版 2.2.218 / 1.2.102：续播统一、TV失败可重试、Pad刷剧退出/失败重试、失败/空分离、超长剧分批渲染、PC写盘移IO+预览不污染、追更通知、明文收窄、服务端超时预算收敛(playinfo 55s×1)、缓存版本 bump(v4/v4/v3)、工具链 check_versions补sha/abi + release.py GitHub自动发布 + check_api_parity。
 - 更早：转码视频改走 Cloudflare(tc.fabao.xin) 修漫剧每秒卡；公网统一(删cpolar/kxg迁CF/去自签信任)。
+
+## 维护铁律（长期）
+
+- **每次改动软件后必须同步更新架构树**：改 `docs/build_tech_tree.py` 对应节点/边 → 跑 `docs/build_tech_tree.py` + `tools/check_tree.py` → scp `tech-tree.html` 到 `/srv/hgtv-update/` → 提交。树永远 = 最新真相，不得遗留旧描述。
+- 注意：**不要用 PowerShell 的 `Get-Content`/`Set-Content` 读写含中文的文件**（会按 GBK 转坏 UTF-8）；改用 Python 或 `-Encoding UTF8` 同时读写。
