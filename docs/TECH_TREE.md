@@ -759,7 +759,8 @@ flowchart LR
 | L4 | `X-DESKTOP-OUT` | 桌面留包目录「开心果apk」 | ~/Desktop/开心果apk：copy_to_desktop 只放最新 TV/Pad 两个通用包、旧 APK 自动清理。 |
 | L5 | `V-FLAGS` | 特性开关 | GET /api/flags 返回 flags.json(history_v2/resolver_v2/player_session_v2 等)。 |
 | L5 | `V-TRANSCODEAPI` | 转码 job 查询代理 | GET /api/transcode/status?id= → playinfo.job_status → streamsrv/oroplay transcode；只回 job 不回直链；完成后客户端重取 playinfo 命中缓存。 |
-| L5 | `V-HEALTH` | 运行健康聚合 / 主动告警 | GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板「运行健康」独立 tab(与「运行数据」「架构世界树」并列):红/黄/绿灯+总览+告警清单，仅该 tab 激活时 30s 轮询。只读采集。 |
+| L5 | `V-HEALTH` | 运行健康聚合 / 主动告警 | GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板「运行健康」独立 tab(与「运行数据」「架构世界树」并列):红/黄/绿灯+总览+告警清单，仅该 tab 激活时 30s 轮询。含「日志巡检」(V-LOGSCAN)。只读采集。 |
+| L5 | `V-LOGSCAN` | 日志巡检 / 定时找问题 | logscan.py 每30min(开机1次)扫描最近2h(LOGSCAN_HOURS 可配)：客户端 clientlogs(取流失败/超时/连接重置/Broken pipe/short read/异常崩溃/播放失败, 每文件tail2k行, 按设备计数, 样例≤3)、服务端 journal(oroplay/streamsrv/hgtv-api/v5resolver/oracle 的 ERROR/Traceback/timeout/502/503/fallback/empty/转码失败)、访问流水 access-*.jsonl(5xx)。规则分级 ok/warn/down 写 /srv/hgtv-update/logscan.json；/admin 运行健康 tab「日志巡检」区块随健康 30s 刷新。只读、免费。 |
 | L6 | `R-DEVICEPOOL` | 签名设备池 | 匿名设备身份注册/轮换/持久化：playback-device.js + streamsrv PROFILE_DIR=/var/lib/hgtv-sync/ohg-pool(每 vid 取址用新身份、失败换新)。 |
 | L6 | `R-DECRYPT` | CENC 解密(服务端) | Java DecryptMp4：加密 MP4 + spade_a → 派生内容密钥 → AES-CTR 出 dec.mp4；与客户端 C-MEDIA 同算法。 |
 | L6 | `R-EXTRACT` | VVC 抽 Annex-B | extract_vvc.py：解密 MP4 抽 video.266+audio.aac+meta(fps)；仅 VVC 需要；H.264/HEVC/AV1 直接喂 MP4。 |

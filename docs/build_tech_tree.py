@@ -140,7 +140,8 @@ N = [
     # -- L5/L6 服务端补 --
     dict(id="V-FLAGS", layer="L5", name="特性开关", summary="GET /api/flags 返回 flags.json(history_v2/resolver_v2/player_session_v2 等)。", files=["/opt/hgtv-update/serve.py:load_flags", "/var/lib/hgtv-sync/flags.json"]),
     dict(id="V-TRANSCODEAPI", layer="L5", name="转码 job 查询代理", summary="GET /api/transcode/status?id= → playinfo.job_status → streamsrv/oroplay transcode；只回 job 不回直链；完成后客户端重取 playinfo 命中缓存。", files=["/opt/hgtv-update/playinfo.py:job_status"]),
-    dict(id="V-HEALTH", layer="L5", name="运行健康聚合 / 主动告警", summary="GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板「运行健康」独立 tab(与「运行数据」「架构世界树」并列):红/黄/绿灯+总览+告警清单，仅该 tab 激活时 30s 轮询。只读采集。", files=["/opt/hgtv-update/admin.py:_health_payload", "/api/admin/health"]),
+    dict(id="V-HEALTH", layer="L5", name="运行健康聚合 / 主动告警", summary="GET /api/admin/health 聚合健康信号：各 systemd 服务(8080/8082/8081/9118/9110/9119/9120/cloudflared/frpc@) is-active、监听端口、隧道 dl/tc(读 transcode-route.json 吞吐+新鲜度)、更新镜像 tag 一致性+新鲜、转码近1h新增/卡住 .part。返回 ok/warn/down items + alerts。/admin 看板「运行健康」独立 tab(与「运行数据」「架构世界树」并列):红/黄/绿灯+总览+告警清单，仅该 tab 激活时 30s 轮询。含「日志巡检」(V-LOGSCAN)。只读采集。", files=["/opt/hgtv-update/admin.py:_health_payload", "/api/admin/health"]),
+    dict(id="V-LOGSCAN", layer="L5", name="日志巡检 / 定时找问题", summary="logscan.py 每30min(开机1次)扫描最近2h(LOGSCAN_HOURS 可配)：客户端 clientlogs(取流失败/超时/连接重置/Broken pipe/short read/异常崩溃/播放失败, 每文件tail2k行, 按设备计数, 样例≤3)、服务端 journal(oroplay/streamsrv/hgtv-api/v5resolver/oracle 的 ERROR/Traceback/timeout/502/503/fallback/empty/转码失败)、访问流水 access-*.jsonl(5xx)。规则分级 ok/warn/down 写 /srv/hgtv-update/logscan.json；/admin 运行健康 tab「日志巡检」区块随健康 30s 刷新。只读、免费。", files=["/opt/hgtv-update/logscan.py", "/srv/hgtv-update/logscan.json", "logscan.timer"]),
     dict(id="R-DEVICEPOOL", layer="L6", name="签名设备池", summary="匿名设备身份注册/轮换/持久化：playback-device.js + streamsrv PROFILE_DIR=/var/lib/hgtv-sync/ohg-pool(每 vid 取址用新身份、失败换新)。", files=["/opt/research/playback-device.js", "/var/lib/hgtv-sync/ohg-pool"]),
     dict(id="R-DECRYPT", layer="L6", name="CENC 解密(服务端)", summary="Java DecryptMp4：加密 MP4 + spade_a → 派生内容密钥 → AES-CTR 出 dec.mp4；与客户端 C-MEDIA 同算法。", files=["/opt/research/transcode/DecryptMp4.java"]),
     dict(id="R-EXTRACT", layer="L6", name="VVC 抽 Annex-B", summary="extract_vvc.py：解密 MP4 抽 video.266+audio.aac+meta(fps)；仅 VVC 需要；H.264/HEVC/AV1 直接喂 MP4。", files=["/opt/research/transcode/extract_vvc.py"]),
@@ -247,7 +248,9 @@ EDGES = [
     # 转码交付双隧道健康路由
     ("R-TRANSROUTE","R-ORO","提供 url base"), ("R-TRANSROUTE","R-TRANSCODE","提供 url base"), ("R-TRANSROUTE","I-CF","测 tc 隧道"), ("R-TRANSROUTE","I-FRP","测 dl 隧道"), ("I-SYSTEMD","R-TRANSROUTE","timer 每2min"),
     # 运行健康/告警
-    ("V-ADMIN","V-HEALTH","运行健康区块"), ("V-SERVE","V-HEALTH","/api/admin/health 路由"), ("V-HEALTH","R-TRANSROUTE","读隧道健康"), ("V-HEALTH","I-SYSTEMD","读服务状态"), ("V-HEALTH","I-MIRROR","读镜像一致性"),
+    ("V-ADMIN","V-HEALTH","运行健康区块"), ("V-SERVE","V-HEALTH","/api/admin/health 路由"), ("V-HEALTH","R-TRANSROUTE","读隧道健康"), ("V-HEALTH","I-SYSTEMD","读服务状态"), ("V-HEALTH","I-MIRROR","读镜像一致性"), ("V-HEALTH","V-LOGSCAN","日志巡检汇总"),
+    # 日志巡检
+    ("V-LOGSCAN","I-STATE","扫clientlogs/access"), ("V-LOGSCAN","V-API","扫服务日志/hgtv-api journal"), ("V-LOGSCAN","V-STATIC","写logscan.json"), ("I-SYSTEMD","V-LOGSCAN","timer 30min"),
     # ===== 架构树补全 2026-11-22：新增边 =====
     # 发布流水线/工具链
     ("X-RELEASE","X-BUILD","构建/bump版本"), ("X-RELEASE","X-PRIVATE-ENV","读私参"), ("X-RELEASE","X-MANIFEST","生成清单"),
