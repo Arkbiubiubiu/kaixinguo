@@ -21,7 +21,7 @@ N = [
     dict(id="S-ADMIN", layer="L0", name="管理看板", summary="设备数、版本、接入端口、请求量、VVC 使用；顶部「架构世界树」页签。", files=["/api/admin?token=…", "/api/admin/tree?token=…"]),
 
     # L1 PC
-    dict(id="P-SHELL", layer="L1", name="PC 应用壳 / 路由", summary="窗口、侧栏、页面切换、返回栈、打赏浮层。所有 PC 页面从这里进入。", files=["Main.kt: AppShell", "Main.kt: RouteHolder", "Main.kt: Route"]),
+    dict(id="P-SHELL", layer="L1", name="PC 应用壳 / 路由", summary="窗口、侧栏、页面切换、返回栈、打赏浮层。所有 PC 页面从这里进入。**侧栏仅在页面态(route==null)显示；进入播放页(Route.Player)隐藏侧栏=独立全屏**。", files=["Main.kt: AppShell", "Main.kt: RouteHolder", "Main.kt: Route"]),
     dict(id="P-HOME", layer="L1", name="PC 首页", summary="推荐/漫剧/真人剧三 tab、hero、卡片流、换一批、继续看；tab/列表/hero/滚动存 UiMemo，详情返回保留现场。", files=["HomeScreens.kt: HomePage"]),
     dict(id="P-FIND", layer="L1", name="PC 找剧 / 搜索", summary="搜索、联想、筛选、结果列表；条件/结果/分页/滚动存 FindMemo+UiMemo，详情返回不丢。", files=["FindScreen.kt: FindPage"]),
     dict(id="P-RANK", layer="L1", name="PC 排行榜", summary="榜单分类、筛选、月榜、演员榜；大类/子榜/筛选/列表/分页/滚动全部记忆，详情返回保留。", files=["RankScreen.kt: RankPage"]),
@@ -29,7 +29,7 @@ N = [
     dict(id="P-HISTORY", layer="L1", name="PC 历史页", summary="本地/云端历史、筛选、管理、继续播。", files=["LibraryScreens.kt: HistoryPage"]),
     dict(id="P-LIBRARY", layer="L1", name="PC 追更/预约/我的", summary="追更提醒、预约、收藏/点赞入口、账号同步码。", files=["LibraryScreens.kt: FollowsPage/ReservePage/MinePage"]),
     dict(id="P-DETAIL", layer="L1", name="PC 详情页", summary="详情、选集、季、剧评、相关推荐、继续看。", files=["DetailScreen.kt"]),
-    dict(id="P-PLAYER", layer="L1", name="PC 播放器", summary="起播、切集、清晰度、倍速、队列、预取、看门狗、历史、弹幕、评论。", files=["Player.kt"]),
+    dict(id="P-PLAYER", layer="L1", name="PC 播放器", summary="起播、切集、清晰度、倍速、队列、预取、看门狗、历史、弹幕、评论。**独立全屏播放页(进入播放隐藏「刷剧」侧栏)**；顶栏=返回/剧名·集数/详情·选集；底部控制条 播放/倍速/清晰度/选集/音量/全屏；Esc 退出播放。", files=["Player.kt"]),
     dict(id="P-FEED", layer="L1", name="PC 刷剧", summary="整屏连播、换剧、预览不记历史；**后 5 部第一集真实流预取（warmFeed），进页即预拉下一页**。", files=["FeedPlayerScreen.kt: FeedPlayerPage", "Player.kt: embedded"]),
     dict(id="P-LOGIN", layer="L1", name="PC 登录/配对", summary="短信 MFA、账号 cookies、匹配码同步。", files=["PcLogin.kt", "PcLoginScreen.kt"]),
     dict(id="P-DONATE", layer="L1", name="PC 打赏浮层", summary="展示打赏码，不接支付 SDK。", files=["Donate.kt"]),

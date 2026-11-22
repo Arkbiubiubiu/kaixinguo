@@ -1004,7 +1004,19 @@ fun PlayerScreen(
                 .onPointerEvent(PointerEventType.Exit) { chromeHovered = false },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BackPill("第 $index 集") { onBack() }
+            BackPill(if (feedTab != null) "第 $index 集" else "返回") { onBack() }
+            if (feedTab == null) {
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    (title.ifBlank { "播放" }) + " · 第 $index 集",
+                    color = Color.White.copy(alpha = 0.92f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 420.dp),
+                )
+            }
             Spacer(Modifier.weight(1f))
             if (feedTab != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1013,6 +1025,26 @@ fun PlayerScreen(
                     }
                 }
                 Spacer(Modifier.weight(1f))
+            } else {
+                // 普通播放页（左侧栏已隐藏）的明确出口：返回 → onBack（回详情/上一级）；详情/选集 → onDetail
+                Row(
+                    Modifier.height(30.dp).clip(RoundedCornerShape(50))
+                        .background(Color(0x99000000))
+                        .onPointerEvent(PointerEventType.Enter) { chromeHovered = true }
+                        .onPointerEvent(PointerEventType.Exit) { chromeHovered = false }
+                        .clickable { onDetail() }
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("详情 / 选集", color = Color.White.copy(alpha = 0.92f), fontSize = 12.sp)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
         }
 

@@ -608,13 +608,14 @@ private fun AppRoot() {
     }
 
     Row(Modifier.fillMaxSize().background(Palette.bg)) {
-        // 播放页也保留侧栏（旧版刷剧就是带侧栏的）；
-        // 小窗/竖屏里侧栏没有余地，整条藏掉（旧版同语义）
-        if ((route == null || route is Route.Player) && !UiMode.mini.value &&
+        // 侧栏只在「页面态」(route==null) 显示；进入 Route.Player 播放页后隐藏侧栏，
+        // 播放页改成真正独立的整屏外壳（不再被套上「刷剧」侧栏/高亮）。
+        // 小窗/竖屏/全屏里侧栏也没有余地，一并藏掉。
+        if (route == null && !UiMode.mini.value &&
             !UiMode.portrait.value && !UiMode.fullscreen.value
         ) {
             Sidebar(
-                if (route is Route.Player) "刷剧" else page,
+                page,
                 collapsed,
                 onSelect = {
                     if (it == "打赏") donateOpen = true else { RouteHolder.select(it); navReset() }

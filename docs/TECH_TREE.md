@@ -643,7 +643,7 @@ flowchart LR
 
 ## 9. 版本基线
 
-- PC：`1.2.105`（`build.gradle.kts` 的 `pcVersion`）
+- PC：`1.2.106`（`build.gradle.kts` 的 `pcVersion`）
 - Android：`2.2.220`（`android/pad/build.gradle.kts` 的 `versionCode=340`）
 - 服务端：`hgtv-update`（8080）、`dual-server`（8081）、`streamsrv`（9110）、`oroplay`（9118）
 - 公网：小请求走樱花 `dl.fabao.xin:44468`；转码大文件走 CF `tc.fabao.xin`；官网/看板 `hgtv.fabao.xin` / `kxg.fabao.xin`（frp-bar 自签已关、cpolar 已删）
@@ -660,7 +660,7 @@ flowchart LR
 | L0 | `S-TV` | Android TV | 电视遥控器客户端，flavor tv，包名 com.hongguotv.nativeapp。 |
 | L0 | `S-WEB` | 官网 / 下载页 | 三端下载入口，读取版本清单并跳转下载节点。 |
 | L0 | `S-ADMIN` | 管理看板 | 设备数、版本、接入端口、请求量、VVC 使用；顶部「架构世界树」页签。 |
-| L1 | `P-SHELL` | PC 应用壳 / 路由 | 窗口、侧栏、页面切换、返回栈、打赏浮层。所有 PC 页面从这里进入。 |
+| L1 | `P-SHELL` | PC 应用壳 / 路由 | 窗口、侧栏、页面切换、返回栈、打赏浮层。所有 PC 页面从这里进入。**侧栏仅在页面态(route==null)显示；进入播放页(Route.Player)隐藏侧栏=独立全屏**。 |
 | L1 | `P-HOME` | PC 首页 | 推荐/漫剧/真人剧三 tab、hero、卡片流、换一批、继续看；tab/列表/hero/滚动存 UiMemo，详情返回保留现场。 |
 | L1 | `P-FIND` | PC 找剧 / 搜索 | 搜索、联想、筛选、结果列表；条件/结果/分页/滚动存 FindMemo+UiMemo，详情返回不丢。 |
 | L1 | `P-RANK` | PC 排行榜 | 榜单分类、筛选、月榜、演员榜；大类/子榜/筛选/列表/分页/滚动全部记忆，详情返回保留。 |
@@ -668,7 +668,7 @@ flowchart LR
 | L1 | `P-HISTORY` | PC 历史页 | 本地/云端历史、筛选、管理、继续播。 |
 | L1 | `P-LIBRARY` | PC 追更/预约/我的 | 追更提醒、预约、收藏/点赞入口、账号同步码。 |
 | L1 | `P-DETAIL` | PC 详情页 | 详情、选集、季、剧评、相关推荐、继续看。 |
-| L1 | `P-PLAYER` | PC 播放器 | 起播、切集、清晰度、倍速、队列、预取、看门狗、历史、弹幕、评论。 |
+| L1 | `P-PLAYER` | PC 播放器 | 起播、切集、清晰度、倍速、队列、预取、看门狗、历史、弹幕、评论。**独立全屏播放页(进入播放隐藏「刷剧」侧栏)**；顶栏=返回/剧名·集数/详情·选集；底部控制条 播放/倍速/清晰度/选集/音量/全屏；Esc 退出播放。 |
 | L1 | `P-FEED` | PC 刷剧 | 整屏连播、换剧、预览不记历史；**后 5 部第一集真实流预取（warmFeed），进页即预拉下一页**。 |
 | L1 | `P-LOGIN` | PC 登录/配对 | 短信 MFA、账号 cookies、匹配码同步。 |
 | L1 | `P-DONATE` | PC 打赏浮层 | 展示打赏码，不接支付 SDK。 |
