@@ -86,6 +86,8 @@ fun AccountScreen(
     // key 用 Store.loggedIn：本页内用匹配码登录成功(false→true)也会触发一次。
     LaunchedEffect(Store.loggedIn) {
         if (!Store.loggedIn) return@LaunchedEffect
+        // 副设备（通过匹配码同步来的，accountSource=pair）不再生成/显示匹配码——它已登录、没法再匹配
+        if (Store.accountSource == "pair") return@LaunchedEffect
         val uid = Store.accountUid
         if (uid.isBlank()) {
             syncMsg = "账号信息缺少用户ID，请重新登录"
@@ -162,8 +164,8 @@ fun AccountScreen(
                 }
             }
 
-            // —— 只按登录态二选一 ——
-            if (Store.loggedIn) {
+            // —— 只按登录态二选一；副设备(pair)两块都不显示，只留上面的账号行+退出 ——
+            if (Store.loggedIn && Store.accountSource != "pair") {
                 item {
                     SyncCard(
                         title = "在其它设备上同步",
@@ -214,7 +216,7 @@ fun AccountScreen(
                         }
                     }
                 }
-            } else {
+            } else if (!Store.loggedIn) {
                 item {
                     SyncCard(
                         title = "用其它设备的账号同步",

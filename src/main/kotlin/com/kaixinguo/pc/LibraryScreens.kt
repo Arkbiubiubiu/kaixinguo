@@ -775,6 +775,8 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
     // 已登录进入：取 uid → 服务端 canonical 码（pairByUid，无则 pairEnsure 生成）→ 大号显示
     LaunchedEffect(loggedIn) {
         if (loggedIn) {
+            // 副设备（匹配来的 pair）不再生成/显示匹配码——它已登录、没法再匹配
+            if (PcStore.accountSource == "pair") return@LaunchedEffect
             val code = withContext(Dispatchers.IO) {
                 runCatching {
                     var uid = PcStore.accountUid
@@ -863,8 +865,8 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
         }
 
         Spacer(Modifier.height(12.dp))
-        if (loggedIn) {
-            // A. 已登录：只显示「在其它设备上同步」（服务端 canonical 6 位码，可改）
+        if (loggedIn && PcStore.accountSource != "pair") {
+            // A. 已登录（主设备）：只显示「在其它设备上同步」（服务端 canonical 6 位码，可改）
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.panel).padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -931,7 +933,7 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                     }
                 }
             }
-        } else {
+        } else if (!loggedIn) {
             // B. 未登录：只显示「用其它设备的账号同步」（输入别人的 6 位码）
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.panel).padding(16.dp),
