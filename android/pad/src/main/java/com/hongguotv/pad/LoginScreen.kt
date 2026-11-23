@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -207,24 +207,6 @@ fun LoginScreen(onDone: () -> Unit) {
                 }
             }
 
-            // 说明：为什么要单独登录、登录后能做什么
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Panel, RoundedCornerShape(12.dp))
-                    .padding(16.dp),
-            ) {
-                Column {
-                    Text("手机号登录", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "用手机号 + 短信验证码就能登录。每台设备各自登录自己的账号，" +
-                            "登录后这台设备就是主账号，可以在「我的」生成匹配码给其它设备用。",
-                        color = TextDim, fontSize = 12.sp, lineHeight = 18.sp,
-                    )
-                }
-            }
-
             // 手机号
             Box(
                 Modifier
@@ -312,7 +294,7 @@ fun LoginScreen(onDone: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TvChip("返回", selected = false) { onDone() }
                 Spacer(Modifier.width(10.dp))
-                Text("电视上用遥控器打不了字时，请用「我的」的「匹配码」把手机上的登录态接过来", color = TextDim, fontSize = 11.sp)
+                Text("电视上打字不便，可回「我的」用 6 位配对码同步。", color = TextDim, fontSize = 11.sp)
             }
         }
     }

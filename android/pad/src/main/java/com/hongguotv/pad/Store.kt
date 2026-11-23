@@ -220,7 +220,7 @@ object Store : AccountState {
         p().edit()
             .remove("account_cookies").remove("account_name").remove("account_uid")
             .remove("account_at").remove("account_source").remove("login_csrf")
-            .remove("pair_uid").remove("pair_name")
+            .remove("pair_uid").remove("pair_name").remove("pair_code")
             .apply()
         clearShelfCards()
     }

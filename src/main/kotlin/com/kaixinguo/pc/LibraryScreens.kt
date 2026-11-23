@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -759,14 +759,42 @@ internal fun ReservationRow(card: SeriesCard, onOpen: () -> Unit, onPlay: () -> 
 
 @Composable
 internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogin: () -> Unit) {
-    // 用户定位：我的页 = 账号页。收藏/点赞/管理/搜索全部移除，
-    // 只留「账号状态 + 手机号登录 + 匹配码同步」三件事。
-    var pairCode by remember { mutableStateOf("") }
+    // 我的页 = 账号与同步：严格按「是否登录」二选一（与安卓一致、文案逐字同）。
+    var loggedIn by remember { mutableStateOf(PcStore.loggedIn) }
     var status by remember { mutableStateOf<String?>(null) }
+    var myCode by remember { mutableStateOf(PcStore.loginPairCode) }
+    var inputCode by remember { mutableStateOf("") }
+    var confirmExit by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    fun genCode(): String = (1..6).map { kotlin.random.Random.nextInt(0, 10) }.joinToString("")
+
+    // 退出二次确认：点一次变「确认退出？」，3 秒内不再点自动复原
+    LaunchedEffect(confirmExit) {
+        if (confirmExit) {
+            kotlinx.coroutines.delay(3_000)
+            confirmExit = false
+        }
+    }
+
+    // 已登录进入：确保有 6 位码（无则自动生成并保存），并后台 pairUpload 刷新一次
+    LaunchedEffect(loggedIn) {
+        if (loggedIn) {
+            var c = PcStore.loginPairCode
+            if (c.length != 6) {
+                c = genCode()
+                PcStore.loginPairCode = c
+            }
+            myCode = c
+            val ok = withContext(Dispatchers.IO) { runCatching { Api.pairUpload(c) }.isSuccess }
+            if (!ok) status = "上传匹配码失败，请重试"
+        } else {
+            // 未登录：清掉上一账号遗留的匹配码，避免手机号登录/换账号把旧码带过去
+            if (PcStore.loginPairCode.isNotEmpty()) PcStore.loginPairCode = ""
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
-        // 账户行（旧版 mine 顶部：头像 + 昵称，右侧登录/退出，不用整块卡片）
+        // 顶部账户行：头像 + 昵称/副标题 + 右侧(手机号登录 / 退出)
         Row(
             Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -774,100 +802,174 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
             Box(
                 Modifier.size(40.dp).clip(RoundedCornerShape(50))
                     .background(Palette.panelHi)
-                    .border(1.dp, if (PcStore.loggedIn) Palette.accent else Palette.line, RoundedCornerShape(50)),
+                    .border(1.dp, if (loggedIn) Palette.accent else Palette.line, RoundedCornerShape(50)),
                 contentAlignment = Alignment.Center,
             ) {
                 androidx.compose.material3.Icon(
                     Icons.Filled.Person,
                     contentDescription = null,
-                    tint = if (PcStore.loggedIn) Palette.accent else Palette.faint,
+                    tint = if (loggedIn) Palette.accent else Palette.faint,
                     modifier = Modifier.size(20.dp),
                 )
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (PcStore.loggedIn) PcStore.accountName.ifBlank { "用户" } else "未登录",
+                    if (loggedIn) PcStore.accountName.ifBlank { "用户" } else "未登录",
                     color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    if (PcStore.loggedIn) "收藏 / 追更 / 预约 / 历史都在跟着账号走"
-                    else "手机号登录，或用匹配码把电视/手机的登录态接过来",
+                    if (loggedIn) "收藏 / 历史 / 追更 都跟着账号走"
+                    else "登录后收藏 / 历史 / 追更 跟着账号走",
                     color = Palette.dim, fontSize = 12.sp,
                 )
             }
-            if (!PcStore.loggedIn) {
+            if (!loggedIn) {
                 PrimaryButton("手机号登录", null, onLogin)
-                Spacer(Modifier.width(8.dp))
-            }
-            if (PcStore.loggedIn) {
-                Spacer(Modifier.width(8.dp))
-                OutlineButton("退出") {
-                    PcStore.accountCookies = ""
-                    PcStore.accountName = ""
-                    status = "已退出登录"
-                }
-            }
-        }
-
-        // 匹配码：把电视/手机上已经登录的账号接过来（本页核心功能，常驻展示）
-        Spacer(Modifier.height(12.dp))
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.panel).padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("用匹配码同步账号", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(4.dp))
-                Text("在电视/手机的「我的」里生成 6 位匹配码，填在这里", color = Palette.dim, fontSize = 12.sp)
-                status?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, color = Palette.accent, fontSize = 12.sp)
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            Box(
-                Modifier.width(140.dp).height(34.dp).clip(RoundedCornerShape(8.dp))
-                    .background(Palette.panelHi)
-                    .border(1.dp, Palette.line, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                if (pairCode.isEmpty()) {
-                    Text("6 位匹配码", color = Palette.faint, fontSize = 12.sp)
-                }
-                androidx.compose.foundation.text.BasicTextField(
-                    value = pairCode,
-                    onValueChange = { pairCode = it.filter { c -> c.isLetterOrDigit() }.take(12) },
-                    textStyle = androidx.compose.ui.text.TextStyle(color = Palette.text, fontSize = 14.sp),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.accent),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            PrimaryButton("同步", null) {
-                val code = pairCode.trim()
-                if (code.length < 4) {
-                    status = "匹配码至少 4 位"
-                } else {
-                    status = "同步中…"
-                    scope.launch(Dispatchers.IO) {
-                        val result = runCatching {
-                            val name = Api.pairFetch(code)
-                            Api.syncAccount(force = true)
-                            name
-                        }.getOrElse { it.message ?: "同步失败" }
-                        withContext(Dispatchers.Main) { status = result.ifBlank { "已同步登录态" } }
+            } else {
+                OutlineButton(if (confirmExit) "确认退出？" else "退出") {
+                    if (confirmExit) {
+                        PcStore.accountCookies = ""
+                        PcStore.accountName = ""
+                        PcStore.loginPairCode = ""   // 退出清匹配码，避免旧码带到新账号
+                        confirmExit = false
+                        loggedIn = false
+                        status = "已退出登录"
+                    } else {
+                        confirmExit = true
                     }
                 }
             }
         }
-        Spacer(Modifier.height(14.dp))
-        Text(
-            "收藏 / 点赞 / 观看记录分别在对应板块查看；本页只负责账号与设备同步。",
-            color = Palette.faint, fontSize = 12.sp, lineHeight = 18.sp,
-        )
+
+        Spacer(Modifier.height(12.dp))
+        if (loggedIn) {
+            // A. 已登录：只显示「在其它设备上同步」（生成/共享本机 6 位码）
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.panel).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("在其它设备上同步", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "在需要同步的设备上输入这 6 位码，就能用这个账号看收藏 / 历史 / 追更。",
+                        color = Palette.dim, fontSize = 12.sp, lineHeight = 18.sp,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    Modifier.width(120.dp).height(34.dp).clip(RoundedCornerShape(8.dp))
+                        .background(Palette.panelHi)
+                        .border(1.dp, Palette.line, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    BasicTextField(
+                        value = myCode,
+                        onValueChange = { myCode = it.filter { ch -> ch.isDigit() }.take(6) },
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Palette.text, fontSize = 16.sp),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.accent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                SecondaryButton("换个码") {
+                    val c = genCode()
+                    myCode = c
+                    PcStore.loginPairCode = c
+                    status = "共享中…"
+                    scope.launch(Dispatchers.IO) {
+                        val ok = runCatching { Api.pairUpload(c) }.isSuccess
+                        withContext(Dispatchers.Main) {
+                            status = if (ok) "已保存并共享，其它设备输入 $c 即可同步" else "上传匹配码失败，请重试"
+                        }
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                PrimaryButton("保存并共享", null) {
+                    val c = myCode.trim()
+                    if (c.length != 6) {
+                        status = "匹配码是 6 位数字"
+                    } else {
+                        PcStore.loginPairCode = c
+                        status = "共享中…"
+                        scope.launch(Dispatchers.IO) {
+                            val r = runCatching { Api.pairUpload(c) }
+                            withContext(Dispatchers.Main) {
+                                status = r.fold(
+                                    onSuccess = { "已保存并共享，其它设备输入 $c 即可同步" },
+                                    onFailure = { "上传匹配码失败，请重试" },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // B. 未登录：只显示「用其它设备的账号同步」（输入别人的 6 位码）
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.panel).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("用其它设备的账号同步", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "在已登录的设备上生成 6 位匹配码，填到这里。",
+                        color = Palette.dim, fontSize = 12.sp, lineHeight = 18.sp,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    Modifier.width(140.dp).height(34.dp).clip(RoundedCornerShape(8.dp))
+                        .background(Palette.panelHi)
+                        .border(1.dp, Palette.line, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (inputCode.isEmpty()) {
+                        Text("输入 6 位匹配码", color = Palette.faint, fontSize = 12.sp)
+                    }
+                    BasicTextField(
+                        value = inputCode,
+                        onValueChange = { inputCode = it.filter { ch -> ch.isDigit() }.take(6) },
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Palette.text, fontSize = 14.sp),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.accent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                PrimaryButton("同步", null) {
+                    val code = inputCode.trim()
+                    if (code.length != 6) {
+                        status = "匹配码是 6 位数字"
+                    } else {
+                        status = "同步中…"
+                        scope.launch(Dispatchers.IO) {
+                            val r = runCatching {
+                                val name = Api.pairFetch(code)
+                                runCatching { Api.syncAccount(force = false) }   // 不 force：别用 /account 覆盖刚配对的 cookies
+                                name
+                            }
+                            withContext(Dispatchers.Main) {
+                                r.onSuccess {
+                                    PcStore.loginPairCode = ""   // 换账号清旧码，进来自动生成新码
+                                    loggedIn = true
+                                    status = "同步成功：${it.ifBlank { PcStore.accountName.ifBlank { "已登录" } }}"
+                                }.onFailure { status = it.message ?: "同步失败" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        status?.let {
+            Spacer(Modifier.height(12.dp))
+            Text(it, color = Palette.accent, fontSize = 12.sp)
+        }
     }
 }

@@ -109,6 +109,11 @@ object PcStore : AccountState {
         get() = str("account_source")
         set(v) = put("account_source", v)
 
+    /** 本机已生成/共享的 6 位匹配码（「我的」页在其它设备上同步用；持久化到 prefs）。 */
+    var loginPairCode: String
+        get() = str("login_pair_code")
+        set(v) = put("login_pair_code", v.trim())
+
     /**
      * 签名服务：自用版（构建参数非空）**固定用构建值**，忽略本机旧配置 ——
      * 作者必须和普通用户走完全相同的公网通道，避免「我能用、别人不能用」的假正常。
