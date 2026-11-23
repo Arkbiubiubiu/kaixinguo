@@ -42,6 +42,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -70,6 +71,68 @@ PROP_KEYS = (
 def die(msg):
     print("RELEASE-FAIL:", msg)
     raise SystemExit(1)
+
+
+# ---------------- 分阶段计时（只增加计时输出，不改任何发版逻辑/产物） ----------------
+_WALL0 = time.perf_counter()
+_PHASE = {}  # 阶段名 -> 累计秒数
+
+
+class _Timer:
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self._t = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        _PHASE[self.name] = _PHASE.get(self.name, 0.0) + (time.perf_counter() - self._t)
+        return False
+
+
+def timed(name):
+    return _Timer(name)
+
+
+def _sec(name):
+    return _PHASE.get(name, 0.0)
+
+
+def print_timing():
+    """打印各阶段耗时明细 + 汇总表 BUILD/UPLOAD/MANIFEST/VERIFY/TOTAL。"""
+    detail = " ".join(
+        "%s=%.1fs" % (k, v) for k, v in (
+            ("bump", _sec("bump")),
+            ("build", _sec("build")),
+            ("verify_dex", _sec("verify_dex")),
+            ("manifest", _sec("manifest")),
+            ("upload_scp", _sec("upload_scp")),
+            ("verify_sha", _sec("verify_sha")),
+            ("prune", _sec("prune")),
+            ("publish_github", _sec("publish_github")),
+            ("mirror_tag", _sec("mirror_tag")),
+            ("desktop", _sec("desktop")),
+            ("check_versions", _sec("check_versions")),
+        )
+    )
+    build = _sec("build")
+    upload = _sec("upload_scp") + _sec("publish_github") + _sec("mirror_tag")
+    manifest = _sec("manifest")
+    verify = _sec("verify_dex") + _sec("verify_sha") + _sec("check_versions")
+    total = time.perf_counter() - _WALL0
+    print("\n[timing] " + detail, flush=True)
+    print("[timing] BUILD=%.1fs UPLOAD=%.1fs MANIFEST=%.1fs VERIFY=%.1fs TOTAL=%.1fs"
+          % (build, upload, manifest, verify, total), flush=True)
+
+
+def run_check_versions():
+    """可选（--check）：发版后跑版本一致性门禁并计时；只读校验，失败也不影响发版结果。"""
+    path = os.path.join(ROOT, "tools", "check_versions.py")
+    if not os.path.isfile(path):
+        return
+    with timed("check_versions"):
+        subprocess.run([sys.executable, path, "--no-installed"], check=False)
 
 
 def sha256(path):
@@ -160,6 +223,8 @@ def run(cmd, cwd=None, env=None):
 def build_android(version, code, props):
     args = [
         GRADLE_ANDROID,
+        "--build-cache",
+        "--parallel",
         ":pad:assembleTvRelease",
         ":pad:assemblePadRelease",
         "-PversionCode=%d" % code,
@@ -167,7 +232,8 @@ def build_android(version, code, props):
     ]
     for k, v in props.items():
         args.append("-P%s=%s" % (k, v))
-    run(args, cwd=ANDROID, env={"JAVA_HOME": JDK, "ANDROID_HOME": SDK})
+    with timed("build"):
+        run(args, cwd=ANDROID, env={"JAVA_HOME": JDK, "ANDROID_HOME": SDK})
 
 
 def apk_path(flavor, abi=None):
@@ -213,9 +279,10 @@ def stage_android(version, code, notes, url_base):
             dst = os.path.join(out, "%s-%s-%s.apk" % (prefix, version, tag))
             shutil.copy2(src, dst)
             files[os.path.basename(dst)] = dst
-    run([sys.executable, os.path.join(ROOT, "tools", "release_manifest.py"),
-         "--dir", stage, "--out", out, "--version", version,
-         "--code", str(code), "--notes", notes, "--url-base", url_base])
+    with timed("manifest"):
+        run([sys.executable, os.path.join(ROOT, "tools", "release_manifest.py"),
+             "--dir", stage, "--out", out, "--version", version,
+             "--code", str(code), "--notes", notes, "--url-base", url_base])
     manifests = [os.path.join(out, "version-tv.json"), os.path.join(out, "version-hgpad.json")]
     for m in manifests:
         if not os.path.isfile(m):
@@ -226,10 +293,11 @@ def stage_android(version, code, notes, url_base):
 
 def build_pc(version, props, no_build=False):
     if not no_build:
-        args = [GRADLE_PC, "packageMsi", "-PpcVersion=%s" % version]
+        args = [GRADLE_PC, "--build-cache", "--parallel", "packageMsi", "-PpcVersion=%s" % version]
         for k, v in props.items():
             args.append("-P%s=%s" % (k, v))
-        run(args, cwd=ROOT, env={"JAVA_HOME": JDK})
+        with timed("build"):
+            run(args, cwd=ROOT, env={"JAVA_HOME": JDK})
     msi_dir = os.path.join(ROOT, "build", "compose", "binaries", "main", "msi")
     if not os.path.isdir(msi_dir):
         die("找不到 MSI 输出目录: " + msi_dir)
@@ -247,30 +315,33 @@ def stage_pc(version, notes, props=None, no_build=False):
     dst = os.path.join(out, "kaixinguo-%s.msi" % version)
     shutil.copy2(src, dst)
     code = sum(int(x) * m for x, m in zip(version.split("."), (10000, 100, 1)))
-    data = {
-        "versionCode": code,
-        "versionName": version,
-        "notes": notes,
-        "path": os.path.basename(dst),
-        "size": os.path.getsize(dst),
-        "sha256": sha256(dst),
-    }
     manifest = os.path.join(out, "version-pc.json")
-    with open(manifest, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    with timed("manifest"):
+        data = {
+            "versionCode": code,
+            "versionName": version,
+            "notes": notes,
+            "path": os.path.basename(dst),
+            "size": os.path.getsize(dst),
+            "sha256": sha256(dst),
+        }
+        with open(manifest, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
     return {os.path.basename(dst): dst}, [manifest]
 
 
 def upload(files, manifests):
-    for path in list(files.values()) + manifests:
-        run(["scp", "-C", path, "%s:%s/" % (SERVER, SERVER_DIR)])
-    for name, path in files.items():
-        local = sha256(path)
-        p = subprocess.run(
-            ["ssh", SERVER, "sha256sum %s/%s" % (SERVER_DIR, os.path.basename(path))],
-            capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if p.returncode != 0 or local not in p.stdout:
-            die("远端校验失败: " + name)
+    with timed("upload_scp"):
+        for path in list(files.values()) + manifests:
+            run(["scp", "-C", path, "%s:%s/" % (SERVER, SERVER_DIR)])
+    with timed("verify_sha"):
+        for name, path in files.items():
+            local = sha256(path)
+            p = subprocess.run(
+                ["ssh", SERVER, "sha256sum %s/%s" % (SERVER_DIR, os.path.basename(path))],
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if p.returncode != 0 or local not in p.stdout:
+                die("远端校验失败: " + name)
     print("上传并校验通过: %d 个文件" % (len(files) + len(manifests)))
 
 
@@ -308,13 +379,15 @@ def publish_github(assets):
         if not assets or shutil.which("gh") is None:
             print("WARN: 跳过 GitHub Release（无资产或未安装 gh）")
             return
-        view = subprocess.run(["gh", "release", "view", tag, "--repo", repo], capture_output=True)
-        if view.returncode != 0:
-            subprocess.run(["gh", "release", "create", tag, "--repo", repo,
-                            "--title", tag, "--notes", "发布 " + tag] + assets, check=False)
-        else:
-            subprocess.run(["gh", "release", "upload", tag, "--repo", repo, "--clobber"] + assets, check=False)
-        subprocess.run(["ssh", SERVER, "printf '%%s' '%s' > %s/github-release-tag" % (tag, SERVER_DIR)], check=False)
+        with timed("publish_github"):
+            view = subprocess.run(["gh", "release", "view", tag, "--repo", repo], capture_output=True)
+            if view.returncode != 0:
+                subprocess.run(["gh", "release", "create", tag, "--repo", repo,
+                                "--title", tag, "--notes", "发布 " + tag] + assets, check=False)
+            else:
+                subprocess.run(["gh", "release", "upload", tag, "--repo", repo, "--clobber"] + assets, check=False)
+        with timed("mirror_tag"):
+            subprocess.run(["ssh", SERVER, "printf '%%s' '%s' > %s/github-release-tag" % (tag, SERVER_DIR)], check=False)
         print("GitHub Release 已同步:", tag)
     except Exception as exc:
         print("WARN: GitHub 发布异常（不影响本次）：", exc)
@@ -343,31 +416,39 @@ def cmd_android(a):
     version = a.version or (bump_version(cur_name) if a.bump else cur_name)
     code = a.code or (cur_code + 1 if a.bump else cur_code)
     if a.bump:
-        write_version_android(version, code)
+        with timed("bump"):
+            write_version_android(version, code)
     props = load_props(a.env)
     missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
     if missing:
         die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
     if not a.no_build:
         build_android(version, code, props)
-    for flavor in ("tv", "pad"):
-        verify_dex(apk_path(flavor), props.get("playToken"))
+    with timed("verify_dex"):
+        for flavor in ("tv", "pad"):
+            verify_dex(apk_path(flavor), props.get("playToken"))
     print("APK 私参校验通过（playToken 在 dex 里）")
     files, manifests = stage_android(version, code, a.notes, a.url_base)
     print("产物目录:", os.path.join(ROOT, "dist", "android", version))
     if not a.no_upload:
         upload(files, manifests)
-        prune_remote()
+        with timed("prune"):
+            prune_remote()
         publish_github(list(files.values()) + manifests)
     if a.desktop_copy:
-        copy_to_desktop(version)
+        with timed("desktop"):
+            copy_to_desktop(version)
+    if getattr(a, "check", False):
+        run_check_versions()
+    print_timing()
 
 
 def cmd_pc(a):
     cur_name, _ = read_version_pc()
     version = a.version or (bump_version(cur_name) if a.bump else cur_name)
     if a.bump:
-        write_version_pc(version)
+        with timed("bump"):
+            write_version_pc(version)
     props = load_props(a.env)
     missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
     if missing:
@@ -376,8 +457,12 @@ def cmd_pc(a):
     print("产物目录:", os.path.join(ROOT, "dist", "pc", version))
     if not a.no_upload:
         upload(files, manifests)
-        prune_remote()
+        with timed("prune"):
+            prune_remote()
         publish_github(list(files.values()) + manifests)
+    if getattr(a, "check", False):
+        run_check_versions()
+    print_timing()
 
 
 def main():
@@ -392,8 +477,11 @@ def main():
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--no-upload", action="store_true")
     ap.add_argument("--no-desktop-copy", dest="desktop_copy", action="store_false")
+    ap.add_argument("--check", action="store_true", help="发版后跑 check_versions.py --no-installed 并计时（只读）")
     ap.set_defaults(desktop_copy=True)
     a = ap.parse_args()
+    global _WALL0
+    _WALL0 = time.perf_counter()
     if a.platform == "android":
         cmd_android(a)
     else:
