@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,10 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+
+/** 电视口径的「去开安装权限」手动指引（跳设置失败/找不到页面时兜底显示）。 */
+private const val NEED_PERM_TEXT =
+    "本机还没允许安装应用。请到 电视 设置 → 安全/应用 → 安装未知应用(或未知来源) → 找到「开心果」打开；然后回来点「重试安装」。"
 
 /** 线上最新版信息（version-tv.json / version-hgpad.json 的解析结果）。 */
 data class UpdateInfo(
@@ -406,17 +411,26 @@ object Updater {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             context.packageManager.canRequestPackageInstalls()
 
-    /** 跳到「安装未知应用」授权页；拿不到就退到本应用详情页。 */
+    /**
+     * 跳到「安装未知应用」授权页。
+     *
+     * 电视场景很杂：很多电视/盒子没有 MANAGE_UNKNOWN_APP_SOURCES 这个页面，或应用详情页里
+     * 根本没有「允许安装未知应用」开关。所以做多级回退，取第一个系统真能解析到的：
+     *   a. MANAGE_UNKNOWN_APP_SOURCES(本包)  b. SECURITY_SETTINGS（电视「未知来源」常在安全里）
+     *   c. APPLICATION_DETAILS_SETTINGS(本包)  d. 全局 SETTINGS（最后兜底）。
+     * 每个都带 FLAG_ACTIVITY_NEW_TASK；包相关页面带上 package: uri。
+     */
     fun installSettingsIntent(context: Context): Intent {
-        val direct = Intent(
-            android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-            android.net.Uri.parse("package:${context.packageName}"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val detail = Intent(
-            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            android.net.Uri.parse("package:${context.packageName}"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return if (direct.resolveActivity(context.packageManager) != null) direct else detail
+        val pkgUri = android.net.Uri.parse("package:${context.packageName}")
+        val candidates = listOf(
+            Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, pkgUri),
+            Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS),
+            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri),
+            Intent(android.provider.Settings.ACTION_SETTINGS),
+        )
+        candidates.forEach { it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        return candidates.firstOrNull { it.resolveActivity(context.packageManager) != null }
+            ?: candidates.last()
     }
 
     /** 拉起系统安装器（FileProvider 授权，Android 7+ 必须）。 */
@@ -448,11 +462,26 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     var progress by remember { mutableStateOf(-1) }
     var error by remember { mutableStateOf<String?>(null) }
-    // 需要先去系统设置开「安装未知应用」权限
-    var needPerm by remember { mutableStateOf(false) }
+    // 安装权限是否已放开：轮询保持实时——用户去系统开完开关回来，按钮要立刻能装（旧实现 needPerm 一次为 true 永不重查）
+    var canInstallNow by remember { mutableStateOf(Updater.canInstall(context)) }
     // 已经下好的安装包：留着，重试安装时不用再下一遍
     var apkFile by remember { mutableStateOf<java.io.File?>(null) }
     val sizeMb = if (info.size > 0) String.format("%.1f", info.size / 1024.0 / 1024.0) else "?"
+    LaunchedEffect(Unit) {
+        while (true) {
+            canInstallNow = Updater.canInstall(context)
+            delay(700)
+        }
+    }
+    // 打开弹窗即检查：本版安装包已在 filesDir/update/update-<versionCode>.apk 就直接复用（免重下）；
+    // 此时若没安装权限，先把手动指引显示出来。
+    LaunchedEffect(Unit) {
+        val f = java.io.File(java.io.File(context.filesDir, "update"), "update-${info.versionCode}.apk")
+        if (f.exists() && f.length() > 0) {
+            apkFile = f
+            if (!Updater.canInstall(context)) error = NEED_PERM_TEXT
+        }
+    }
 
     Dialog(onDismissRequest = { if (progress < 0) onClose() }) {
         // Dialog 是独立 window，主窗口那套「整屏 Canvas 焦点框」在这里必然错位；
@@ -538,10 +567,10 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                 )
                 Text(
                     when {
-                        needPerm -> "去设置"
                         progress >= 0 && progress < 100 -> "下载中…"
                         progress >= 100 -> "准备安装…"
-                        apkFile != null -> "重新安装"
+                        !canInstallNow -> "去设置"
+                        apkFile != null -> "重试安装"
                         else -> "立即更新"
                     },
                     color = Color.White,
@@ -549,28 +578,29 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(if (progress < 0 || needPerm) Red else Color(0x33FFFFFF))
-                        .clickable(enabled = progress < 0 || needPerm) {
-                            if (needPerm) {
+                        .background(if (progress < 0) Red else Color(0x33FFFFFF))
+                        .clickable(enabled = progress < 0) {
+                            error = null
+                            // 统一：先重新查一次权限（用户可能刚去系统开了开关回来，不能只信旧状态）
+                            if (!Updater.canInstall(context)) {
+                                canInstallNow = false
+                                error = NEED_PERM_TEXT
+                                // 拉起系统设置；有些电视没有这些页面、startActivity 会抛异常——保留手动指引，不静默吞
                                 runCatching { context.startActivity(Updater.installSettingsIntent(context)) }
                                 return@clickable
                             }
-                            // 已经下好包了：直接重试安装，别让用户再等一次 4MB 下载
+                            canInstallNow = true
+                            // 已允许 + 有缓存包 → 直接装，别再去设置
                             val cached = apkFile
                             if (cached != null && cached.exists() && cached.length() > 0) {
-                                error = null
-                                if (!Updater.canInstall(context)) {
-                                    needPerm = true
-                                    error = "本机还没允许本应用安装软件，点右边「去设置」打开开关后重试"
-                                } else if (!Updater.install(context, cached)) {
-                                    error = "无法拉起安装器，请检查「安装未知应用」权限"
+                                if (!Updater.install(context, cached)) {
+                                    error = "无法拉起安装器，请检查「安装未知应用」权限后点「重试安装」"
                                 } else {
-                                    error = "已调起安装器。如果屏幕上没有出现安装界面，点右边「重新安装」再试"
+                                    error = "已调起安装器。如果屏幕上没有出现安装界面，点「重试安装」再试"
                                 }
                                 return@clickable
                             }
-                            error = null
-                            needPerm = false
+                            // 没缓存 → 下载后自动安装
                             progress = 0
                             scope.launch {
                                 val file = Updater.download(context, info) { p -> progress = p }
@@ -584,17 +614,15 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                                     if (!Updater.canInstall(context)) {
                                         // 系统静默拒绝，安装界面根本不会弹 —— 直接说明白并给入口
                                         progress = -1
-                                        needPerm = true
-                                        error = "本机还没允许本应用安装软件，点右边「去设置」打开开关后重试"
+                                        canInstallNow = false
+                                        error = NEED_PERM_TEXT
                                     } else if (!Updater.install(context, file)) {
                                         progress = -1
-                                        error = "无法拉起安装器，请检查「安装未知应用」权限"
+                                        error = "无法拉起安装器，请检查「安装未知应用」权限后点「重试安装」"
                                     } else {
-                                        // 不要立刻关弹窗：电视上安装器偶尔不会来到前台，
-                                        // 关掉之后用户既看不到安装界面、也没有重试入口，
-                                        // 只能重新下载一遍（这就是「第一次点安装没用」的由来）
+                                        // 不立刻关弹窗：电视上安装器偶尔不到前台，留着重试入口
                                         progress = -1
-                                        error = "已调起安装器。如果屏幕上没有出现安装界面，点右边「重新安装」再试"
+                                        error = "已调起安装器。如果屏幕上没有出现安装界面，点「重试安装」再试"
                                     }
                                 }
                             }
