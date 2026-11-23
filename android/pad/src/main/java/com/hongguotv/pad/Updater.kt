@@ -434,20 +434,40 @@ object Updater {
     }
 
     /** 拉起系统安装器（FileProvider 授权，Android 7+ 必须）。 */
-    fun install(context: Context, file: File): Boolean = runCatching {
-        if (!canInstall(context)) return false
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.update", file)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            // 有些电视/盒子上的安装器只认 ClipData 里的 uri，
-            // 只设 data 会被静默拒绝（startActivity 不报错、界面不弹）
-            clipData = android.content.ClipData.newRawUri("", uri)
+    /** 最近一次拉起安装器的失败原因（可选展示）。 */
+    @Volatile
+    var installError: String? = null
+
+    /**
+     * 直接尝试拉起系统安装器。
+     *
+     * 关键：**不再用 canInstall/canRequestPackageInstalls 硬决定能不能装** —— 部分电视(小米)
+     * 该 API 会误报 false（全局「未知来源」已开、实际能装），以前用它开头 return false 会把
+     * 用户挡在门外、还跳不动设置、死循环。这里一律先尝试真正拉起安装器，装不了再由 UI 给指引。
+     */
+    fun install(context: Context, file: File): Boolean {
+        installError = null
+        return try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.update", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // 有些电视/盒子上的安装器只认 ClipData 里的 uri，
+                // 只设 data 会被静默拒绝（startActivity 不报错、界面不弹）
+                clipData = android.content.ClipData.newRawUri("", uri)
+            }
+            context.startActivity(intent)
+            true
+        } catch (t: Throwable) {
+            installError = when (t) {
+                is android.content.ActivityNotFoundException -> "无法拉起安装器"
+                is SecurityException -> "无法拉起安装器"
+                else -> "无法拉起安装器：${t.message ?: t.javaClass.simpleName}"
+            }
+            false
         }
-        context.startActivity(intent)
-        true
-    }.getOrDefault(false)
+    }
 }
 
 /**
@@ -565,11 +585,26 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                         .clickable { onClose() }
                         .padding(horizontal = 18.dp, vertical = 9.dp),
                 )
+                // 次要入口：只有系统报告「未允许安装」时才出现；不影响主按钮「直接尝试安装」
+                if (!canInstallNow) {
+                    Text(
+                        "去设置",
+                        color = TextDim,
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0x14FFFFFF))
+                            .clickable {
+                                error = NEED_PERM_TEXT
+                                runCatching { context.startActivity(Updater.installSettingsIntent(context)) }
+                            }
+                            .padding(horizontal = 18.dp, vertical = 9.dp),
+                    )
+                }
                 Text(
                     when {
                         progress >= 0 && progress < 100 -> "下载中…"
                         progress >= 100 -> "准备安装…"
-                        !canInstallNow -> "去设置"
                         apkFile != null -> "重试安装"
                         else -> "立即更新"
                     },
@@ -581,26 +616,18 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                         .background(if (progress < 0) Red else Color(0x33FFFFFF))
                         .clickable(enabled = progress < 0) {
                             error = null
-                            // 统一：先重新查一次权限（用户可能刚去系统开了开关回来，不能只信旧状态）
-                            if (!Updater.canInstall(context)) {
-                                canInstallNow = false
-                                error = NEED_PERM_TEXT
-                                // 拉起系统设置；有些电视没有这些页面、startActivity 会抛异常——保留手动指引，不静默吞
-                                runCatching { context.startActivity(Updater.installSettingsIntent(context)) }
-                                return@clickable
-                            }
-                            canInstallNow = true
-                            // 已允许 + 有缓存包 → 直接装，别再去设置
+                            // 真凶修复：不再先查 canInstall 拦路，直接尝试拉起安装器
                             val cached = apkFile
                             if (cached != null && cached.exists() && cached.length() > 0) {
                                 if (!Updater.install(context, cached)) {
-                                    error = "无法拉起安装器，请检查「安装未知应用」权限后点「重试安装」"
+                                    error = if (!Updater.canInstall(context)) NEED_PERM_TEXT
+                                            else "无法拉起安装器（可改用U盘安装最新包 / 检查系统是否禁止该来源）"
                                 } else {
                                     error = "已调起安装器。如果屏幕上没有出现安装界面，点「重试安装」再试"
                                 }
                                 return@clickable
                             }
-                            // 没缓存 → 下载后自动安装
+                            // 没缓存 → 下载后直接尝试安装（同样不预先用 canInstall 拦）
                             progress = 0
                             scope.launch {
                                 val file = Updater.download(context, info) { p -> progress = p }
@@ -611,14 +638,10 @@ fun UpdateDialog(info: UpdateInfo, onClose: () -> Unit) {
                                 } else {
                                     progress = 100
                                     apkFile = file
-                                    if (!Updater.canInstall(context)) {
-                                        // 系统静默拒绝，安装界面根本不会弹 —— 直接说明白并给入口
+                                    if (!Updater.install(context, file)) {
                                         progress = -1
-                                        canInstallNow = false
-                                        error = NEED_PERM_TEXT
-                                    } else if (!Updater.install(context, file)) {
-                                        progress = -1
-                                        error = "无法拉起安装器，请检查「安装未知应用」权限后点「重试安装」"
+                                        error = if (!Updater.canInstall(context)) NEED_PERM_TEXT
+                                                else "无法拉起安装器（可改用U盘安装最新包 / 检查系统是否禁止该来源）"
                                     } else {
                                         // 不立刻关弹窗：电视上安装器偶尔不到前台，留着重试入口
                                         progress = -1
