@@ -140,13 +140,9 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
         syncing = false
     }
 
-    // 数据源：登录 = 云端（跨设备）；未登录 = 本地
-    val source: List<JSONObject> = when {
-        PcStore.loggedIn && App.flags["history_v2"] == true ->
-            HistoryRepository.merge(rows, cloudRows, 1500)
-        PcStore.loggedIn && cloudRows.isNotEmpty() -> cloudRows
-        else -> rows
-    }
+    // 数据源：登录 = 当前账号的云端历史（跨设备）；未登录 = 本地。
+    // 绝不在"已登录"时回落到本地 rows —— 本地 history 是设备级缓存、可能残留上一个账号的记录，会造成串号。
+    val source: List<JSONObject> = if (PcStore.loggedIn) cloudRows else rows
 
     // 官方同款「已看完」判定：看到最后一集即算，与片内进度无关
     fun isFinished(r: JSONObject): Boolean {

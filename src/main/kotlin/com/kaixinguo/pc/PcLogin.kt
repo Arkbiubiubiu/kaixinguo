@@ -268,11 +268,16 @@ object PcLogin {
     }
 
     private fun saveAccount(cookies: String, name: String, uid: String) {
+        val prevUid = PcStore.accountUid
         PcStore.accountCookies = cookies
         PcStore.accountName = name.ifBlank { "用户" }
         PcStore.accountUid = uid
         PcStore.accountSource = "local"
         PcStore.accountSyncedAt = System.currentTimeMillis()
+        // 换账号：清掉本机上一个账号遗留的本地历史/进度，避免串号
+        if (prevUid.isNotBlank() && uid.isNotBlank() && prevUid != uid) {
+            runCatching { PcHistoryStore.clearHistory() }
+        }
         csrf = ""
     }
 
