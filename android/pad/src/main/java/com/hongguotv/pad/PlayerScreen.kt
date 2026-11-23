@@ -128,7 +128,10 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         val window = (context as? android.app.Activity)?.window
         window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // 播放可见标志：公告横幅据此在播放/沉浸时隐藏（进播放 true，退出 false）
+        NoticeGate.playerImmersive = true
         onDispose {
+            NoticeGate.playerImmersive = false
             runCatching {
                 window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }

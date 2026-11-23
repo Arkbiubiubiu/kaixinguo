@@ -41,6 +41,9 @@ object App {
     /** 服务端功能开关（只影响新实现是否启用；默认全部 false = 旧路径）。 */
     var flags: Map<String, Boolean> = emptyMap()
 
+    /** 当前运行平台标记（公告按平台过滤用）：pc / tv / pad。 */
+    var platform: String = ""
+
     /**
      * 设备身份覆盖（空 = 用占位默认值）。
      *

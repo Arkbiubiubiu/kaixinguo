@@ -94,6 +94,8 @@ import com.hongguotv.pad.HistoryApi
 import com.hongguotv.pad.HistoryRepository
 import com.hongguotv.pad.HistoryShadow
 import com.hongguotv.pad.Log
+import com.hongguotv.pad.Notice
+import com.hongguotv.pad.NoticeCenter
 import com.hongguotv.pad.RankTabsel
 import com.hongguotv.pad.SeriesCard
 import com.hongguotv.pad.SeriesDetail
@@ -513,6 +515,7 @@ private fun boot() {
         runCatching { DiagLog.write(level, tag, message) }
     }
     App.state = PcStore
+    App.platform = "pc"   // 公告按平台过滤用（NoticeCenter.pick(curCode,"pc")）
     Palette.applyTheme(PcStore.theme)
     applyServiceConfig()
     Thread { runCatching { Api.fetchFlags() } }.apply { isDaemon = true; name = "flags-init" }.start()
@@ -607,6 +610,18 @@ private fun AppRoot() {
         withContext(Dispatchers.IO) { runCatching { Api.findRowsCached("landpage") } }
     }
 
+    // ---- 公告 + 强更（后台拉取，不阻塞首屏；失败静默） ----
+    var forceNotice by remember { mutableStateOf<Notice?>(null) }
+    var bannerNotice by remember { mutableStateOf<Notice?>(null) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { runCatching { NoticeCenter.load() } }
+        val (f, b) = NoticeCenter.pick(BuildInfo.CODE, "pc")
+        forceNotice = f
+        bannerNotice = b
+    }
+
+    // 公告层统一浮在内容之上；打赏浮层其次；强更弹窗最顶层
+    Box(Modifier.fillMaxSize()) {
     Row(Modifier.fillMaxSize().background(Palette.bg)) {
         // 侧栏只在「页面态」(route==null) 显示；进入 Route.Player 播放页后隐藏侧栏，
         // 播放页改成真正独立的整屏外壳（不再被套上「刷剧」侧栏/高亮）。
@@ -688,8 +703,23 @@ private fun AppRoot() {
             }
         }
     }
-    // 打赏浮层盖在最上层（侧栏/播放页都在它下面）
-    if (donateOpen) DonateOverlay(onClose = { donateOpen = false })
+        // 普通公告横幅：播放页(Route.Player) / 全屏时不显示
+        val bn = bannerNotice
+        if (bn != null && route !is Route.Player && !UiMode.fullscreen.value) {
+            NoticeBanner(bn, onDismiss = { NoticeCenter.dismissed.add(bn.id); bannerNotice = null })
+        }
+        // 打赏浮层（在公告横幅之下）
+        if (donateOpen) DonateOverlay(onClose = { donateOpen = false })
+        // 强制更新弹窗（最顶层；消费点击/滚轮 + 真拦键盘，不可关）
+        val fn = forceNotice
+        if (fn != null) {
+            ForceUpdateDialog(
+                notice = fn,
+                onOpenUrl = { runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(fn.url)) } },
+                onFallbackClose = { forceNotice = null },
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------- 首页

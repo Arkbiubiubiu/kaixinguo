@@ -83,12 +83,17 @@ class MainActivity : ComponentActivity() {
         // 日志定时回传（每 10 分钟发增量），电视上出问题我们也能主动看到
         runCatching { LogUploader.start(this) }
         App.state = Store
+        // 公告+强更：platform 供 NoticeCenter.pick 按平台过滤（TV/Pad 同一份源码，用包名区分）
+        App.platform = if (packageName.endsWith("nativeapp")) "tv" else "pad"
         App.playToken = BuildConfig.PLAY_TOKEN
         App.playBases = BuildConfig.DEFAULT_PLAY_BASES.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         App.historyBase = BuildConfig.HISTORY_BASE
         App.deviceIid = BuildConfig.DEVICE_IID
         App.deviceId = BuildConfig.DEVICE_ID
         App.deviceCdid = BuildConfig.DEVICE_CDID
+        // 公告+强更：后台拉 notice.json（多 base 回退，失败静默，不影响主流程）
+        Thread { runCatching { NoticeCenter.load() } }
+            .apply { isDaemon = true; name = "notice-load" }.start()
         FeedCache.init(this)
         // 本机取流：Go 绑定（随 APK 打包），没有配置服务器时用它。
         // 初始化要加载 .so + Core.touch()，TV 上实测明显拖慢冷启动 —— 放后台线程，
@@ -108,7 +113,8 @@ class MainActivity : ComponentActivity() {
                 showApp = true
             }
             if (showApp) {
-                TvRoot { App() }
+                // NoticeLayer 必须在 TvRoot 里层：复用 TV 焦点框/LocalIndication，遥控器才看得到焦点
+                TvRoot { Box(Modifier.fillMaxSize()) { App(); NoticeLayer() } }
             } else {
                 LaunchScreen()
             }
