@@ -422,6 +422,9 @@ def cmd_android(a):
     missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
     if missing:
         die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
+    if getattr(a, "no_sign_url", False):
+        props.pop("signUrl", None)
+        print("按要求剔除 signUrl：本次构建 BuildDefaults.SIGN_URL 为空（每机唯一本地签名版）")
     if not a.no_build:
         build_android(version, code, props)
     with timed("verify_dex"):
@@ -453,6 +456,9 @@ def cmd_pc(a):
     missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
     if missing:
         die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
+    if getattr(a, "no_sign_url", False):
+        props.pop("signUrl", None)
+        print("按要求剔除 signUrl：本次构建 BuildDefaults.SIGN_URL 为空（每机唯一本地签名版）")
     files, manifests = stage_pc(version, a.notes, props, no_build=a.no_build)
     print("产物目录:", os.path.join(ROOT, "dist", "pc", version))
     if not a.no_upload:
@@ -478,6 +484,8 @@ def main():
     ap.add_argument("--no-upload", action="store_true")
     ap.add_argument("--no-desktop-copy", dest="desktop_copy", action="store_false")
     ap.add_argument("--check", action="store_true", help="发版后跑 check_versions.py --no-installed 并计时（只读）")
+    ap.add_argument("--no-sign-url", dest="no_sign_url", action="store_true",
+                    help="构建时不传 -PsignUrl，使 BuildDefaults.SIGN_URL 为空（每机唯一本地签名版；PLAY_BASES/HISTORY_BASE/PLAY_TOKEN 仍保留）")
     ap.set_defaults(desktop_copy=True)
     a = ap.parse_args()
     global _WALL0
