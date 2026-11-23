@@ -777,4 +777,9 @@ flowchart LR
 | L7 | `X-GATE-VERSIONS` | 版本一致性门禁 | tools/check_versions.py：源码↔服务器清单↔本机安装；verify_artifacts 校验 abis≥3、manifest sha256 与本地 dist 一致。 |
 | L7 | `X-TREE` | 架构树生成/校验 | docs/build_tech_tree.py 由节点/边生成 tech-tree.html；tools/check_tree.py 校验 TECH_TREE.md 节点 id↔html tree-data↔引用文件存在；改完须重跑并 scp 到 /srv/hgtv-update/tech-tree.html。 |
 | L7 | `X-DOC-DISCIPLINE` | 文档与发版纪律 | 【维护铁律】每次改动软件（任何模块/参数/流程）必须同步更新本树对应节点(改 build_tech_tree.py 的 NODES/EDGES 摘要)，随后重跑 docs/build_tech_tree.py + tools/check_tree.py，并 scp tech-tree.html 到 /srv/hgtv-update/，保证树永远等于最新真相。另：AGENTS.md(发版纪律)、docs/TECH_TREE.md(权威清单·§9 版本基线·全量节点索引)、README、REMEDIATION_PLAN；改发版参数/版本须同步 §9。 |
+| L1 | `P-NOTICE` | PC 公告 / 强更 | PC 端公告横幅 + 强制更新弹窗：Main.kt 启动后台 NoticeCenter.load()→pick(BuildInfo.CODE, 平台 pc)，普通公告顶部横幅可关(✕)、强更全屏遮罩吞键盘/点击/滚轮不可关(url 非法给「知道了/打开官网」兜底)；侧栏显示未读公告数(PcStore.unreadNoticeCount)。NoticeUi.kt 提供 NoticeBanner/ForceUpdateDialog。 |
+| L1 | `A-NOTICE` | Android 公告 / 强更 | TV/Pad 端公告横幅 + 强制更新：MainActivity 后台 NoticeCenter.load()，TvRoot 里层挂 NoticeLayer()(须在 TvRoot 内层以复用焦点框/LocalIndication，遥控器才看得到焦点)；普通公告顶部横幅可关(✕)、播放/沉浸时隐藏；强更全屏弹窗不可关；platform 按包名(TV/Pad)过滤。 |
+| L2 | `D-NOTICE` | 公告 / 强更 | 三端公告/强更领域编排：加载 C-NOTICE 公告清单，按 平台+客户端版本号+生效时间窗 挑选强更与普通横幅；强更不可关且不把按键漏给下层播放器，横幅可关(仅进程内 dismissed 不持久化)；无公告/拉取失败静默降级、不影响主流程。 |
+| L3 | `C-NOTICE` | 公告中心 NoticeCenter(单源) | shared NoticeCenter：load() 多 base(playBases+historyBase) 依次 GET {base}/notice.json(带 X-Token、短超时、局域网更短)，解析 notices 按 id 去重；pick(curCode,platform) 按 mustUpdate/minCode/maxCode/startAt/endAt/platform 选强更与横幅，mustUpdate 一律不可关；拉取失败静默(lastError)，loaded 标志供 UI 等待。 |
+| L5 | `V-BACKLOG` | 看板·待解决问题面板 | 运行看板 admin.py 读 /var/lib/hgtv-sync/backlog.json，渲染「待解决问题」待办面板(未完成项清单，供内部跟踪)；只读，仅看板展示。 |
 <!-- NODEINDEX:END -->

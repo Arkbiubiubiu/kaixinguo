@@ -160,6 +160,12 @@ N = [
     dict(id="X-GATE-VERSIONS", layer="L7", name="版本一致性门禁", summary="tools/check_versions.py：源码↔服务器清单↔本机安装；verify_artifacts 校验 abis≥3、manifest sha256 与本地 dist 一致。", files=["tools/check_versions.py"]),
     dict(id="X-TREE", layer="L7", name="架构树生成/校验", summary="docs/build_tech_tree.py 由节点/边生成 tech-tree.html；tools/check_tree.py 校验 TECH_TREE.md 节点 id↔html tree-data↔引用文件存在；改完须重跑并 scp 到 /srv/hgtv-update/tech-tree.html。", files=["docs/build_tech_tree.py", "tools/check_tree.py"]),
     dict(id="X-DOC-DISCIPLINE", layer="L7", name="文档与发版纪律", summary="【维护铁律】每次改动软件（任何模块/参数/流程）必须同步更新本树对应节点(改 build_tech_tree.py 的 NODES/EDGES 摘要)，随后重跑 docs/build_tech_tree.py + tools/check_tree.py，并 scp tech-tree.html 到 /srv/hgtv-update/，保证树永远等于最新真相。另：AGENTS.md(发版纪律)、docs/TECH_TREE.md(权威清单·§9 版本基线·全量节点索引)、README、REMEDIATION_PLAN；改发版参数/版本须同步 §9。", files=["AGENTS.md", "docs/TECH_TREE.md"]),
+    # ===== 公告/强更 2026-11-23（维护铁律：新增功能同步树）=====
+    dict(id="P-NOTICE", layer="L1", name="PC 公告 / 强更", summary="PC 端公告横幅 + 强制更新弹窗：Main.kt 启动后台 NoticeCenter.load()→pick(BuildInfo.CODE, 平台 pc)，普通公告顶部横幅可关(✕)、强更全屏遮罩吞键盘/点击/滚轮不可关(url 非法给「知道了/打开官网」兜底)；侧栏显示未读公告数(PcStore.unreadNoticeCount)。NoticeUi.kt 提供 NoticeBanner/ForceUpdateDialog。", files=["NoticeUi.kt: NoticeBanner/ForceUpdateDialog", "Main.kt: NoticeCenter.load/pick + 未读徽标"]),
+    dict(id="A-NOTICE", layer="L1", name="Android 公告 / 强更", summary="TV/Pad 端公告横幅 + 强制更新：MainActivity 后台 NoticeCenter.load()，TvRoot 里层挂 NoticeLayer()(须在 TvRoot 内层以复用焦点框/LocalIndication，遥控器才看得到焦点)；普通公告顶部横幅可关(✕)、播放/沉浸时隐藏；强更全屏弹窗不可关；platform 按包名(TV/Pad)过滤。", files=["NoticeLayer.kt: NoticeLayer/NoticeGate", "MainActivity.kt: NoticeCenter.load + TvRoot 内挂 NoticeLayer"]),
+    dict(id="D-NOTICE", layer="L2", name="公告 / 强更", summary="三端公告/强更领域编排：加载 C-NOTICE 公告清单，按 平台+客户端版本号+生效时间窗 挑选强更与普通横幅；强更不可关且不把按键漏给下层播放器，横幅可关(仅进程内 dismissed 不持久化)；无公告/拉取失败静默降级、不影响主流程。", files=["NoticeCenter.pick (共享)", "notice.json 数据源"]),
+    dict(id="C-NOTICE", layer="L3", name="公告中心 NoticeCenter(单源)", summary="shared NoticeCenter：load() 多 base(playBases+historyBase) 依次 GET {base}/notice.json(带 X-Token、短超时、局域网更短)，解析 notices 按 id 去重；pick(curCode,platform) 按 mustUpdate/minCode/maxCode/startAt/endAt/platform 选强更与横幅，mustUpdate 一律不可关；拉取失败静默(lastError)，loaded 标志供 UI 等待。", files=["shared/src/main/kotlin/com/hongguotv/pad/Notice.kt"]),
+    dict(id="V-BACKLOG", layer="L5", name="看板·待解决问题面板", summary="运行看板 admin.py 读 /var/lib/hgtv-sync/backlog.json，渲染「待解决问题」待办面板(未完成项清单，供内部跟踪)；只读，仅看板展示。", files=["admin.py: /api/admin/backlog(待办面板)", "/var/lib/hgtv-sync/backlog.json"]),
 ]
 
 EDGES = [
@@ -300,6 +306,11 @@ EDGES = [
     ("I-SECRETS","V-DUAL","X-Token/私钥"), ("I-SECRETS","V-API","X-Token校验"), ("I-SECRETS","V-ADMIN","admin.token"), ("I-SECRETS","R-SIGN","签名设备私参"), ("I-SECRETS","X-BUILD","构建期-P"),
     ("I-TLS","V-DUAL","SNI证书"), ("I-ARCHIVE","V-STATIC","归档"),
     ("I-SYSTEMD","I-CF","守护cloudflared"), ("I-SYSTEMD","I-FRP","守护frpc"), ("I-SYSTEMD","I-MIRROR","守护mirror"), ("I-SYSTEMD","I-MONITOR","streamwatch/cf-watchdog"), ("I-SYSTEMD","I-CLEANUP","ark-cleanup定时"),
+    # ===== 公告/强更 2026-11-23 =====
+    ("P-SHELL","P-NOTICE","全局挂载横幅/强更"), ("P-NOTICE","D-NOTICE","公告/强更"),
+    ("A-SHELL","A-NOTICE","全局挂载 NoticeLayer"), ("A-NOTICE","D-NOTICE","公告/强更"),
+    ("D-NOTICE","C-NOTICE","load/pick"), ("C-NOTICE","V-STATIC","GET /notice.json(多base回退)"),
+    ("V-ADMIN","V-BACKLOG","待办面板"), ("V-BACKLOG","I-STATE","读 backlog.json"),
 ]
 
 PLAN = [
