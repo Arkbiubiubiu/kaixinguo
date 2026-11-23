@@ -23,6 +23,20 @@ internal object LocalSign {
 
     private val DEVICE by lazy { Profile.fromJson(PROFILE_JSON, UA_PUBLIC) }
 
+    /**
+     * 每机注册身份（登录平面 7.3.5.32 画像）。
+     * null = 旧行为：走内置固定 [DEVICE]。由 [MachineIdentity.install] 注入、[MachineIdentity.clear] 回退。
+     * **只作用于 [sign] 这一路**；[signPlay] / [PLAY_DEVICE] 永远不受影响。
+     */
+    @Volatile
+    private var machineDevice: Device? = null
+
+    internal fun installMachineDevice(device: Device?) {
+        machineDevice = device
+    }
+
+    internal fun machineActive(): Boolean = machineDevice != null
+
     /** 取流用的 UA（多码率接口按这个身份放行）。 */
     private const val UA_PLAY = "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C)"
 
@@ -64,7 +78,9 @@ internal object LocalSign {
             pairs.add(item.optString(0) to item.optString(1))
         }
         val bytes = body?.toByteArray(Charsets.UTF_8)
-        val signed = Signer.sign(origin, path, bytes, DEVICE, pairs)
+        // 已注入每机身份则用它（device_id 与注册一致）；否则回落固定 DEVICE（旧行为）
+        val device = machineDevice ?: DEVICE
+        val signed = Signer.sign(origin, path, bytes, device, pairs)
         val headers = JSONObject()
         signed.headers.forEach { (k, v) -> headers.put(k, v) }
         signed.url to headers

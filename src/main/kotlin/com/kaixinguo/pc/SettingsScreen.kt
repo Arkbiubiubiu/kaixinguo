@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -92,6 +92,7 @@ import com.hongguotv.pad.FeedPage
 import com.hongguotv.pad.FilterRow
 import com.hongguotv.pad.HistoryApi
 import com.hongguotv.pad.HistoryRepository
+import com.hongguotv.pad.MachineIdentity
 import com.hongguotv.pad.HistoryShadow
 import com.hongguotv.pad.Log
 import com.hongguotv.pad.RankTabsel
@@ -305,6 +306,80 @@ internal fun SettingsPage() {
                         "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
                         color = Palette.faint, fontSize = 12.sp,
                     )
+                }
+                Spacer(Modifier.height(12.dp))
+                // 登录身份（每机唯一设备身份；默认不启用，开关可切回公共身份）
+                SettingBlock("登录身份") {
+                    var enabled by remember { mutableStateOf(PcStore.loginUniqueEnabled) }
+                    var bump by remember { mutableStateOf(0) }
+                    var hint by remember { mutableStateOf<String?>(null) }
+                    val active = remember(enabled, bump) { MachineIdentity.active }
+                    val reg = remember(enabled, bump) { PcStore.loadRegisteredDevice() }
+                    Text(
+                        "来源：" + when {
+                            enabled && active -> "本机唯一（已注册，device_id ${reg?.deviceId?.take(8) ?: "?"}…）"
+                            enabled -> "本机唯一（未就绪，暂用公共身份，稍候会自动注册）"
+                            else -> "公共身份（默认）"
+                        },
+                        color = Palette.text, fontSize = 13.sp,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    SettingToggle("使用本机唯一登录身份（每机注册）", enabled) { on ->
+                        if (on && PcStore.signUrl.isNotBlank()) {
+                            // A：配了远程签名服务时签名用其固定设备，开启会用注册号 → 不一致 1003；不允许开。
+                            enabled = false
+                            PcStore.setLoginUniqueDevice(false)
+                            hint = "已配置远程签名服务：签名用其固定设备，开启会与注册号不一致导致 1003；请先在「服务配置」清空签名服务再开。"
+                        } else {
+                            hint = null
+                            enabled = on
+                            PcStore.setLoginUniqueDevice(on)
+                            if (!on) {
+                                MachineIdentity.clear()
+                                bump++
+                            } else {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            val stored = PcStore.loadRegisteredDevice()
+                                            val r = if (stored != null && stored.fullyValid) stored else {
+                                                MachineIdentity.register(
+                                                    seedCdid = stored?.cdid ?: "",
+                                                    seedOpenudid = stored?.openudid ?: "",
+                                                    seedClientUdid = stored?.clientUdid ?: "",
+                                                )?.also { PcStore.saveRegisteredDevice(it) }
+                                            }
+                                            if (!MachineIdentity.install(r)) MachineIdentity.clear()
+                                        }
+                                    }
+                                    bump++
+                                }
+                            }
+                        }
+                    }
+                    hint?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, color = Palette.accent, fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlineButton("重置本机登录身份") {
+                            PcStore.clearRegisteredDevice()
+                            MachineIdentity.clear()
+                            bump++
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        val r = MachineIdentity.register()?.also { PcStore.saveRegisteredDevice(it) }
+                                        if (!MachineIdentity.install(r)) MachineIdentity.clear()
+                                    }
+                                }
+                                bump++
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text("清掉本机身份并重新注册（会换新设备号）；token/ttreq 只存本机", color = Palette.faint, fontSize = 11.sp)
+                    }
                 }
                 Spacer(Modifier.height(24.dp))
             }

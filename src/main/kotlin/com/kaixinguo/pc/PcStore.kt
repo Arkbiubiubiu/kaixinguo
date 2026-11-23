@@ -3,6 +3,8 @@ package com.kaixinguo.pc
 import androidx.compose.runtime.mutableStateOf
 import com.hongguotv.pad.AccountState
 import com.hongguotv.pad.HistoryRepository
+import com.hongguotv.pad.MachineIdentity
+import com.hongguotv.pad.RegisteredDevice
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -144,56 +146,72 @@ object PcStore : AccountState {
         get() = str("device_cdid", "")
         set(v) = put("device_cdid", v.trim())
 
-    // ---------------- 登录用「本机唯一设备身份」（替代 PcLogin 里写死的安卓指纹） ----------------
+    // ---------------- 登录用「本机唯一设备身份」（每机注册；shared MachineIdentity 提供） ----------------
     //
-    // 首次使用自动生成并持久化到 prefs（login_device_id / login_iid / login_cdid），
-    // 格式贴近安卓指纹：device_id、iid 为 14 位数字，cdid 为 UUID；之后每台 PC 各用各的。
-    //
-    // ⚠️ 兼容/安全说明：passport 请求体里的 device_id/iid/cdid 必须和「签名设备」一致——
-    // 本地签名用 shared/LocalSign 的 PROFILE_JSON（其中 device_token 与固定 device_id 绑定），
-    // 远程签名服务用它自己的 device.json；两边不一致时上游会判伪造，发码回 1003「手机号错误」。
-    // 所以在签名侧支持「按本机身份」之前，这里默认回退到原公共档案的三项值（不改动线上行为）；
-    // 需要真正启用时把 prefs 里 login_unique_device 置 1（并同步签名侧）即可，无需重编。
+    // 开关 login_unique_device 默认 0 = 用公共身份（保持现有行为）；本机测时置 1：
+    //  启动时读已注册身份 → MachineIdentity.install（仅完全有效才启用、签名同源）；
+    //  未注册/无效则后台 MachineIdentity.register() → 私密持久化 → install；失败回退固定身份。
+    // 私密约束：device_token / ttreq 只落本地 prefs.properties，不进公开配置、不打日志。
     private const val FALLBACK_LOGIN_DEVICE_ID = "23562609503024"
     private const val FALLBACK_LOGIN_IID = "23562609507120"
     private const val FALLBACK_LOGIN_CDID = "a694f0f8-266a-421a-bef3-ee760b049478"
 
-    /** 是否把本机唯一身份用于登录请求（默认关闭=沿用公共档案，避免签名身份不一致导致 1003）。 */
-    private val uniqueLoginDevice: Boolean get() = str("login_unique_device", "0") == "1"
+    /** 是否启用「每机唯一登录身份」（默认 0=公共身份，不改全体行为；本机测试置 1）。 */
+    val loginUniqueEnabled: Boolean get() = str("login_unique_device", "0") == "1"
 
-    @Volatile
-    private var localLoginIdentity: Triple<String, String, String>? = null
+    fun setLoginUniqueDevice(on: Boolean) = put("login_unique_device", if (on) "1" else "0")
 
-    /** 取本机登录设备身份（首次访问会生成并持久化）；开关关闭时回退到公共档案值。 */
-    fun loginIdentity(): Triple<String, String, String> {
-        val own = ensureLocalLoginIdentity()
-        return if (uniqueLoginDevice) own
-        else Triple(FALLBACK_LOGIN_DEVICE_ID, FALLBACK_LOGIN_IID, FALLBACK_LOGIN_CDID)
+    /** 从本地 prefs 还原已注册的本机身份（token/ttreq 仅在本机文件）；未注册/不全返回 null。 */
+    fun loadRegisteredDevice(): RegisteredDevice? {
+        val did = str("login_device_id")
+        val iid = str("login_iid")
+        if (did.isBlank() || iid.isBlank()) return null
+        return RegisteredDevice(
+            deviceId = did,
+            installId = iid,
+            cdid = str("login_cdid"),
+            openudid = str("login_openudid"),
+            clientUdid = str("login_client_udid"),
+            deviceToken = str("login_device_token"),
+            ttreq = str("login_ttreq"),
+            storeRegion = str("login_store_region"),
+        )
     }
 
-    /** 生成本机唯一身份并持久化（已有则直接复用）；返回 (device_id, iid, cdid)。 */
-    @Synchronized
-    private fun ensureLocalLoginIdentity(): Triple<String, String, String> {
-        localLoginIdentity?.let { return it }
-        val rnd = java.security.SecureRandom()
-        fun digits14(): String = buildString(14) {
-            append(1 + rnd.nextInt(9))          // 首位 1-9，避免前导零
-            repeat(13) { append(rnd.nextInt(10)) }
+    /** 持久化注册身份。device_token/ttreq 属私密，只落本地 prefs，不进公开配置、不打日志。 */
+    fun saveRegisteredDevice(reg: RegisteredDevice) {
+        props.setProperty("login_device_id", reg.deviceId)
+        props.setProperty("login_iid", reg.installId)
+        props.setProperty("login_cdid", reg.cdid)
+        props.setProperty("login_openudid", reg.openudid)
+        props.setProperty("login_client_udid", reg.clientUdid)
+        props.setProperty("login_device_token", reg.deviceToken)
+        props.setProperty("login_ttreq", reg.ttreq)
+        props.setProperty("login_store_region", reg.storeRegion)
+        save()
+    }
+
+    fun clearRegisteredDevice() {
+        listOf(
+            "login_device_id", "login_iid", "login_cdid", "login_openudid",
+            "login_client_udid", "login_device_token", "login_ttreq", "login_store_region",
+        ).forEach { props.remove(it) }
+        save()
+    }
+
+    /**
+     * 登录请求用的 (device_id, iid, cdid)：
+     * - 只有 **MachineIdentity.active 且 signUrl 为空（走本地 LocalSign、签名与请求同源）** 才用注册身份三项；
+     * - 其余（含配置了远程签名服务 signUrl）一律回退固定三项 → 避免"请求用注册号、签名用远程固定号"不一致 1003。
+     */
+    fun loginIdentity(): Triple<String, String, String> {
+        if (MachineIdentity.active && signUrl.isBlank()) {
+            val reg = loadRegisteredDevice()
+            if (reg != null && reg.identityValid) {
+                return Triple(reg.deviceId, reg.installId, reg.cdid.ifBlank { FALLBACK_LOGIN_CDID })
+            }
         }
-        val uuidRe = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-        var did = str("login_device_id", "")
-        var iid = str("login_iid", "")
-        var cdid = str("login_cdid", "")
-        if (did.length != 14 || !did.all { it.isDigit() }) did = digits14()
-        if (iid.length != 14 || !iid.all { it.isDigit() }) iid = digits14()
-        if (!uuidRe.matches(cdid)) cdid = java.util.UUID.randomUUID().toString()
-        if (str("login_device_id") != did || str("login_iid") != iid || str("login_cdid") != cdid) {
-            props.setProperty("login_device_id", did)
-            props.setProperty("login_iid", iid)
-            props.setProperty("login_cdid", cdid)
-            save()
-        }
-        return Triple(did, iid, cdid).also { localLoginIdentity = it }
+        return Triple(FALLBACK_LOGIN_DEVICE_ID, FALLBACK_LOGIN_IID, FALLBACK_LOGIN_CDID)
     }
 
     /** 服务配置是否填齐（首次启动引导用） */

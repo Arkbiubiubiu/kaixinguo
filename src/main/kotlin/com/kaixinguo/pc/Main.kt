@@ -94,6 +94,7 @@ import com.hongguotv.pad.HistoryApi
 import com.hongguotv.pad.HistoryRepository
 import com.hongguotv.pad.HistoryShadow
 import com.hongguotv.pad.Log
+import com.hongguotv.pad.MachineIdentity
 import com.hongguotv.pad.Notice
 import com.hongguotv.pad.NoticeCenter
 import com.hongguotv.pad.RankTabsel
@@ -522,6 +523,26 @@ private fun boot() {
     App.deviceIid = PcStore.deviceIid
     App.deviceId = PcStore.deviceId
     App.deviceCdid = PcStore.deviceCdid
+    // 每机唯一登录身份（开关启用时）：只有 signUrl 为空（走本地 LocalSign，签名与请求同源）才注册/安装；
+    // 配了远程签名服务时自动置回开关（远程固定 device 与注册号不一致会 1003）。仅影响 LocalSign 那一路。
+    if (PcStore.loginUniqueEnabled && PcStore.signUrl.isNotBlank()) {
+        PcStore.setLoginUniqueDevice(false)
+    }
+    if (PcStore.loginUniqueEnabled && PcStore.signUrl.isBlank()) {
+        Thread {
+            runCatching {
+                val stored = PcStore.loadRegisteredDevice()
+                val reg = if (stored != null && stored.fullyValid) stored else {
+                    MachineIdentity.register(
+                        seedCdid = stored?.cdid ?: "",
+                        seedOpenudid = stored?.openudid ?: "",
+                        seedClientUdid = stored?.clientUdid ?: "",
+                    )?.also { PcStore.saveRegisteredDevice(it) }
+                }
+                if (!MachineIdentity.install(reg)) MachineIdentity.clear()
+            }
+        }.apply { isDaemon = true; name = "machine-identity" }.start()
+    }
     val root = File(System.getenv("APPDATA") ?: ".", "KaixinguoPC").apply { mkdirs() }
     println("数据目录 ${root.absolutePath}")
     Runtime.getRuntime().addShutdownHook(Thread { Resolver.stop() })

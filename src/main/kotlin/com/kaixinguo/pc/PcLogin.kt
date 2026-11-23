@@ -1,5 +1,6 @@
 package com.kaixinguo.pc
 
+import com.hongguotv.pad.MachineIdentity
 import com.hongguotv.pad.PassportClient
 import com.hongguotv.pad.Api
 import org.json.JSONArray
@@ -174,7 +175,13 @@ object PcLogin {
         val j = JSONObject(resp.body)
         val err = errorCodeOf(j)
         if (err == 1045) return false          // 还在等用户发短信
-        if (err != 0) throw IllegalStateException(errorText(j, "上行验证失败"))
+        if (err != 0) {
+            val rolled = rollbackIf1003(err)
+            throw IllegalStateException(
+                if (rolled) "登录设备身份失配（已自动回退到默认身份，请重试）"
+                else errorText(j, "上行验证失败"),
+            )
+        }
 
         val data = j.optJSONObject("data")
         val newToken = cookieValue(resp.cookies, "passport_mfa_token")
@@ -298,8 +305,16 @@ object PcLogin {
     // ---------------- 内部 ----------------
 
     private fun devicePairs(): List<Pair<String, String>> {
-        // 本机唯一设备身份（device_id / iid / cdid）从 PcStore 读取，不再写死常量。
-        // PcStore.loginIdentity() 首次会生成并持久化；默认回退公共档案值以免签名身份不一致。
+        // B：每机身份已启用且走本地签名时，form 设备字段直接用「注册画像」= 与签名 query 逐字段同源，
+        //    不再用手写 7.4.2.32 base（否则 form 与 7.3.5.32 签名画像十几个字段不符，上游按 token 画像校验会 1003）。
+        if (MachineIdentity.active && PcStore.signUrl.isBlank()) {
+            val reg = PcStore.loadRegisteredDevice()
+            val profile = if (reg != null) MachineIdentity.buildProfile(reg) else null
+            if (profile != null && profile.fields.isNotEmpty()) {
+                return listOf("_rticket" to System.currentTimeMillis().toString()) + profile.fields
+            }
+        }
+        // 非每机身份：保持原固定 base（device_id/iid/cdid 由 loginIdentity 注入）。
         val (deviceId, iid, cdid) = PcStore.loginIdentity()
         val base = DEVICE.toMutableMap().apply {
             put("device_id", deviceId)
@@ -379,10 +394,27 @@ object PcLogin {
     private fun checkError(json: JSONObject, prefix: String) {
         val code = errorCodeOf(json)
         if (code != 0) {
+            val rolled = rollbackIf1003(code)
             val message = json.optJSONObject("data")?.optString("description").orEmpty()
                 .ifBlank { json.optString("message") }
                 .ifBlank { json.optString("data") }
-            throw IllegalStateException(if (message.isBlank()) "$prefix（错误码 $code）" else message)
+            throw IllegalStateException(
+                if (rolled) "登录设备身份失配（已自动回退到默认身份，请再点一次获取验证码/登录重试）"
+                else if (message.isBlank()) "$prefix（错误码 $code）" else message,
+            )
         }
+    }
+
+    /**
+     * 1003（设备身份被风控/判伪造）且当前启用每机身份时自动回退：
+     * 关开关 + MachineIdentity.clear()（签名回固定）+ 清临时会话(csrf)；
+     * 已注册身份保留在本地，可随时再开。返回是否发生回退。
+     */
+    private fun rollbackIf1003(code: Int): Boolean {
+        if (code != 1003 || !PcStore.loginUniqueEnabled) return false
+        PcStore.setLoginUniqueDevice(false)
+        MachineIdentity.clear()
+        csrf = ""
+        return true
     }
 }
