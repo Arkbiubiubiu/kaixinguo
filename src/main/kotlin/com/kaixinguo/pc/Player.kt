@@ -675,6 +675,7 @@ fun PlayerScreen(
             count = n,
             maxHeight = PcStore.maxHeight,
             prepareHeadFor = index + 1,
+            prepareHeadFor2 = index + 2,   // 前 2 集都预热头部，连播更稳的秒切
         )
     }
 
@@ -699,10 +700,36 @@ fun PlayerScreen(
 
     // 位置轮询 + 弹幕续窗
     LaunchedEffect(engine) {
+        var wasPlaying = false
+        var hasPlayedOnce = false
         while (true) {
             val e = engine
             if (e != null) {
                 tick = e.positionMs
+                val nowPlaying = e.playing
+                // 暂停/停下 → 恢复播放：清掉可能过期的预取并重热后续 N 集（暂停几分钟回来仍能秒切）
+                if (nowPlaying && !wasPlaying) {
+                    if (hasPlayedOnce) {
+                        val startIdx = index
+                        val eps = episodes
+                        val n = PcStore.prefetchEpisodes
+                        if (n > 0 && eps.isNotEmpty() && startIdx < eps.size) {
+                            scope.launch {
+                                PlaybackPrefetch.dropExpired()
+                                PlaybackPrefetch.warm(
+                                    episodes = eps,
+                                    fromIndex = startIdx + 1,
+                                    count = n,
+                                    maxHeight = PcStore.maxHeight,
+                                    prepareHeadFor = startIdx + 1,
+                                    prepareHeadFor2 = startIdx + 2,
+                                )
+                            }
+                        }
+                    }
+                    hasPlayedOnce = true
+                }
+                wasPlaying = nowPlaying
                 val nowMs = System.currentTimeMillis()
                 if (e.playing && tick > 0) {
                     when (watchdog.onTick(tick, nowMs, active = e.playing, preparing = loading, switching = false)) {

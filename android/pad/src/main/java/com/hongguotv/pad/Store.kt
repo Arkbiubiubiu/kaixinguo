@@ -255,6 +255,13 @@ object Store : AccountState {
             .putString("feed_seen_ids", v.takeLast(300).joinToString(SEP))
             .apply()
 
+    // ---------------- 连播预取 ----------------
+
+    /** 连播时向后预取几集（默认 5；0/负=不预取）。对齐 PC「预取集数」口径。 */
+    var prefetchEps: Int
+        get() = p().getInt("prefetch_eps", 5)
+        set(v) = p().edit().putInt("prefetch_eps", v.coerceIn(0, 8)).apply()
+
     // ---------------- 集合类（收藏/点赞/追更/预约） ----------------
     // 实现已拆到 ShelfStore.kt；这里保留同名方法，调用方零改动。
 

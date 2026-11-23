@@ -198,12 +198,14 @@ fun FeedScreen(
         }
         loading = false // 立即开播，深翻放后台
 
-        // ---- ② 后台继续深翻补池（主分类 + 另两分类各补一部分），完成后 append 到尾部 ----
+        // ---- ② 后台继续深翻补池，完成后 append 到尾部 ----
         // 不打断当前播放：不清空、不重排、不动 cursor，只往 cards 尾部加"没出现过的、优先没见过"的剧。
+        // BUG①修复：只有「推荐(16)」才跨分类补；具体分类(36漫剧 / 39真人剧)只深翻本类，避免类型串台。
+        val extraTypes = if (type == "16") feedTypes.filter { it != type } else emptyList()
         if (first != null) {
             launch {
                 val built = withContext(Dispatchers.IO) {
-                    buildFeedPool(type, feedTypes.filter { it != type }, first)
+                    buildFeedPool(type, extraTypes, first)
                 }
                 val pool = built.first
                 val primaryLast = built.second

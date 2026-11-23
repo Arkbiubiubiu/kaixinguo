@@ -175,8 +175,9 @@ private suspend fun buildFeedPool(
         first.cards.forEach { if (it.seriesId.isNotBlank()) pool[it.seriesId] = it }
         curCursor = deepFill(currentType, pool, minTotal, maxPages, first)
     }
-    // 跨分类：其它两个分类各补一部分（去重合并）→ 整体更多样。
+    // 跨分类：只有 perOther>0（推荐 16）才跨分类各补一部分；具体分类不再串台。
     for (t in allTypes) {
+        if (perOther <= 0) break
         if (t == currentType) continue
         val p0 = runCatching { Api.firstPage(t, refresh = true) }.getOrNull() ?: continue
         p0.cards.forEach { if (it.seriesId.isNotBlank()) pool.putIfAbsent(it.seriesId, it) }
@@ -268,12 +269,13 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         PcStore.recordFeedSeen(firstShown.map { it.seriesId })
         loading = false
 
-        // 2) 后台补池：当前分类深翻 + 另两个分类各补一部分，合并去重；
-        //    完成后把「新出现、未见过」的追加到尾部——不打断当前播放、不重置 cursor、不整体重排。
+        // 2) 后台补池：当前分类深翻为主；只有「推荐(16)」才跨分类各补一部分，
+        //    具体分类(36 漫剧 / 39 真人剧)不跨类，避免串台。
         launch {
             kotlinx.coroutines.delay(500) // 先让首帧起来，别抢带宽
+            val perOther = if (type == "16") FEED_PER_OTHER else 0
             val (fullPool, deepCursor) =
-                buildFeedPool(type, feedTypes, first, FEED_POOL_MIN, FEED_MAX_PAGES, FEED_PER_OTHER)
+                buildFeedPool(type, feedTypes, first, FEED_POOL_MIN, FEED_MAX_PAGES, perOther)
             val existingNow = cards.map { it.seriesId }.toHashSet()
             val appended = fullPool.filter { it.seriesId !in existingNow && it.seriesId !in seen }.shuffled()
             if (appended.isNotEmpty()) {

@@ -48,8 +48,9 @@ object PlaybackPrefetch {
         }
     }
 
-    /** 直链有效期保守取 5 分钟：短剧一集也就 2~5 分钟，够用到下一集了。 */
-    private const val MAX_AGE_MS = 5 * 60_000L
+    /** 直链有效期保守取 8 分钟：短剧一集 2~5 分钟，连看多集 / 暂停几分钟回来也够用。
+     *  （依赖上游直链有效期；take() 取用时仍会再判一次时效，过期则丢弃重取，绝不播过期地址。） */
+    private const val MAX_AGE_MS = 8 * 60_000L
 
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>()
@@ -62,6 +63,23 @@ object PlaybackPrefetch {
             return null
         }
         return e
+    }
+
+    /** 丢掉已过期（超过 MAX_AGE_MS）的条目：暂停/空闲几分钟后恢复时先清理再重热，避免留下过期地址。 */
+    fun dropExpired() {
+        val now = System.currentTimeMillis()
+        val dropped = ArrayList<Entry>()
+        synchronized(lock) {
+            val it = entries.entries.iterator()
+            while (it.hasNext()) {
+                val e = it.next().value
+                if (now - e.at > MAX_AGE_MS) {
+                    it.remove()
+                    dropped += e
+                }
+            }
+        }
+        dropped.forEach { it.release() }
     }
 
     /** 只保留 [keep] 里的集，其余释放。 */
@@ -93,7 +111,8 @@ object PlaybackPrefetch {
     /**
      * 从第 [fromIndex] 集（1-based，含）开始预取 [count] 集。
      *
-     * @param prepareHeadFor 哪一集需要连头部一起预热（通常就是下一集）；传 -1 表示都不预热
+     * @param prepareHeadFor  哪一集需要连头部一起预热（通常就是下一集）；传 -1 表示都不预热
+     * @param prepareHeadFor2 第二集也要预热头部就传它（传 -1 表示无）；让前 2 集都做到「直链+头部」秒切
      */
     suspend fun warm(
         episodes: List<Episode>,
@@ -101,6 +120,7 @@ object PlaybackPrefetch {
         count: Int,
         maxHeight: Int,
         prepareHeadFor: Int = fromIndex,
+        prepareHeadFor2: Int = -1,
     ) {
         if (count <= 0 || episodes.isEmpty()) return
         val end = minOf(episodes.size, fromIndex + count - 1)
@@ -110,7 +130,7 @@ object PlaybackPrefetch {
 
         for (i in fromIndex..end) {
             val ep = episodes.getOrNull(i - 1) ?: break
-            val head = i == prepareHeadFor
+            val head = i == prepareHeadFor || i == prepareHeadFor2
             // 已经在池里的条目：如果轮到它是「下一集」了，但当初只拉了直链，
             // 这里要补做头部/转换（以前直接 continue，导致 35 集这种 VVC
             // 到切集那一刻才现场转换，看起来就是「跳一下、卡一下」）。

@@ -62,7 +62,7 @@ object PcStore : AccountState {
      */
     private val autoNextState = mutableStateOf(str("auto_next", "1") == "1")
     private val pauseMinState = mutableStateOf(str("pause_min", "1") == "1")
-    private val prefetchState = mutableStateOf(str("prefetch_eps", "0").toIntOrNull()?.coerceIn(0, 10) ?: 0)
+    private val prefetchState = mutableStateOf(str("prefetch_eps", "5").toIntOrNull()?.coerceIn(0, 10) ?: 5)
     private val maxHeightState = mutableStateOf(str("max_height", "1080").toIntOrNull() ?: 1080)
 
     internal fun save() {

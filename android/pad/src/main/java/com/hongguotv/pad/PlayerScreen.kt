@@ -73,12 +73,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 提前准备几集（当前集之外）。
- *
- * 1 = 只备下一集（老行为）；2 = 正在看第 N 集时，N+1、N+2 都备好，连看三集都不用等。
- * 别往大调：每一集都要在后台拉约 1MB 片头并占一条连接，条数一多就会跟当前这集抢带宽。
+ * 提前准备几集的**上限**；实际预取几集取 Store.prefetchEps（默认 5，可配置）。
+ * 每集要多拉约 1MB 片头并占一条连接，别超过这个上限。
  */
-private const val PREFETCH_AHEAD = 3
+private const val PREFETCH_AHEAD_MAX = 8
 
 /**
  * 无缝换集开关。
@@ -190,6 +188,10 @@ fun PlayerScreen(
     var prefetchSlot by remember { mutableStateOf<CompletableDeferred<ReadyEpisode?>?>(null) }
     /** 正在预取哪一集（-1 = 没在预取）；切成别的集时靠它让预取自己收手 */
     var prefetchWant by remember { mutableStateOf(-1) }
+    /** 暂停→恢复时自增，触发重新预取后续集（暂停回来仍能秒切） */
+    var prefetchTick by remember { mutableStateOf(0) }
+    /** 上一拍的 playing，用来识别「真正从暂停恢复」而不是缓冲抖动 */
+    var lastPlaying by remember { mutableStateOf(false) }
 
     // 播放器监听器用（避免闭包捕获旧值）
     //
@@ -834,19 +836,27 @@ fun PlayerScreen(
      * 全做完放在 [prefetchReady] 里，切集时直接 setMediaItem。
      * 不往前多备——每集都要多下 1MB 头部，顺带抢带宽，而用户绝大多数是顺序看。
      */
-    LaunchedEffect(index, ps.preparedIndex, ps.preparedVid, episodes.size, defWant, seamlessHandled, decodeGen) {
+    // 暂停→恢复：重新预取后续集（暂停期间队列可能被消费/过期，恢复要补齐才顺）
+    LaunchedEffect(playing) {
+        if (playing && !lastPlaying) prefetchTick += 1
+        lastPlaying = playing
+    }
+
+    LaunchedEffect(index, ps.preparedIndex, ps.preparedVid, episodes.size, defWant, seamlessHandled, decodeGen, prefetchTick) {
         if (ps.preparedIndex != index || ps.preparedVid.isEmpty()) return@LaunchedEffect
         Log.i("nextup", "scan index=$index prepared=${ps.preparedIndex}")
         // 起播后稍等一拍再动手，别跟首帧抢带宽；但也不能等太久——有的短剧一集只有 47 秒
         delay(1_500)
-        // 提前准备后面 PREFETCH_AHEAD 集（= 2）：连看三集都不用等转圈。
-        // 每一集都是一份独立的 RemoteVideo + 本地代理，所以不能开太多——
-        // 每份要在后台拉约 1MB 片头，开 5 集以上就会跟当前这集抢带宽，反而更卡。
-        for (ahead in 1..PREFETCH_AHEAD) {
+        // 提前准备后面 N 集（N = Store.prefetchEps，默认 5，上限 PREFETCH_AHEAD_MAX）。
+        // 无缝模式下每集挂进播放器队列，连看几集都秒切；非无缝模式只有 prefetchReady/2 两格。
+        val aheadN = Store.prefetchEps.coerceIn(1, PREFETCH_AHEAD_MAX)
+        for (ahead in 1..aheadN) {
             val want = index + ahead
             if (want > episodes.size) break
             val next = episodes.getOrNull(want - 1) ?: break
             if (next.vid.isEmpty()) break
+            // 无缝模式：队列里已经有这一集就跳过，别在「恢复重预取」时重复下载整集头部
+            if (SEAMLESS_PLAYLIST && Store.autoNext && queued.values.any { it.index == want }) continue
             val slotIndex = ahead == 1
             // 两个格子都要先看：切到 N+1 之后，原来躺在「第二格」里的 N+2
             // 就是新的「第一格」，挪过去就行，不用重新下载
@@ -861,11 +871,14 @@ fun PlayerScreen(
                 }
                 continue
             }
-            // 两格里装的都是过期的：先关掉，别让它们继续占连接
-            prefetchReady?.let { dropReady(it) }
-            prefetchReady = null
-            prefetchReady2?.let { dropReady(it) }
-            prefetchReady2 = null
+            // 放宽过期：不再「两格一起清」，只替换当前要写的那一格；另一格即便编号不同也可能仍有效，留着
+            if (slotIndex) {
+                prefetchReady?.let { dropReady(it) }
+                prefetchReady = null
+            } else {
+                prefetchReady2?.let { dropReady(it) }
+                prefetchReady2 = null
+            }
 
             prefetchWant = want
             val slot = if (slotIndex) CompletableDeferred<ReadyEpisode?>() else null
