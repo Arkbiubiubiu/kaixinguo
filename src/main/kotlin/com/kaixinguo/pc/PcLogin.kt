@@ -135,6 +135,7 @@ object PcLogin {
         val jwt = submit(mobile, code, null)
         val (name, uid) = parseUser(jwt.body)
         saveAccount(jwt.cookies, name, uid)
+        refreshRealName(uid)
         return PcStore.accountName
     }
 
@@ -193,6 +194,7 @@ object PcLogin {
         val jwt = submit(ctx.mobile, ctx.code, ctx)
         val (name, uid) = parseUser(jwt.body)
         saveAccount(jwt.cookies, name, uid)
+        refreshRealName(uid)
         return true
     }
 
@@ -272,6 +274,14 @@ object PcLogin {
         PcStore.accountSource = "local"
         PcStore.accountSyncedAt = System.currentTimeMillis()
         csrf = ""
+    }
+
+    /** 登录后用账号资料接口取红果真昵称刷新（登录响应里的 user_name 常是"用户+数字"兜底）。 */
+    private fun refreshRealName(uid: String) {
+        runCatching {
+            val nick = com.hongguotv.pad.Api.selfNickname(uid)
+            if (nick.isNotBlank()) PcStore.accountName = nick
+        }
     }
 
     private fun parseUser(body: String): Pair<String, String> {

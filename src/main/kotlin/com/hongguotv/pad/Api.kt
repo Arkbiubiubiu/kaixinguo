@@ -3286,6 +3286,19 @@ object Api {
         )
     }
 
+    /** 取本账号在红果的真实昵称（user/profile/get → ugc_user.base_info.nickname；无则 user_name）。 */
+    fun selfNickname(uid: String): String {
+        if (uid.isBlank()) return ""
+        val query = JSONArray().put(JSONArray().put("user_id").put(uid))
+        val text = signedGet("/reading/user/profile/get/v:version/", query) ?: return ""
+        val base = runCatching {
+            JSONObject(text).optJSONObject("data")?.optJSONObject("ugc_user")?.optJSONObject("base_info")
+        }.getOrNull() ?: return ""
+        val nick = base.optString("nickname"); val uname = base.optString("user_name")
+        Log.d("SelfNick", "uid=$uid nickname=[$nick] user_name=[$uname] keys=${base.keys().asSequence().toList()}")
+        return nick.ifBlank { uname }.trim()
+    }
+
     /** 演职员/出品方作品列表的一页。 */
     data class CreatorWorksPage(
         val cards: List<SeriesCard> = emptyList(),

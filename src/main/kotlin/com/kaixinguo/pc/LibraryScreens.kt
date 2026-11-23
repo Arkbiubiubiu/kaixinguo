@@ -797,7 +797,8 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                 status = null
                 // 用服务器该账号的规范昵称刷新本机用户名（修正升级前遗留的旧名字"用户XXX"）
                 val nm = withContext(Dispatchers.IO) {
-                    runCatching { Api.pairNameOfCode(code) }.getOrDefault("")
+                    runCatching { Api.selfNickname(PcStore.accountUid) }.getOrDefault("")
+                        .ifBlank { runCatching { Api.pairNameOfCode(code) }.getOrDefault("") }
                 }
                 if (nm.isNotBlank()) {
                     PcStore.accountName = nm

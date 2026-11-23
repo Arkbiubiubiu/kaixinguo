@@ -206,6 +206,7 @@ fun LoginScreen(onBack: () -> Unit) {
                                         mfa = null
                                         messageIsError = false
                                         message = "登录成功：${PcStore.accountName}"
+                                        scope.launch { kotlinx.coroutines.delay(800); onBack() }
                                     } else {
                                         mfaNote = fail ?: "验证超时（2 分钟），可以重新登录再试"
                                         messageIsError = true
