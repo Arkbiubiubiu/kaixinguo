@@ -456,7 +456,7 @@ private fun AppShell(onExit: () -> Unit) {
                     Text("开箱即用", color = Palette.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "内容服务和播放服务都已内置，装好就能浏览和播放，不需要填任何服务器地址。想换成自己的服务，可以在「设置 → 服务配置」里改。",
+                        "内容服务和播放服务都已内置，装好就能浏览和播放，不需要填任何服务器地址。",
                         color = Palette.dim, fontSize = 13.sp, lineHeight = 20.sp,
                     )
                     Spacer(Modifier.height(18.dp))

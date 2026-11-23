@@ -62,7 +62,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,22 +91,17 @@ import com.hongguotv.pad.FeedPage
 import com.hongguotv.pad.FilterRow
 import com.hongguotv.pad.HistoryApi
 import com.hongguotv.pad.HistoryRepository
-import com.hongguotv.pad.MachineIdentity
 import com.hongguotv.pad.HistoryShadow
 import com.hongguotv.pad.Log
 import com.hongguotv.pad.RankTabsel
 import com.hongguotv.pad.SeriesCard
 import com.hongguotv.pad.SeriesDetail
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
 internal fun SettingsPage() {
-    val scope = rememberCoroutineScope()
     Box(Modifier.fillMaxSize().verticalScroll(PageMemo.settingsScroll)) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
@@ -241,145 +235,6 @@ internal fun SettingsPage() {
                     }
                     Spacer(Modifier.height(8.dp))
                     Text("清理后封面会在浏览时自动重新下载。", color = Palette.faint, fontSize = 12.sp)
-                }
-                Spacer(Modifier.height(12.dp))
-                // 服务配置（内容接口内置签名；播放才需要自备取流服务）
-                SettingBlock("服务配置", icon = Icons.Filled.Settings) {
-                    var sign by remember { mutableStateOf(PcStore.signUrl) }
-                    var bases by remember { mutableStateOf(PcStore.playBases) }
-                    var token by remember { mutableStateOf(PcStore.playToken) }
-                    var hist by remember { mutableStateOf(PcStore.historyBase) }
-                    if (!PcStore.configured) {
-                        Text(
-                            "已内置本机取流服务，装好就能看。想换成自己的取流服务，在下面填地址即可。",
-                            color = Palette.accent, fontSize = 12.sp,
-                        )
-                        Spacer(Modifier.height(10.dp))
-                    }
-                    ServiceField("取流服务", bases, "留空 = 用内置本机取流（推荐）") { bases = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField(
-                        "签名服务",
-                        sign,
-                        "留空 = 内置签名（推荐）；填地址 = 走你自己的代签服务",
-                    ) { sign = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("取流令牌", token, "取流服务的 X-Token，可留空") { token = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("历史基址", hist, "可留空，默认与取流服务同源") { hist = it }
-                    Spacer(Modifier.height(8.dp))
-                    var upBase by remember { mutableStateOf(PcStore.updateBase) }
-                    ServiceField(
-                        "更新源",
-                        upBase,
-                        "留空 = 自建服务器（推荐）；也可填自己的更新目录（含 version-pc.json）",
-                    ) { upBase = it }
-                    Spacer(Modifier.height(8.dp))
-                    var did by remember { mutableStateOf(PcStore.deviceId) }
-                    var iid by remember { mutableStateOf(PcStore.deviceIid) }
-                    var cdid by remember { mutableStateOf(PcStore.deviceCdid) }
-                    ServiceField("设备 device_id", did, "可留空（留空用内置设备）") { did = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("设备 iid", iid, "可留空（留空用内置设备）") { iid = it }
-                    Spacer(Modifier.height(8.dp))
-                    ServiceField("设备 cdid", cdid, "可留空（留空用内置设备）") { cdid = it }
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlineButton("保存") {
-                            PcStore.signUrl = sign
-                            PcStore.playBases = bases
-                            PcStore.playToken = token
-                            PcStore.historyBase = hist
-                            PcStore.updateBase = upBase
-                            PcStore.deviceId = did
-                            PcStore.deviceIid = iid
-                            PcStore.deviceCdid = cdid
-                            applyServiceConfig()
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Text("保存后立即生效（无需重启）", color = Palette.faint, fontSize = 11.sp)
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text("数据目录：%APPDATA%\\KaixinguoPC", color = Palette.faint, fontSize = 12.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "签名：" + (PcStore.signUrl.ifBlank { "内置（本地签名）" }),
-                        color = Palette.faint, fontSize = 12.sp,
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                // 登录身份（每机唯一设备身份；默认不启用，开关可切回公共身份）
-                SettingBlock("登录身份") {
-                    var enabled by remember { mutableStateOf(PcStore.loginUniqueEnabled) }
-                    var bump by remember { mutableStateOf(0) }
-                    var hint by remember { mutableStateOf<String?>(null) }
-                    val active = remember(enabled, bump) { MachineIdentity.active }
-                    val reg = remember(enabled, bump) { PcStore.loadRegisteredDevice() }
-                    Text(
-                        "来源：" + when {
-                            enabled && active -> "本机唯一（已注册，device_id ${reg?.deviceId?.take(8) ?: "?"}…）"
-                            enabled -> "本机唯一（未就绪，暂用公共身份，稍候会自动注册）"
-                            else -> "公共身份（默认）"
-                        },
-                        color = Palette.text, fontSize = 13.sp,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    SettingToggle("使用本机唯一登录身份（每机注册）", enabled) { on ->
-                        if (on && PcStore.signUrl.isNotBlank()) {
-                            // A：配了远程签名服务时签名用其固定设备，开启会用注册号 → 不一致 1003；不允许开。
-                            enabled = false
-                            PcStore.setLoginUniqueDevice(false)
-                            hint = "已配置远程签名服务：签名用其固定设备，开启会与注册号不一致导致 1003；请先在「服务配置」清空签名服务再开。"
-                        } else {
-                            hint = null
-                            enabled = on
-                            PcStore.setLoginUniqueDevice(on)
-                            if (!on) {
-                                MachineIdentity.clear()
-                                bump++
-                            } else {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        runCatching {
-                                            val stored = PcStore.loadRegisteredDevice()
-                                            val r = if (stored != null && stored.fullyValid) stored else {
-                                                MachineIdentity.register(
-                                                    seedCdid = stored?.cdid ?: "",
-                                                    seedOpenudid = stored?.openudid ?: "",
-                                                    seedClientUdid = stored?.clientUdid ?: "",
-                                                )?.also { PcStore.saveRegisteredDevice(it) }
-                                            }
-                                            if (!MachineIdentity.install(r)) MachineIdentity.clear()
-                                        }
-                                    }
-                                    bump++
-                                }
-                            }
-                        }
-                    }
-                    hint?.let {
-                        Spacer(Modifier.height(6.dp))
-                        Text(it, color = Palette.accent, fontSize = 11.sp)
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlineButton("重置本机登录身份") {
-                            PcStore.clearRegisteredDevice()
-                            MachineIdentity.clear()
-                            bump++
-                            scope.launch {
-                                withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        val r = MachineIdentity.register()?.also { PcStore.saveRegisteredDevice(it) }
-                                        if (!MachineIdentity.install(r)) MachineIdentity.clear()
-                                    }
-                                }
-                                bump++
-                            }
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Text("清掉本机身份并重新注册（会换新设备号）；token/ttreq 只存本机", color = Palette.faint, fontSize = 11.sp)
-                    }
                 }
                 Spacer(Modifier.height(24.dp))
             }

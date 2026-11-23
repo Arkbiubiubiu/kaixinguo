@@ -156,8 +156,8 @@ object PcStore : AccountState {
     private const val FALLBACK_LOGIN_IID = "23562609507120"
     private const val FALLBACK_LOGIN_CDID = "a694f0f8-266a-421a-bef3-ee760b049478"
 
-    /** 是否启用「每机唯一登录身份」（默认 0=公共身份，不改全体行为；本机测试置 1）。 */
-    val loginUniqueEnabled: Boolean get() = str("login_unique_device", "0") == "1"
+    /** 是否启用「每机唯一登录身份」（默认 1=自动开启；signUrl 非空/1003 回退时会被置 0）。 */
+    val loginUniqueEnabled: Boolean get() = str("login_unique_device", "1") == "1"
 
     fun setLoginUniqueDevice(on: Boolean) = put("login_unique_device", if (on) "1" else "0")
 
