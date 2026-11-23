@@ -156,10 +156,15 @@ object PcStore : AccountState {
     private const val FALLBACK_LOGIN_IID = "23562609507120"
     private const val FALLBACK_LOGIN_CDID = "a694f0f8-266a-421a-bef3-ee760b049478"
 
-    /** 是否启用「每机唯一登录身份」（默认 1=自动开启；signUrl 非空/1003 回退时会被置 0）。 */
+    /** 是否启用「每机唯一登录身份」（保留字段但已不再用于门控；实际由 loginFallbackActive 决定）。 */
     val loginUniqueEnabled: Boolean get() = str("login_unique_device", "1") == "1"
 
     fun setLoginUniqueDevice(on: Boolean) = put("login_unique_device", if (on) "1" else "0")
+
+    /** 上次登录被平台 1003 拒绝过：记住后下次启动不再强推每机身份，直接用固定身份保证能登。 */
+    val loginFallbackActive: Boolean get() = str("login_unique_fallback", "0") == "1"
+
+    fun setLoginFallback(on: Boolean) = put("login_unique_fallback", if (on) "1" else "0")
 
     /** 从本地 prefs 还原已注册的本机身份（token/ttreq 仅在本机文件）；未注册/不全返回 null。 */
     fun loadRegisteredDevice(): RegisteredDevice? {
@@ -205,7 +210,7 @@ object PcStore : AccountState {
      * - 其余（含配置了远程签名服务 signUrl）一律回退固定三项 → 避免"请求用注册号、签名用远程固定号"不一致 1003。
      */
     fun loginIdentity(): Triple<String, String, String> {
-        if (MachineIdentity.active && signUrl.isBlank()) {
+        if (MachineIdentity.active && signUrl.isBlank() && !loginFallbackActive) {
             val reg = loadRegisteredDevice()
             if (reg != null && reg.identityValid) {
                 return Triple(reg.deviceId, reg.installId, reg.cdid.ifBlank { FALLBACK_LOGIN_CDID })

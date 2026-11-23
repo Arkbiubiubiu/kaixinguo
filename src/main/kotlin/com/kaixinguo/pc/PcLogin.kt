@@ -406,13 +406,12 @@ object PcLogin {
     }
 
     /**
-     * 1003（设备身份被风控/判伪造）且当前启用每机身份时自动回退：
-     * 关开关 + MachineIdentity.clear()（签名回固定）+ 清临时会话(csrf)；
-     * 已注册身份保留在本地，可随时再开。返回是否发生回退。
+     * 1003（设备身份被风控/判伪造）：自动回退固定身份并**记住**（login_unique_fallback=1），
+     * 下次启动不再强推每机身份，直接固定身份保证能登；清临时会话(csrf)。返回是否发生回退。
      */
     private fun rollbackIf1003(code: Int): Boolean {
-        if (code != 1003 || !PcStore.loginUniqueEnabled) return false
-        PcStore.setLoginUniqueDevice(false)
+        if (code != 1003) return false
+        PcStore.setLoginFallback(true)
         MachineIdentity.clear()
         csrf = ""
         return true

@@ -523,12 +523,9 @@ private fun boot() {
     App.deviceIid = PcStore.deviceIid
     App.deviceId = PcStore.deviceId
     App.deviceCdid = PcStore.deviceCdid
-    // 每机唯一登录身份（开关启用时）：只有 signUrl 为空（走本地 LocalSign，签名与请求同源）才注册/安装；
-    // 配了远程签名服务时自动置回开关（远程固定 device 与注册号不一致会 1003）。仅影响 LocalSign 那一路。
-    if (PcStore.loginUniqueEnabled && PcStore.signUrl.isNotBlank()) {
-        PcStore.setLoginUniqueDevice(false)
-    }
-    if (PcStore.loginUniqueEnabled && PcStore.signUrl.isBlank()) {
+    // 每机唯一登录身份：不依赖旧的 login_unique_device 开关（旧值可能残留=0 把默认盖住）。
+    // 仅本地签名(signUrl 空) 且 未处于「上次 1003 回退记忆」时，后台自动注册/安装；失败静默回退固定。
+    if (PcStore.signUrl.isBlank() && !PcStore.loginFallbackActive) {
         Thread {
             runCatching {
                 val stored = PcStore.loadRegisteredDevice()
