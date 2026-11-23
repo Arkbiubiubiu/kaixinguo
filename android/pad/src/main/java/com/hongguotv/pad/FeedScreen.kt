@@ -24,6 +24,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -136,7 +145,19 @@ fun FeedScreen(
     var moreLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(tab, reload) {
+    // TV：进刷剧先弹「分类选择」（方向键已被换剧/进详情占用，没有别的切换入口）。
+    // 从详情/播放返回同一次会话不弹（保留现场）。
+    var tvShowPicker by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            val returning = UiMemo.feedReturnKeep && UiMemo.feedCards.isNotEmpty()
+            if (!returning) tvShowPicker = true
+        }
+    }
+
+    LaunchedEffect(tab, reload, tvShowPicker) {
+        // TV 还没选分类前不加载，等用户选完再拉，避免先播默认漫剧再跳。
+        if (isTv && tvShowPicker) return@LaunchedEffect
         // 从详情/播放返回同一次刷剧会话：保留当前剧与位置（只此一种例外）。
         val returning = UiMemo.feedReturnKeep &&
             cards.isNotEmpty() && tab == UiMemo.feedTab
@@ -355,5 +376,53 @@ fun FeedScreen(
                 }
             }
         }
+
+        // TV：进刷剧先弹分类选择（遥控器 ←→ 选、确定进、返回退出）
+        if (isTv && tvShowPicker) {
+            Box(
+                Modifier.fillMaxSize().background(Color(0xF0121216)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    Text("刷剧 · 选择分类", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        FeedPickButton("漫剧", true) { tvShowPicker = false; UiMemo.feedReturnKeep = false; tab = 0 }
+                        FeedPickButton("真人剧", false) { tvShowPicker = false; UiMemo.feedReturnKeep = false; tab = 1 }
+                        FeedPickButton("推荐", false) { tvShowPicker = false; UiMemo.feedReturnKeep = false; tab = 2 }
+                    }
+                    Text("遥控器：← → 选择 · 确定 进入 · 返回 退出", color = Color.White.copy(alpha = 0.55f), fontSize = 14.sp)
+                }
+            }
+        }
     }
+}
+
+/** TV 刷剧分类选择按钮：遥控器 ←→ 移焦点、确定触发；也留 clickable 兼容触屏/鼠标。 */
+@Composable
+private fun FeedPickButton(label: String, initialFocus: Boolean, onSelect: () -> Unit) {
+    val fr = remember { FocusRequester() }
+    var focused by remember { mutableStateOf(false) }
+    Text(
+        label,
+        color = if (focused) Color.White else Color.White.copy(alpha = 0.82f),
+        fontSize = 18.sp,
+        fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
+        modifier = Modifier
+            .focusRequester(fr)
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { e ->
+                if (e.type == KeyEventType.KeyUp &&
+                    (e.key == Key.Enter || e.key == Key.DirectionCenter || e.key == Key.NumPadEnter)
+                ) { onSelect(); true } else false
+            }
+            .focusable()
+            .clip(RoundedCornerShape(50))
+            .background(if (focused) Color(0xFFFF4A3D) else Color(0x33FFFFFF))
+            .clickable { onSelect() }
+            .padding(horizontal = 36.dp, vertical = 16.dp),
+    )
+    LaunchedEffect(Unit) { if (initialFocus) runCatching { fr.requestFocus() } }
 }
