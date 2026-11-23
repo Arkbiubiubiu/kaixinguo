@@ -3286,17 +3286,29 @@ object Api {
         )
     }
 
-    /** 取本账号在红果的真实昵称（user/profile/get → ugc_user.base_info.nickname；无则 user_name）。 */
+    /** 取本账号在红果的真实昵称（user/profile/get；兼容多种嵌套结构，优先 nickname 再 user_name）。 */
     fun selfNickname(uid: String): String {
         if (uid.isBlank()) return ""
         val query = JSONArray().put(JSONArray().put("user_id").put(uid))
         val text = signedGet("/reading/user/profile/get/v:version/", query) ?: return ""
-        val base = runCatching {
-            JSONObject(text).optJSONObject("data")?.optJSONObject("ugc_user")?.optJSONObject("base_info")
-        }.getOrNull() ?: return ""
-        val nick = base.optString("nickname"); val uname = base.optString("user_name")
-        Log.d("SelfNick", "uid=$uid nickname=[$nick] user_name=[$uname] keys=${base.keys().asSequence().toList()}")
-        return nick.ifBlank { uname }.trim()
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return ""
+        val data = root.optJSONObject("data") ?: root
+        Log.d("SelfNick", "uid=$uid raw=${text.take(600)}")
+        val cands = listOfNotNull(
+            data.optJSONObject("ugc_user")?.optJSONObject("base_info"),
+            data.optJSONObject("user_info")?.optJSONObject("base_info"),
+            data.optJSONObject("base_info"),
+            data.optJSONObject("ugc_user"),
+            data.optJSONObject("user_info"),
+            data,
+            root,
+        )
+        for (c in cands) {
+            val n = c.optString("nickname").trim()
+            val u = c.optString("user_name").trim()
+            if (n.isNotBlank() || u.isNotBlank()) return n.ifBlank { u }
+        }
+        return ""
     }
 
     /** 演职员/出品方作品列表的一页。 */
