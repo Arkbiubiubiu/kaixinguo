@@ -3290,10 +3290,13 @@ object Api {
     fun selfNickname(@Suppress("UNUSED_PARAMETER") uid: String): String {
         val cookie = App.state.accountCookies
         if (cookie.isBlank()) return ""
+        val dumpFile = java.io.File(java.io.File(System.getenv("APPDATA") ?: ".", "KaixinguoPC"), "nick_raw.txt")
+        runCatching { dumpFile.delete() }
         fun once(host: String): String? {
             val text = runCatching {
                 signedGet("/reading/user/info/v1/", JSONArray(), mapOf("Cookie" to cookie), origin = host)
             }.getOrNull() ?: return null
+            runCatching { dumpFile.parentFile?.mkdirs(); dumpFile.appendText("### HOST=$host\n$text\n\n") }
             val d = runCatching { JSONObject(text).optJSONObject("data") }.getOrNull() ?: return null
             val n = d.optString("nickname").ifBlank { d.optString("user_name") }.trim()
             return n.takeIf { it.isNotBlank() && !it.equals("null", true) }
