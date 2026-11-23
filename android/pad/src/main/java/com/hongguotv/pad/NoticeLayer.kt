@@ -152,6 +152,15 @@ fun NoticeLayer() {
 /** 普通公告：顶部横幅（状态栏/刘海 + TV 安全边内缩，防遮挡/切边）。 */
 @Composable
 private fun NoticeBanner(notice: Notice, isTv: Boolean, onClose: () -> Unit) {
+    // 显示后 5 秒倒计时，归零自动关闭；「✕」仍可提前关
+    var remain by remember(notice.id) { mutableStateOf(5) }
+    LaunchedEffect(notice.id) {
+        while (remain > 0) {
+            delay(1_000)
+            remain -= 1
+        }
+        onClose()
+    }
     Box(Modifier.fillMaxSize()) {
         Row(
             Modifier
@@ -172,6 +181,10 @@ private fun NoticeBanner(notice: Notice, isTv: Boolean, onClose: () -> Unit) {
                     Spacer(Modifier.height(3.dp))
                 }
                 Text(notice.text, color = Color.White.copy(alpha = 0.86f), fontSize = 13.sp)
+                if (remain > 0) {
+                    Spacer(Modifier.height(3.dp))
+                    Text("$remain 秒后自动关闭", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
+                }
             }
             Spacer(Modifier.width(12.dp))
             // 「✕」clickable 即 focusable，加入焦点链：TV 上会拿到白框，Pad 直接点

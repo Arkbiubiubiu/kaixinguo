@@ -706,7 +706,11 @@ private fun AppRoot() {
         // 普通公告横幅：播放页(Route.Player) / 全屏时不显示
         val bn = bannerNotice
         if (bn != null && route !is Route.Player && !UiMode.fullscreen.value) {
-            NoticeBanner(bn, onDismiss = { NoticeCenter.dismissed.add(bn.id); bannerNotice = null })
+            NoticeBanner(
+                bn,
+                onDismiss = { NoticeCenter.dismissed.add(bn.id); bannerNotice = null },
+                onAutoClose = { bannerNotice = null },
+            )
         }
         // 打赏浮层（在公告横幅之下）
         if (donateOpen) DonateOverlay(onClose = { donateOpen = false })

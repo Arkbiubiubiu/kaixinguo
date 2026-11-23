@@ -24,7 +24,10 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,11 +43,24 @@ import androidx.compose.ui.unit.sp
 import com.hongguotv.pad.Notice
 
 /**
- * 普通公告横幅（顶部居中，可关）。点击 × → onDismiss（调用方负责
- * NoticeCenter.dismissed.add(id) 并置空状态，本次运行不再弹）。
+ * 普通公告横幅（顶部居中）：显示后进入 5 秒倒计时（横幅上显示「X 秒后自动关闭」），
+ * 到 0 自动关闭（onAutoClose，仅置空 bannerNotice、不计入 dismissed）；
+ * 右上角 × 仍可提前关（onDismiss，调用方负责 dismissed.add(id) + 置空）。
  */
 @Composable
-internal fun NoticeBanner(notice: Notice, onDismiss: () -> Unit) {
+internal fun NoticeBanner(
+    notice: Notice,
+    onDismiss: () -> Unit,
+    onAutoClose: () -> Unit,
+) {
+    var left by remember(notice.id) { mutableStateOf(5) }
+    LaunchedEffect(notice.id) {
+        while (left > 0) {
+            kotlinx.coroutines.delay(1_000)
+            left -= 1
+        }
+        onAutoClose()
+    }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         Row(
             Modifier.padding(top = 12.dp)
@@ -76,6 +92,13 @@ internal fun NoticeBanner(notice: Notice, onDismiss: () -> Unit) {
                 }
             }
             Spacer(Modifier.width(8.dp))
+            Text(
+                if (left > 0) "$left 秒后自动关闭" else "即将关闭",
+                color = Palette.faint,
+                fontSize = 11.sp,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(6.dp))
             Box(
                 Modifier.size(26.dp).clip(RoundedCornerShape(50)).clickable { onDismiss() },
                 contentAlignment = Alignment.Center,
