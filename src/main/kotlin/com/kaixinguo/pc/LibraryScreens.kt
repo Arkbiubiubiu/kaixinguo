@@ -765,6 +765,7 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
     var myCode by remember { mutableStateOf(PcStore.loginPairCode) }
     var inputCode by remember { mutableStateOf("") }
     var confirmExit by remember { mutableStateOf(false) }
+    var displayName by remember { mutableStateOf(PcStore.accountName.ifBlank { "用户" }) }
     val scope = rememberCoroutineScope()
 
     // 退出二次确认：点一次变「确认退出？」，3 秒内不再点自动复原
@@ -794,6 +795,16 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                 myCode = code
                 PcStore.loginPairCode = code
                 status = null
+                // 用服务器该账号的规范昵称刷新本机用户名（修正升级前遗留的旧名字"用户XXX"）
+                val nm = withContext(Dispatchers.IO) {
+                    runCatching { Api.pairNameOfCode(code) }.getOrDefault("")
+                }
+                if (nm.isNotBlank()) {
+                    PcStore.accountName = nm
+                    displayName = nm
+                } else {
+                    displayName = PcStore.accountName.ifBlank { "用户" }
+                }
             } else {
                 if (PcStore.loginPairCode.isNotEmpty()) myCode = PcStore.loginPairCode
                 status = "获取匹配码失败，请检查网络后重试"
@@ -826,7 +837,7 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (loggedIn) PcStore.accountName.ifBlank { "用户" } else "未登录",
+                    if (loggedIn) displayName else "未登录",
                     color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(2.dp))

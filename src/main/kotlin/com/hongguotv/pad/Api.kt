@@ -3441,6 +3441,14 @@ object Api {
         return PairResult(App.state.accountName, j.optString("code").ifBlank { code }, App.state.accountUid)
     }
 
+    /** 取某匹配码在服务器存的规范昵称（用于把本机升级前遗留的旧/错用户名刷新成正确昵称）。无则返回 ""。 */
+    fun pairNameOfCode(code: String): String = runCatching {
+        if (!isValidPairCode(code)) return@runCatching ""
+        val text = request(pairBase() + "/pair/" + code, null)
+        if (text.isBlank()) return@runCatching ""
+        pickNickname(JSONObject(text))
+    }.getOrDefault("")
+
     fun syncAccount(force: Boolean = false): String {
         val text = request(pairBase() + "/account", null)
         if (text.isBlank()) error("连不上账号中台")
