@@ -76,6 +76,10 @@ class VideoEngine(private val sourceUrl: String) {
     @Volatile
     private var stopping = false
 
+    /** 本次起播是否已经画出第一帧（冷启动首帧可能很慢，未画出前不按“落后”丢帧）。 */
+    @Volatile
+    private var firstPainted = false
+
     private var volume = 1f
     private var speed = 1f
 
@@ -137,6 +141,7 @@ class VideoEngine(private val sourceUrl: String) {
         // 迟到的视频帧会被 pumpLoop 整段丢掉（画面定住、声音正常）。
         playing = false
         queue.clear()
+        firstPainted = false
 
         val i = info ?: return
         if (!::bitmap.isInitialized) {
@@ -149,9 +154,9 @@ class VideoEngine(private val sourceUrl: String) {
         pumpJob = scope.launch { pumpLoop() }
         scope.launch { readFrames(i) }
 
-        // 等首帧（最多 4 秒）：无视频/解码失败时照样走，退化成「只有声音」。
+        // 等首帧（最多 20 秒）：冷启动首个视频解码可能 ~10s；20s 有界，超时仍退化为「只有声音」，防空视频卡死。
         val t0 = System.currentTimeMillis()
-        val deadline = t0 + 4_000
+        val deadline = t0 + 20_000
         while (!stopping && queue.isEmpty() &&
             videoProc?.isAlive == true && System.currentTimeMillis() < deadline
         ) {
@@ -232,25 +237,48 @@ class VideoEngine(private val sourceUrl: String) {
     private suspend fun pumpLoop() {
         while (true) {
             if (playing) {
-                val now = clockMs()
-                positionMs = now
-                // 把"已到点"的帧全部取出，但只保留最新的一帧来画；落后的旧帧直接丢弃。
-                // 否则解码/取流被拖慢后，恢复时会把欠下的一堆帧连续快速画出 → 就是"强行加速"。
-                var lastDue: TimedFrame? = null
-                while (true) {
-                    val head = queue.peek() ?: break
-                    if (head.atMs > now) break
-                    queue.poll()
-                    lastDue = head
-                }
-                if (lastDue != null) {
-                    paint(lastDue.bytes)
-                } else if (queue.isEmpty() && videoProc?.isAlive == false) {
-                    // 解码进程结束且队列空 → 播完
-                    if (!stopping) {
+                if (!firstPainted) {
+                    // 首帧门控兜底：还没画出第一帧时，不按“落后”丢帧——只要有帧就取最新一帧画出来，
+                    // 避免冷启动解码跟不上音轨时「画面冻住、声音在走」。
+                    var newest: TimedFrame? = null
+                    while (true) {
+                        val h = queue.poll() ?: break
+                        newest = h
+                    }
+                    val f = newest
+                    if (f != null) {
+                        positionMs = f.atMs
+                        paint(f.bytes)
+                        firstPainted = true
+                    }
+                    // 兜底：某集始终产不出任何帧（坏视频轨/解码失败）且解码进程已结束，
+                    // 也要触发播完/自动连播，别因为 firstPainted 永远 false 而卡住不动。
+                    if (!stopping && queue.isEmpty() && videoProc?.isAlive == false) {
                         playing = false
                         onEnded?.invoke()
                         return
+                    }
+                } else {
+                    val now = clockMs()
+                    positionMs = now
+                    // 把"已到点"的帧全部取出，但只保留最新的一帧来画；落后的旧帧直接丢弃。
+                    // 否则解码/取流被拖慢后，恢复时会把欠下的一堆帧连续快速画出 → 就是"强行加速"。
+                    var lastDue: TimedFrame? = null
+                    while (true) {
+                        val head = queue.peek() ?: break
+                        if (head.atMs > now) break
+                        queue.poll()
+                        lastDue = head
+                    }
+                    if (lastDue != null) {
+                        paint(lastDue.bytes)
+                    } else if (queue.isEmpty() && videoProc?.isAlive == false) {
+                        // 解码进程结束且队列空 → 播完
+                        if (!stopping) {
+                            playing = false
+                            onEnded?.invoke()
+                            return
+                        }
                     }
                 }
             }
