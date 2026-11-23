@@ -3,6 +3,7 @@ package com.kaixinguo.pc
 import com.hongguotv.pad.MachineIdentity
 import com.hongguotv.pad.PassportClient
 import com.hongguotv.pad.Api
+import com.hongguotv.pad.pickNickname
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -276,10 +277,11 @@ object PcLogin {
     private fun parseUser(body: String): Pair<String, String> {
         val j = runCatching { JSONObject(body) }.getOrNull() ?: return "" to ""
         val data = j.optJSONObject("data") ?: j
-        val name = data.optString("user_name").ifBlank { data.optString("name") }
-            .ifBlank { data.optString("screen_name") }
-        val uid = data.optString("user_id").ifBlank { data.optString("uid") }
-            .ifBlank { data.optString("sec_uid") }
+        // 与安卓一致：优先 data.user_info，uid 依次取 user_id → uid → sec_uid
+        val inner = data.optJSONObject("user_info") ?: data
+        val name = pickNickname(inner).ifBlank { pickNickname(data) }
+        val uid = inner.optString("user_id").ifBlank { inner.optString("uid") }
+            .ifBlank { inner.optString("sec_uid") }
         return name to uid
     }
 

@@ -44,6 +44,9 @@ object App {
     /** 当前运行平台标记（公告按平台过滤用）：pc / tv / pad。 */
     var platform: String = ""
 
+    /** 配对服务网关地址（发版注入，与每机唯一本地签名的 signUrl 解耦；空=回落 signUrl，再空=公网默认）。 */
+    var pairBase: String = com.kaixinguo.pc.BuildDefaults.PAIR_BASE.ifBlank { "https://dl.fabao.xin:44468" }
+
     /**
      * 设备身份覆盖（空 = 用内置默认值）。
      *

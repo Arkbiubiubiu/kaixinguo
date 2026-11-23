@@ -3367,52 +3367,88 @@ object Api {
 
     // ---------------- 设备配对（原版同款：匹配码共享登录态） ----------------
 
+    /** 主设备：把本机登录态挂到 6 位匹配码上（兼容旧调用，转发到 [pairEnsure]）。 */
+    fun pairUpload(code: String): String =
+        pairEnsure(App.state.accountUid, App.state.accountName, App.state.accountCookies, code)
+
     /**
-     * 主设备：把本机登录态挂到 6 位匹配码上。
-     * 服务端（代签服务 9100 的 /pair）存一份 cookies。
+     * 主设备（新契约）：把某账号 cookies 挂到匹配码；code 可空=新建，返回 canonical code。
+     * POST {BASE}/pair
      */
-    fun pairUpload(code: String): String {
-        if (!App.state.loggedIn) error("本机还没有登录态，先同步登录再共享")
-        val j = JSONObject(
-            request(
-                App.state.signUrl.trimEnd('/') + "/pair",
-                JSONObject()
-                    .put("code", code)
-                    .put("cookies", App.state.accountCookies)
-                    .put("user_id", App.state.accountUid)
-                    .put("user_name", App.state.accountName)
-                    .put("login_at", App.state.accountSyncedAt)
-                    .toString(),
-            ),
-        )
-        if (j.optBoolean("ok", false)) return code
-        throw IllegalStateException(j.optString("error").ifEmpty { "上传失败" })
+    fun pairEnsure(uid: String, userName: String, cookies: String, code: String = ""): String {
+        if (uid.isBlank() || cookies.isBlank()) error("本机还没有登录态，先同步登录再共享")
+        if (code.isNotEmpty() && !isValidPairCode(code)) error("匹配码格式不对")
+        val body = JSONObject()
+            .put("code", code)
+            .put("cookies", cookies)
+            .put("user_id", uid)
+            .put("user_name", userName)
+            .put("login_at", App.state.accountSyncedAt)
+            .toString()
+        val j = JSONObject(request(pairBase() + "/pair", body))
+        if (!j.optBoolean("ok", false)) throw IllegalStateException(j.optString("error").ifEmpty { "上传失败" })
+        val canonical = j.optString("code").ifBlank { code }
+        if (!isValidPairCode(canonical)) error("匹配码格式不对")
+        return canonical
     }
 
-    /** 从设备：按匹配码取登录态并落库，返回用户名。 */
-    fun pairFetch(code: String): String {
-        val text = request(App.state.signUrl.trimEnd('/') + "/pair/" + code, null)
+    /** 按 user_id 取该账号当前匹配码。GET {BASE}/pair/byuid/{uid} */
+    fun pairByUid(uid: String): String {
+        if (uid.isBlank()) error("缺少用户 id")
+        val text = request(pairBase() + "/pair/byuid/" + uid, null)
+        if (text.isBlank()) error("连不上匹配服务")
+        val code = runCatching { JSONObject(text).optString("code") }.getOrDefault("")
+        if (!isValidPairCode(code)) error("该账号还没有配对码")
+        return code
+    }
+
+    /** 轮换匹配码（旧码失效），返回新 code。POST {BASE}/pair/rotate */
+    fun pairRotate(uid: String, code: String = ""): String {
+        if (uid.isBlank()) error("缺少用户 id")
+        if (code.isNotEmpty() && !isValidPairCode(code)) error("匹配码格式不对")
+        val body = JSONObject().put("user_id", uid).put("code", code).toString()
+        val j = JSONObject(request(pairBase() + "/pair/rotate", body))
+        if (!j.optBoolean("ok", false)) throw IllegalStateException(j.optString("error").ifEmpty { "轮换失败" })
+        val next = j.optString("code")
+        if (!isValidPairCode(next)) error("匹配码格式不对")
+        return next
+    }
+
+    /** 配对服务地址：PAIR_BASE（发版注入，与每机唯一清空的 signUrl 解耦）优先，空则回落旧 signUrl。 */
+    private fun pairBase(): String {
+        val b = App.pairBase.trim()
+        return (if (b.isNotEmpty()) b else App.state.signUrl).trimEnd('/')
+    }
+
+    private fun isValidPairCode(code: String): Boolean = Regex("^[A-Za-z0-9]{6}$").matches(code)
+
+    /** 配对拉取结果。 */
+    data class PairResult(val name: String, val code: String, val uid: String)
+
+    /** 从设备：按匹配码取登录态并落库，返回 (name, canonicalCode, uid)。GET {BASE}/pair/{code} */
+    fun pairFetch(code: String): PairResult {
+        if (!isValidPairCode(code)) error("匹配码格式不对")
+        val text = request(pairBase() + "/pair/" + code, null)
         if (text.isBlank()) error("连不上匹配服务")
         val j = JSONObject(text)
         val cookies = j.optString("cookies")
         if (cookies.isBlank()) error(j.optString("error").ifEmpty { "该匹配码还没有绑定登录态" })
         App.state.accountCookies = cookies
-        App.state.accountUid = j.optString("user_id")
-        App.state.accountName = j.optString("user_name")
+        App.state.accountUid = j.optString("user_id").ifBlank { j.optString("uid") }.ifBlank { j.optString("sec_uid") }
+        App.state.accountName = pickNickname(j)
         App.state.accountSyncedAt = System.currentTimeMillis()
         App.state.accountSource = "pair"
-        return App.state.accountName
+        return PairResult(App.state.accountName, j.optString("code").ifBlank { code }, App.state.accountUid)
     }
 
     fun syncAccount(force: Boolean = false): String {
-
-        val text = request(App.state.signUrl.trimEnd('/') + "/account", null)
+        val text = request(pairBase() + "/account", null)
         if (text.isBlank()) error("连不上账号中台")
         val o = JSONObject(text)
         val cookies = o.optString("cookies")
         if (cookies.isEmpty()) error("账号中台里还没有登录态，请先在 Windows 版登录")
         val uid = o.optString("user_id")
-        val name = o.optString("user_name")
+        val name = pickNickname(o)
         val same = uid.isNotEmpty() && uid == App.state.accountUid
         if (!App.state.loggedIn || same || force) {
             App.state.accountCookies = cookies

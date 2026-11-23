@@ -91,6 +91,8 @@ class MainActivity : ComponentActivity() {
         App.deviceIid = BuildConfig.DEVICE_IID
         App.deviceId = BuildConfig.DEVICE_ID
         App.deviceCdid = BuildConfig.DEVICE_CDID
+        // 配对服务网关：优先构建注入 -PpairBase；缺省回落公网 BASE（与 PC 同步）
+        App.pairBase = BuildConfig.PAIR_BASE.ifBlank { "https://dl.fabao.xin:44468" }
         // 公告+强更：后台拉 notice.json（多 base 回退，失败静默，不影响主流程）
         Thread { runCatching { NoticeCenter.load() } }
             .apply { isDaemon = true; name = "notice-load" }.start()

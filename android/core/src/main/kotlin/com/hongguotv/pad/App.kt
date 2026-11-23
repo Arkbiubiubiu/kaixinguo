@@ -44,6 +44,9 @@ object App {
     /** 当前运行平台标记（公告按平台过滤用）：pc / tv / pad。 */
     var platform: String = ""
 
+    /** 配对服务网关地址（发版注入；空=回落 signUrl）。Android 由各自注入，缺省空。 */
+    var pairBase: String = ""
+
     /**
      * 设备身份覆盖（空 = 用占位默认值）。
      *

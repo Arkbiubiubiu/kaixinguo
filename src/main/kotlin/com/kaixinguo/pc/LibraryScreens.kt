@@ -766,7 +766,6 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
     var inputCode by remember { mutableStateOf("") }
     var confirmExit by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    fun genCode(): String = (1..6).map { kotlin.random.Random.nextInt(0, 10) }.joinToString("")
 
     // 退出二次确认：点一次变「确认退出？」，3 秒内不再点自动复原
     LaunchedEffect(confirmExit) {
@@ -776,19 +775,31 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
         }
     }
 
-    // 已登录进入：确保有 6 位码（无则自动生成并保存），并后台 pairUpload 刷新一次
+    // 已登录进入：取 uid → 服务端 canonical 码（pairByUid，无则 pairEnsure 生成）→ 大号显示
     LaunchedEffect(loggedIn) {
         if (loggedIn) {
-            var c = PcStore.loginPairCode
-            if (c.length != 6) {
-                c = genCode()
-                PcStore.loginPairCode = c
+            val code = withContext(Dispatchers.IO) {
+                runCatching {
+                    var uid = PcStore.accountUid
+                    if (uid.isBlank()) {
+                        runCatching { Api.syncAccount(force = false) }
+                        uid = PcStore.accountUid
+                    }
+                    if (uid.isBlank()) error("缺少用户信息，请重新登录")
+                    runCatching { Api.pairByUid(uid) }.getOrNull()
+                        ?: Api.pairEnsure(uid, PcStore.accountName, PcStore.accountCookies)
+                }.getOrNull()
             }
-            myCode = c
-            val ok = withContext(Dispatchers.IO) { runCatching { Api.pairUpload(c) }.isSuccess }
-            if (!ok) status = "上传匹配码失败，请重试"
+            if (code != null) {
+                myCode = code
+                PcStore.loginPairCode = code
+                status = null
+            } else {
+                if (PcStore.loginPairCode.isNotEmpty()) myCode = PcStore.loginPairCode
+                status = "获取匹配码失败，请检查网络后重试"
+            }
         } else {
-            // 未登录：清掉上一账号遗留的匹配码，避免手机号登录/换账号把旧码带过去
+            // 未登录：清掉上一账号遗留的匹配码，避免换账号把旧码带过去
             if (PcStore.loginPairCode.isNotEmpty()) PcStore.loginPairCode = ""
         }
     }
@@ -845,7 +856,7 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
 
         Spacer(Modifier.height(12.dp))
         if (loggedIn) {
-            // A. 已登录：只显示「在其它设备上同步」（生成/共享本机 6 位码）
+            // A. 已登录：只显示「在其它设备上同步」（服务端 canonical 6 位码，可改）
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.panel).padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -860,16 +871,18 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                 }
                 Spacer(Modifier.width(12.dp))
                 Box(
-                    Modifier.width(120.dp).height(34.dp).clip(RoundedCornerShape(8.dp))
+                    Modifier.width(150.dp).height(44.dp).clip(RoundedCornerShape(8.dp))
                         .background(Palette.panelHi)
                         .border(1.dp, Palette.line, RoundedCornerShape(8.dp))
                         .padding(horizontal = 10.dp),
-                    contentAlignment = Alignment.CenterStart,
+                    contentAlignment = Alignment.Center,
                 ) {
                     BasicTextField(
                         value = myCode,
-                        onValueChange = { myCode = it.filter { ch -> ch.isDigit() }.take(6) },
-                        textStyle = androidx.compose.ui.text.TextStyle(color = Palette.text, fontSize = 16.sp),
+                        onValueChange = { myCode = it.filter { ch -> ch.isLetterOrDigit() }.take(6) },
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = Palette.text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold,
+                        ),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.accent),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -877,32 +890,34 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                 }
                 Spacer(Modifier.width(8.dp))
                 SecondaryButton("换个码") {
-                    val c = genCode()
-                    myCode = c
-                    PcStore.loginPairCode = c
-                    status = "共享中…"
+                    status = "换码中…"
                     scope.launch(Dispatchers.IO) {
-                        val ok = runCatching { Api.pairUpload(c) }.isSuccess
+                        val uid = PcStore.accountUid
+                        val r = if (uid.isBlank()) Result.failure<String>(IllegalStateException("缺少用户信息，请重新登录"))
+                        else runCatching { Api.pairRotate(uid) }
                         withContext(Dispatchers.Main) {
-                            status = if (ok) "已保存并共享，其它设备输入 $c 即可同步" else "上传匹配码失败，请重试"
+                            r.onSuccess { nc -> myCode = nc; PcStore.loginPairCode = nc; status = "已保存并共享，其它设备输入 $nc 即可同步" }
+                                .onFailure { status = it.message ?: "换码失败" }
                         }
                     }
                 }
                 Spacer(Modifier.width(8.dp))
                 PrimaryButton("保存并共享", null) {
                     val c = myCode.trim()
-                    if (c.length != 6) {
-                        status = "匹配码是 6 位数字"
+                    if (c.length != 6 || !c.all { it.isLetterOrDigit() }) {
+                        status = "匹配码是 6 位字母或数字"
                     } else {
-                        PcStore.loginPairCode = c
                         status = "共享中…"
                         scope.launch(Dispatchers.IO) {
-                            val r = runCatching { Api.pairUpload(c) }
+                            val uid = PcStore.accountUid
+                            val r = if (uid.isBlank()) Result.failure<String>(IllegalStateException("缺少用户信息，请重新登录"))
+                            else runCatching { Api.pairRotate(uid, c) }
                             withContext(Dispatchers.Main) {
-                                status = r.fold(
-                                    onSuccess = { "已保存并共享，其它设备输入 $c 即可同步" },
-                                    onFailure = { "上传匹配码失败，请重试" },
-                                )
+                                r.onSuccess { nc ->
+                                    myCode = nc
+                                    PcStore.loginPairCode = nc
+                                    status = "已保存并共享，其它设备输入 $nc 即可同步"
+                                }.onFailure { status = it.message ?: "保存失败" }
                             }
                         }
                     }
@@ -935,7 +950,7 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                     }
                     BasicTextField(
                         value = inputCode,
-                        onValueChange = { inputCode = it.filter { ch -> ch.isDigit() }.take(6) },
+                        onValueChange = { inputCode = it.filter { ch -> ch.isLetterOrDigit() }.take(6) },
                         textStyle = androidx.compose.ui.text.TextStyle(color = Palette.text, fontSize = 14.sp),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.accent),
                         singleLine = true,
@@ -945,21 +960,18 @@ internal fun MinePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit, onLogi
                 Spacer(Modifier.width(8.dp))
                 PrimaryButton("同步", null) {
                     val code = inputCode.trim()
-                    if (code.length != 6) {
-                        status = "匹配码是 6 位数字"
+                    if (code.length != 6 || !code.all { it.isLetterOrDigit() }) {
+                        status = "匹配码是 6 位字母或数字"
                     } else {
                         status = "同步中…"
                         scope.launch(Dispatchers.IO) {
-                            val r = runCatching {
-                                val name = Api.pairFetch(code)
-                                runCatching { Api.syncAccount(force = false) }   // 不 force：别用 /account 覆盖刚配对的 cookies
-                                name
-                            }
+                            // pairFetch 已落 cookies、accountName=name、accountUid=uid
+                            val r = runCatching { Api.pairFetch(code) }
                             withContext(Dispatchers.Main) {
-                                r.onSuccess {
-                                    PcStore.loginPairCode = ""   // 换账号清旧码，进来自动生成新码
+                                r.onSuccess { res ->
+                                    PcStore.loginPairCode = ""   // 换账号清旧码，进来重新取 canonical
                                     loggedIn = true
-                                    status = "同步成功：${it.ifBlank { PcStore.accountName.ifBlank { "已登录" } }}"
+                                    status = "同步成功：${res.name.ifBlank { PcStore.accountName.ifBlank { "已登录" } }}"
                                 }.onFailure { status = it.message ?: "同步失败" }
                             }
                         }

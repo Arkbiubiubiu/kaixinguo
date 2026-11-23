@@ -412,10 +412,7 @@ object LoginApi {
         val j = runCatching { JSONObject(body) }.getOrNull() ?: return "" to ""
         val data = j.optJSONObject("data") ?: j
         val inner = data.optJSONObject("user_info") ?: data
-        val name = listOf("name", "user_name", "username", "nick_name")
-            .map { inner.optString(it) }
-            .firstOrNull { it.isNotBlank() && it != "null" }
-            .orEmpty()
+        val name = pickNickname(data)
         val uid = listOf("user_id", "userId", "uid")
             .map { inner.optString(it) }
             .firstOrNull { it.isNotBlank() && it != "null" }

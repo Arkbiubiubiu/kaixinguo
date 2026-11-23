@@ -13,9 +13,9 @@ android {
         targetSdk = 36
         // 发版流水线 tools/release.py 可用 -PversionCode/-PversionName 覆盖；
         // 不带参数时保持源码里的版本（AGENTS.md 的“版本唯一来源”仍然成立）。
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 348
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 349
         versionName = (project.findProperty("versionName") as String?)?.trim()
-            ?.takeIf { it.isNotEmpty() } ?: "2.2.228"
+            ?.takeIf { it.isNotEmpty() } ?: "2.2.229"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // 服务器地址不写死在源码里：自用版构建时传 -PsignUrl=... -PplayBases=... -PplayToken=...
@@ -29,6 +29,8 @@ android {
         buildConfigField("String", "DEVICE_IID", "\"${prop("deviceIid")}\"")
         buildConfigField("String", "DEVICE_ID", "\"${prop("deviceId")}\"")
         buildConfigField("String", "DEVICE_CDID", "\"${prop("deviceCdid")}\"")
+        // 配对服务网关（公网 BASE，发版 -PpairBase 注入；缺省空则由代码回落默认公网）
+        buildConfigField("String", "PAIR_BASE", "\"${prop("pairBase")}\"")
     }
 
 

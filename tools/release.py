@@ -24,6 +24,7 @@
     PLAY_TOKEN=...
     UPDATE_BASES=...
     HISTORY_BASE=...
+    PAIR_BASE=...
     DEVICE_IID=...
     DEVICE_ID=...
     DEVICE_CDID=...
@@ -55,6 +56,7 @@ SERVER = os.environ.get("KXG_RELEASE_SERVER") or "root@192.168.1.54"
 SERVER_DIR = "/srv/hgtv-update"
 DESKTOP_APK = os.path.join(os.path.expanduser("~"), "Desktop", "开心果apk")
 DEFAULT_ENV = os.environ.get("KXG_RELEASE_ENV") or "D:/kaixinguo-backup/private/release.env"
+PAIR_BASE_DEFAULT = os.environ.get("KXG_PAIR_BASE") or "https://dl.fabao.xin:44468"
 
 PROP_KEYS = (
     ("signUrl", "SIGN_URL"),
@@ -62,6 +64,7 @@ PROP_KEYS = (
     ("playToken", "PLAY_TOKEN"),
     ("updateBases", "UPDATE_BASES"),
     ("historyBase", "HISTORY_BASE"),
+    ("pairBase", "PAIR_BASE"),
     ("deviceIid", "DEVICE_IID"),
     ("deviceId", "DEVICE_ID"),
     ("deviceCdid", "DEVICE_CDID"),
@@ -419,7 +422,8 @@ def cmd_android(a):
         with timed("bump"):
             write_version_android(version, code)
     props = load_props(a.env)
-    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
+    props.setdefault("pairBase", PAIR_BASE_DEFAULT)
+    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase", "pairBase") and not props.get(p)]
     if missing:
         die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
     if getattr(a, "no_sign_url", False):
@@ -453,7 +457,8 @@ def cmd_pc(a):
         with timed("bump"):
             write_version_pc(version)
     props = load_props(a.env)
-    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase") and not props.get(p)]
+    props.setdefault("pairBase", PAIR_BASE_DEFAULT)
+    missing = [p for p, _ in PROP_KEYS if p in ("playToken", "playBases", "updateBases", "signUrl", "historyBase", "pairBase") and not props.get(p)]
     if missing:
         die("缺少私参 %s；请在 %s 里配置（参考文件头注释）" % (",".join(missing), a.env))
     if getattr(a, "no_sign_url", False):

@@ -40,12 +40,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 「账号与同步」页（TV/Pad 共用）。
+ * 「账号与同步」页（TV/Pad 共用，接新公网配对服务 BASE）。
  *
- * 严格按「是否登录」二选一显示，绝不同时出现两块（与 PC 一致、文案逐字同）：
- *  - 已登录：只显示「在其它设备上同步」——可编辑 6 位匹配码（进页自动生成并上传，或显示已存码并后台刷新）。
- *  - 未登录：只显示「用其它设备的账号同步」——输入 6 位码「同步」+「手机号登录」。
- * 账户行（头像/昵称/副标题 + 登录/退出）与收藏/点赞入口始终保留。
+ * 严格按「是否登录」二选一，绝不同时显示两块（文案与 PC 逐字一致）：
+ *  - 已登录：进页按 uid 取 canonical 匹配码（pairByUid，没则 pairEnsure 建）；大号显示；
+ *            「换个码」=pairRotate(uid)；手动改 6 位码 +「保存并共享」=pairRotate(uid,新码)。
+ *  - 未登录：输入 6 位码「同步」=pairFetch(code)（落 cookies/uid/name → 已登录）；手机号登录见账户行。
+ * 账户行（头像/昵称/副标题 + 手机号登录/退出）与收藏/点赞入口始终保留。
  */
 @Composable
 fun AccountScreen(
@@ -58,7 +59,7 @@ fun AccountScreen(
     var busy by remember { mutableStateOf(false) }
     // 未登录：要输入的匹配码
     var inputCode by remember { mutableStateOf("") }
-    // 已登录：本机共享码（可编辑，默认取已存 / 自动生成）
+    // 已登录：本机 canonical 匹配码
     var shareCode by remember { mutableStateOf(Store.pairCode) }
     var confirmExit by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -81,20 +82,25 @@ fun AccountScreen(
         }
     }
 
-    // 已登录进入本页：已存码→显示并后台刷新上传一次；无→自动生成 6 位 + 自动上传 + 保存。
-    // key 用 Store.loggedIn：本页内用匹配码登录成功后 (false→true) 也会触发一次。
+    // 已登录进入本页：取 uid → pairByUid 拿 canonical code；没有就 pairEnsure 新建。不再本地随机。
+    // key 用 Store.loggedIn：本页内用匹配码登录成功(false→true)也会触发一次。
     LaunchedEffect(Store.loggedIn) {
         if (!Store.loggedIn) return@LaunchedEffect
-        val existing = Store.pairCode
-        if (existing.isNotBlank()) {
+        val uid = Store.accountUid
+        if (uid.isBlank()) {
+            syncMsg = "账号信息缺少用户ID，请重新登录"
+            return@LaunchedEffect
+        }
+        val existing = withContext(Dispatchers.IO) { runCatching { Api.pairByUid(uid) }.getOrNull() }
+        if (!existing.isNullOrBlank()) {
             shareCode = existing
-            withContext(Dispatchers.IO) { runCatching { Api.pairUpload(existing) } }
+            Store.pairCode = existing
         } else {
-            val gen = (100000..999999).random().toString()
-            shareCode = gen
-            Store.pairCode = gen
-            val r = withContext(Dispatchers.IO) { runCatching { Api.pairUpload(gen) } }
-            if (r.isFailure) syncMsg = "已生成匹配码，但上传失败：${r.exceptionOrNull()?.message ?: "网络问题"}"
+            val r = withContext(Dispatchers.IO) {
+                runCatching { Api.pairEnsure(uid, Store.accountName, Store.accountCookies) }
+            }
+            r.onSuccess { code -> shareCode = code; Store.pairCode = code }
+                .onFailure { syncMsg = "获取匹配码失败：${it.message}" }
         }
     }
     LaunchedEffect(confirmExit) {
@@ -108,7 +114,7 @@ fun AccountScreen(
             contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 账户行：头像 + 昵称 + 副标题 + 登录/退出
+            // 账户行：头像 + 昵称 + 副标题 + 手机号登录/退出
             item {
                 Row(
                     Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(16.dp),
@@ -166,7 +172,7 @@ fun AccountScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             BasicTextField(
                                 value = shareCode,
-                                onValueChange = { shareCode = it.filter { ch -> ch.isDigit() }.take(6) },
+                                onValueChange = { shareCode = it.filter { ch -> ch.isLetterOrDigit() }.take(6) },
                                 textStyle = TextStyle(color = Red, fontSize = 26.sp, letterSpacing = 4.sp, fontWeight = FontWeight.Bold),
                                 cursorBrush = SolidColor(Red), singleLine = true,
                                 modifier = Modifier
@@ -183,21 +189,24 @@ fun AccountScreen(
                             )
                             Spacer(Modifier.weight(1f))
                             TvChip("换个码", selected = false) {
-                                // 与 PC 一致：生成新码 → 保存 Store.pairCode → 立即上传（后台，失败给提示）
-                                val gen = (100000..999999).random().toString()
-                                shareCode = gen
-                                Store.pairCode = gen
+                                val uid = Store.accountUid
+                                if (uid.isBlank()) { refreshMsg("账号信息缺少用户ID，请重新登录"); return@TvChip }
                                 runAsync("共享") {
-                                    Api.pairUpload(gen)
-                                    "已保存并共享，其它设备输入 $gen 即可同步"
+                                    val code = Api.pairRotate(uid)
+                                    shareCode = code
+                                    Store.pairCode = code
+                                    "已保存并共享，其它设备输入 $code 即可同步"
                                 }
                             }
                             Spacer(Modifier.width(10.dp))
                             TvChip("保存并共享", selected = shareCode.length == 6) {
-                                if (shareCode.length != 6) { refreshMsg("匹配码是 6 位数字"); return@TvChip }
-                                val code = shareCode
+                                if (shareCode.length != 6) { refreshMsg("匹配码是 6 位字母或数字"); return@TvChip }
+                                val uid = Store.accountUid
+                                if (uid.isBlank()) { refreshMsg("账号信息缺少用户ID，请重新登录"); return@TvChip }
+                                val want = shareCode
                                 runAsync("共享") {
-                                    Api.pairUpload(code)
+                                    val code = Api.pairRotate(uid, want)
+                                    shareCode = code
                                     Store.pairCode = code
                                     "已保存并共享，其它设备输入 $code 即可同步"
                                 }
@@ -214,7 +223,7 @@ fun AccountScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             BasicTextField(
                                 value = inputCode,
-                                onValueChange = { inputCode = it.filter { ch -> ch.isDigit() }.take(6) },
+                                onValueChange = { inputCode = it.filter { ch -> ch.isLetterOrDigit() }.take(6) },
                                 textStyle = TextStyle(color = TextMain, fontSize = 20.sp, letterSpacing = 3.sp),
                                 cursorBrush = SolidColor(Red), singleLine = true,
                                 modifier = Modifier
@@ -231,13 +240,12 @@ fun AccountScreen(
                             )
                             Spacer(Modifier.width(10.dp))
                             TvChip("同步", selected = inputCode.length == 6) {
-                                if (inputCode.length != 6) { refreshMsg("匹配码是 6 位数字"); return@TvChip }
+                                if (inputCode.length != 6) { refreshMsg("匹配码是 6 位字母或数字"); return@TvChip }
                                 val code = inputCode
                                 runAsync("同步") {
-                                    val name = Api.pairFetch(code)   // 拉取登录态并落库
-                                    runCatching { Api.syncAccount() } // 顺带补齐云端收藏/历史（失败不影响登录）
+                                    val r = Api.pairFetch(code) // 落 cookies/uid/name → 已登录
                                     inputCode = ""
-                                    "同步成功：$name"
+                                    "同步成功：${r.name}"
                                 }
                             }
                         }

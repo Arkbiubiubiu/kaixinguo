@@ -1,4 +1,4 @@
-﻿import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
     kotlin("jvm") version "2.0.21"
@@ -29,10 +29,12 @@ val buildPlayBases = (findProperty("playBases") as String?)?.trim().orEmpty()
 val buildPlayToken = (findProperty("playToken") as String?)?.trim().orEmpty()
 val buildSignUrl = (findProperty("signUrl") as String?)?.trim().orEmpty()
 val buildHistoryBase = (findProperty("historyBase") as String?)?.trim().orEmpty()
+// 配对服务网关地址（与「每机唯一本地签名」清空的 signUrl 解耦；发版单独注入）
+val buildPairBase = (findProperty("pairBase") as String?)?.trim().orEmpty()
 
 // 版本号唯一来源：发版只改这一行，packageVersion 和代码里的 BuildInfo 都从这里生成。
 // tools/release.py 可用 -PpcVersion 覆盖，源码仍是默认值。
-val pcVersion = (findProperty("pcVersion") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "1.2.118"
+val pcVersion = (findProperty("pcVersion") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "1.2.119"
 val pcCode = pcVersion.split('.').let { it[0].toInt() * 10000 + it[1].toInt() * 100 + it[2].toInt() }
 
 val generateBuildDefaults = tasks.register("generateBuildDefaults") {
@@ -42,6 +44,7 @@ val generateBuildDefaults = tasks.register("generateBuildDefaults") {
     val pt = buildPlayToken
     val su = buildSignUrl
     val hb = buildHistoryBase
+    val pbase = buildPairBase
     val ver = pcVersion
     val verCode = pcCode
     doLast {
@@ -57,6 +60,7 @@ val generateBuildDefaults = tasks.register("generateBuildDefaults") {
             |    const val PLAY_TOKEN = "$pt"
             |    const val SIGN_URL = "$su"
             |    const val HISTORY_BASE = "$hb"
+            |    const val PAIR_BASE = "$pbase"
             |}
             |""".trimMargin(),
         )
