@@ -200,7 +200,10 @@ fun DetailScreen(
         d?.let { dd ->
             launch(Dispatchers.IO) {
                 dd.episodes.take(2).forEach { ep ->
-                    runCatching { PlaybackApi.tiers(ep.vid, priority = false) }
+                    // 低优先级预热：全局并发≤2 + 失败退避（空档位=转码中，不算失败）
+                    PrefetchGuard.prefetch("warm:${ep.vid}") {
+                        runCatching { PlaybackApi.tiers(ep.vid, priority = false) }.getOrNull()
+                    }
                 }
             }
         }

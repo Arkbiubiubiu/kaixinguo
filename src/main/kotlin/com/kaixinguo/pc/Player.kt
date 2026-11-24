@@ -208,6 +208,20 @@ fun PlayerScreen(
     var interrupted by remember(seriesId) { mutableStateOf(false) }
     // 每一集只自动重试一次：按 (seriesId, index) 记住，切集自动重置
     var retryUsed by remember(seriesId, index) { mutableStateOf(false) }
+    // 起播/断流自动重试退避：2s/5s/10s（服务器说"稍后重试/503"再压到≥10s），别连续猛重试
+    var lastSrcErr by remember(seriesId) { mutableStateOf("") }
+    fun autoRetryDelayMs(attempt: Int): Long {
+        val base = when (attempt) { 0 -> 2_000L; 1 -> 5_000L; else -> 10_000L }
+        val busy = lastSrcErr.contains("稍后") || lastSrcErr.contains("503") || lastSrcErr.contains("busy", true)
+        return if (busy) maxOf(base, 10_000L) else base
+    }
+    fun scheduleAutoRetry(attemptBase: Int) {
+        loading = true
+        scope.launch {
+            kotlinx.coroutines.delay(autoRetryDelayMs(attemptBase))
+            playAttempt += 1
+        }
+    }
     // 输入框正在打字：此时空格/方向键必须交给输入框，不能当播放快捷键
     var dmTyping by remember { mutableStateOf(false) }
     var cmTyping by remember { mutableStateOf(false) }
@@ -529,6 +543,7 @@ fun PlayerScreen(
                 }
             } catch (t: Throwable) {
                 Log.e("Player", "第 $index 集起播取流失败: ${t.message}", t)
+                lastSrcErr = t.message.orEmpty()
                 null
             }
         }
@@ -582,10 +597,9 @@ fun PlayerScreen(
             val finished = dur <= 0L || pos >= dur * 95 / 100
             when {
                 !finished && !retryUsed -> {
-                    // 每集自动重试一次（用户不用动，网络抖一下就自愈）
+                    // 每集自动重试一次（用户不用动），走 2s/5s/10s 退避，别立刻连续猛重试
                     retryUsed = true
-                    loading = true
-                    playAttempt += 1
+                    scheduleAutoRetry(playAttempt)
                 }
                 !finished -> {
                     interrupted = true
@@ -689,7 +703,9 @@ fun PlayerScreen(
             val end = minOf(episodes.size, index + 3)
             for (i in index + 1..end) {
                 val ep = episodes.getOrNull(i - 1) ?: continue
-                runCatching { PlaybackApi.tiers(ep.vid, priority = true) }
+                PrefetchGate.guard("tiers:${ep.vid}") {
+                    runCatching { PlaybackApi.tiers(ep.vid, priority = true); true }.getOrDefault(false)
+                }
             }
         }
     }
@@ -735,8 +751,7 @@ fun PlayerScreen(
                     when (watchdog.onTick(tick, nowMs, active = e.playing, preparing = loading, switching = false)) {
                         StallWatchdog.Decision.RETRY -> {
                             Log.e("Player", "stalled index=$index pos=$tick retry=${watchdog.retryCount}")
-                            loading = true
-                            playAttempt += 1
+                            scheduleAutoRetry(playAttempt)
                         }
                         StallWatchdog.Decision.GIVE_UP -> {
                             failed = "播放卡住了，点「重试」再试一次"

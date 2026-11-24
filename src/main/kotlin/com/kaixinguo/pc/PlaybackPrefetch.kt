@@ -141,9 +141,14 @@ object PlaybackPrefetch {
                 existing.release()
                 Log.d("Prefetch", "第 ${ep.index} 集升级为「直链 + 头部」")
             }
-            val entry = withContext(Dispatchers.IO) { build(ep.vid, maxHeight, head) }
+            var built: Entry? = null
+            val ok = PrefetchGate.guard("pf:${ep.vid}") {
+                built = withContext(Dispatchers.IO) { build(ep.vid, maxHeight, head) }
+                built != null
+            }
+            val entry = if (ok) built else null
             if (entry == null) {
-                Log.d("Prefetch", "第 ${ep.index} 集预取失败（忽略，切集时走正常流程）")
+                Log.d("Prefetch", "第 ${ep.index} 集预取失败（忽略/退避中，切集时走正常流程）")
                 continue
             }
             synchronized(lock) {

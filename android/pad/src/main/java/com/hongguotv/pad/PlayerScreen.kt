@@ -646,6 +646,22 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
         val ep = episodes.getOrNull(index - 1) ?: return@LaunchedEffect
+        // 正片重试退避：2s / 5s / 10s；服务器说「稍后重试/繁忙/限流」时至少 10s，别猛重试
+        if (ps.attempt > 0) {
+            val base = when (ps.attempt) {
+                1 -> 2_000L
+                2 -> 5_000L
+                else -> 10_000L
+            }
+            val prev = ps.failed ?: ""
+            val wait = if (prev.contains("稍后") || prev.contains("繁忙") || prev.contains("限流")) {
+                maxOf(base, 10_000L)
+            } else {
+                base
+            }
+            Log.i("Playback", "retry backoff ${wait}ms attempt=${ps.attempt}")
+            delay(wait)
+        }
         ps.failed = null
 
         // ---- 快速路径：下一集在上一集播着的时候就预取好了，直接换源 ----
@@ -885,11 +901,13 @@ fun PlayerScreen(
             if (slot != null) prefetchSlot = slot
             var produced: ReadyEpisode? = null
             try {
-                withContext(Dispatchers.IO) {
-                    produced = buildReady(
-                        want, next, defWant,
-                        setOf(episodes.getOrNull(index - 1)?.vid.orEmpty()),
-                    ) { prefetchWant == want }
+                produced = PrefetchGuard.prefetch("next:${next.vid}") {
+                    withContext(Dispatchers.IO) {
+                        buildReady(
+                            want, next, defWant,
+                            setOf(episodes.getOrNull(index - 1)?.vid.orEmpty()),
+                        ) { prefetchWant == want }
+                    }
                 }
                 slot?.complete(produced)
                 val p = produced

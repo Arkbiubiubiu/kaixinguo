@@ -215,9 +215,17 @@ private suspend fun warmUpcomingFeed(cards: List<SeriesCard>, fromIndex: Int, co
         coroutineScope {
             batch.map { c ->
                 async {
-                    runCatching {
-                        val ep = Api.ensureDetail(c.seriesId)?.episodes?.firstOrNull()
-                        if (ep != null) PlaybackApi.tiers(ep.vid, priority = false)
+                    // 全局并发≤2 + 失败退避 + 命中缓存短路（健康度由 PrefetchGate 统一兜住）
+                    PrefetchGate.guardCached("feedwarm:${c.seriesId}") {
+                        runCatching {
+                            val ep = Api.ensureDetail(c.seriesId)?.episodes?.firstOrNull()
+                            if (ep != null) {
+                                PlaybackApi.tiers(ep.vid, priority = false)
+                                true
+                            } else {
+                                false
+                            }
+                        }.getOrDefault(false)
                     }
                 }
             }.forEach { it.await() }

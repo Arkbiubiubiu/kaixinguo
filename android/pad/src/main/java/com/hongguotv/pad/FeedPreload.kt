@@ -81,28 +81,32 @@ object FeedPreload {
         }
     }
 
-    private fun build(seriesId: String, full: Boolean = true) {
-        val d = Api.ensureDetail(seriesId) ?: return
-        if (!full) return   // 详情已进 DetailCache，切过去时只剩档位+索引
-        val ep = d.episodes.firstOrNull() ?: return
-        if (Store.isUnsupported(ep.vid)) {
-            synchronized(lock) { dead.add(seriesId) }
-            return
-        }
-        val tiers = PlaybackApi.tiers(ep.vid)
-        val cap = Store.maxHeight
-        val playable = tiers.filter { it.playable }
-        val picked = playable.firstOrNull { it.height == cap }
-            ?: playable.firstOrNull { it.height <= cap }
-            ?: playable.firstOrNull()
-        val info = picked?.toPlayInfo()
-            ?: runCatching { PlaybackApi.play(ep.vid, 1004, 0) }.getOrNull()
-            ?: return
-        val rv = RemoteVideo(info)
-        rv.prepare(warmLastBlock = false)
-        synchronized(lock) {
-            val old = ready.put(seriesId, Ready(seriesId, info, rv))
-            old?.let { runCatching { it.remote.close() } }
+    private suspend fun build(seriesId: String, full: Boolean = true) {
+        // 低优先级预取：全局并发≤2 + 失败退避 + 同 series 去重（失败静默）
+        PrefetchGuard.prefetch("preload:$seriesId") {
+            val d = Api.ensureDetail(seriesId) ?: return@prefetch null
+            if (!full) return@prefetch true   // 详情已进 DetailCache，切过去时只剩档位+索引
+            val ep = d.episodes.firstOrNull() ?: return@prefetch null
+            if (Store.isUnsupported(ep.vid)) {
+                synchronized(lock) { dead.add(seriesId) }
+                return@prefetch null
+            }
+            val tiers = PlaybackApi.tiers(ep.vid)
+            val cap = Store.maxHeight
+            val playable = tiers.filter { it.playable }
+            val picked = playable.firstOrNull { it.height == cap }
+                ?: playable.firstOrNull { it.height <= cap }
+                ?: playable.firstOrNull()
+            val info = picked?.toPlayInfo()
+                ?: runCatching { PlaybackApi.play(ep.vid, 1004, 0) }.getOrNull()
+                ?: return@prefetch null
+            val rv = RemoteVideo(info)
+            rv.prepare(warmLastBlock = false)
+            synchronized(lock) {
+                val old = ready.put(seriesId, Ready(seriesId, info, rv))
+                old?.let { runCatching { it.remote.close() } }
+            }
+            true
         }
     }
 
