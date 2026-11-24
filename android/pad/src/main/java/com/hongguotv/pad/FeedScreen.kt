@@ -175,6 +175,7 @@ fun FeedScreen(
         val cacheKey = "feed_${feedTypes[tab]}"
         val type = feedTypes[tab]
 
+        if (type == "16") {
         // ---- ① 首屏秒开：只拉第一页，跨天去重后立即开播；不再等深翻凑池 ----
         val first = withContext(Dispatchers.IO) {
             runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
@@ -231,6 +232,45 @@ fun FeedScreen(
                 }
             }
         }
+        } else {
+            // ---- 36/39：热播榜 + 新剧榜 候选，剔除已看/已预约上线/跨天seen；不足 12 用 feed 池补足 48 ----
+            val seen0 = Store.feedSeenIds.toSet()
+            val excluded = withContext(Dispatchers.IO) { runCatching { buildExcludeIds(seen0) }.getOrDefault(seen0) }
+            val rank = withContext(Dispatchers.IO) { runCatching { buildRankCandidates(type) }.getOrDefault(emptyList()) }
+            val picked = ArrayList<SeriesCard>()
+            val have = HashSet<String>()
+            for (c in rank) {
+                if (c.seriesId in excluded || !have.add(c.seriesId)) continue
+                picked.add(c)
+            }
+            var feedLast: FeedPage? = null
+            if (picked.size < 12) {
+                val built = withContext(Dispatchers.IO) {
+                    runCatching { buildFeedPool(type, emptyList(), null) }.getOrNull()
+                }
+                if (built != null) {
+                    feedLast = built.second
+                    for (c in built.first.values) {
+                        if (picked.size >= 48) break
+                        if (c.seriesId in excluded || !have.add(c.seriesId)) continue
+                        picked.add(c)
+                    }
+                }
+            }
+            if (picked.isNotEmpty()) {
+                cards = picked
+                page = feedLast // rank 池无游标：走 feed 兜底续翻（见 step 的 page==null 分支）
+                cursor = 0
+                Store.feedSeenIds = seen0.toMutableList().apply {
+                    picked.forEach { c -> val id = c.seriesId; remove(id); add(id) }
+                }
+                withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, picked) } }
+            } else {
+                cards = emptyList()
+                page = null
+            }
+            loading = false
+        }
     }
 
     // 预载后面若干部（FeedPreload.AHEAD=8）：换剧时直接用准备好的解密代理，起播几乎无感
@@ -246,13 +286,39 @@ fun FeedScreen(
         UiMemo.feedPage = page
     }
 
-    /** 换剧：-1 上一部 / +1 下一部；走到列表尾自动续一页。 */
+    /** 换剧：-1 上一部 / +1 下一部；走到列表尾自动续一页（rank 池无游标时走 feed 兜底，别崩）。 */
     fun step(dir: Int) {
         val next = cursor + dir
         if (next < 0) return
         if (next >= cards.size) {
-            val c = page ?: return
-            if (!c.hasMore || moreLoading) return
+            if (moreLoading) return
+            val c = page
+            if (c == null) {
+                // rank 池没有游标：拉一页 feed 兜底续上，别卡死/崩
+                moreLoading = true
+                scope.launch {
+                    val excluded = withContext(Dispatchers.IO) {
+                        runCatching { buildExcludeIds(Store.feedSeenIds.toSet()) }
+                            .getOrDefault(Store.feedSeenIds.toSet())
+                    }
+                    val fb = withContext(Dispatchers.IO) {
+                        runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
+                    }
+                    if (fb != null && fb.cards.isNotEmpty()) {
+                        val known = cards.map { it.seriesId }.toSet()
+                        // 和 rank 同一套剔除：已看 / 已预约上线 / 跨天 seen 不再推出来
+                        val add = fb.cards.filter { it.seriesId !in known && it.seriesId !in excluded }
+                        page = fb
+                        if (add.isNotEmpty()) {
+                            cards = cards + add
+                            cursor = next.coerceAtMost(cards.lastIndex)
+                        }
+                    }
+                    moreLoading = false
+                }
+                return
+            }
+            if (!c.hasMore) return
             moreLoading = true
             scope.launch {
                 val np = withContext(Dispatchers.IO) {
@@ -427,4 +493,56 @@ private fun FeedPickButton(label: String, initialFocus: Boolean, onSelect: () ->
             .padding(horizontal = 36.dp, vertical = 16.dp),
     )
     LaunchedEffect(Unit) { if (initialFocus) runCatching { fr.requestFocus() } }
+}
+
+// ---------------- 刷剧「热播榜 + 新剧榜」候选（36 漫剧 / 39 真人剧） ----------------
+
+/** 取一个榜单子榜的 ≤pages 页，按 seriesId 去重合并。 */
+private fun fetchRankSub(genre: String, sub: String, pages: Int = 2): List<SeriesCard> {
+    val out = LinkedHashMap<String, SeriesCard>()
+    var offset = 0
+    var session = ""
+    var hasMore = true
+    var p = 0
+    while (p < pages && hasMore) {
+        val pg = runCatching { Api.rank(offset, session, genre, sub) }.getOrNull() ?: break
+        pg.cards.forEach { out.putIfAbsent(it.seriesId, it) }
+        val advanced = pg.nextOffset > offset
+        offset = pg.nextOffset
+        session = pg.sessionId.ifEmpty { session }
+        hasMore = pg.hasMore && advanced
+        p++
+    }
+    return out.values.toList()
+}
+
+/** 36 漫剧：热播榜+新剧榜；39 真人剧：热播榜+新剧榜。热播在前、新剧在后，按 seriesId 去重。 */
+private fun buildRankCandidates(type: String): List<SeriesCard> {
+    val genre = if (type == "36") "comic_series_rank" else "human"
+    val hot = if (type == "36") "comic_series_hot_play" else "human_hot_play"
+    val fresh = if (type == "36") "comic_series_new_rank" else "human_new_rank"
+    val out = LinkedHashMap<String, SeriesCard>()
+    fetchRankSub(genre, hot, 2).forEach { out.putIfAbsent(it.seriesId, it) }   // 热播在前
+    fetchRankSub(genre, fresh, 2).forEach { out.putIfAbsent(it.seriesId, it) } // 新剧在后
+    return out.values.toList()
+}
+
+/** 剔除并集：①云端官方历史 ②本地历史 ③预约且已上线(!upcoming) ④跨天 feed_seen。 */
+private fun buildExcludeIds(extraSeen: Set<String>): Set<String> {
+    val ids = HashSet<String>()
+    runCatching {
+        if (Store.loggedIn) Api.officialHistory(3).forEach { r ->
+            r.optString("seriesId").takeIf { it.isNotBlank() }?.let { ids.add(it) }
+        }
+    }
+    runCatching {
+        Store.history().forEach { r ->
+            r.optString("seriesId").takeIf { it.isNotBlank() }?.let { ids.add(it) }
+        }
+    }
+    runCatching {
+        if (Store.loggedIn) Api.reserveList().forEach { c -> if (!c.upcoming) ids.add(c.seriesId) }
+    }
+    ids.addAll(extraSeen)
+    return ids
 }
