@@ -117,6 +117,7 @@ def print_timing():
             ("mirror_tag", _sec("mirror_tag")),
             ("desktop", _sec("desktop")),
             ("check_versions", _sec("check_versions")),
+            ("notice", _sec("notice")),
         )
     )
     build = _sec("build")
@@ -396,6 +397,52 @@ def publish_github(assets):
         print("WARN: GitHub 发布异常（不影响本次）：", exc)
 
 
+def update_notice_nonlatest(platform, code):
+    """发版后维护 notice.json 的「仅非最新版可见」阈值（幂等、尽力而为、失败不阻断）。
+    把 id=update-pc-nonlatest / update-android-nonlatest 的 maxCode 设为 (本次发布 versionCode - 1)：
+    最新版(curCode=code) > maxCode 故不会被弹，只有非最新版(curCode<=code-1)才看到「请更新」。
+    只改目标 id 的 maxCode 数字，其余字段/其它 notices 原样不动；写回前备份 notice.json.bak-<ts>。"""
+    if not code or code <= 0:
+        return
+    notice_id = "update-pc-nonlatest" if platform == "pc" else "update-android-nonlatest"
+    try:
+        with timed("notice"):
+            p = subprocess.run(["ssh", SERVER, "cat %s/notice.json" % SERVER_DIR],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if p.returncode != 0 or not p.stdout.strip():
+                print("WARN: 读 notice.json 失败，跳过阈值维护（不影响发版）")
+                return
+            raw = p.stdout
+            m = re.search(r'"id"\s*:\s*"%s"' % re.escape(notice_id), raw)
+            if not m:
+                print("WARN: notice.json 未找到 %s，跳过阈值维护（不影响发版）" % notice_id)
+                return
+            head, seg = raw[:m.end()], raw[m.end():]
+            mm = re.search(r'("maxCode"\s*:\s*)(\d+)', seg)
+            if not mm:
+                print("WARN: %s 未找到 maxCode，跳过阈值维护（不影响发版）" % notice_id)
+                return
+            cur = int(mm.group(2))
+            newv = code - 1
+            if cur == newv:
+                print("notice 阈值已是最新：%s maxCode=%d（幂等，无需改动）" % (notice_id, cur))
+                return
+            new_raw = head + seg[:mm.start()] + mm.group(1) + str(newv) + seg[mm.end():]
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            subprocess.run(["ssh", SERVER, "cp -a %s/notice.json %s/notice.json.bak-%s" % (SERVER_DIR, SERVER_DIR, ts)], check=False)
+            tmp = os.path.join(ROOT, "dist", "_notice_upload.json")
+            with open(tmp, "w", encoding="utf-8", newline="") as f:
+                f.write(new_raw)
+            subprocess.run(["scp", "-C", tmp, "%s:%s/notice.json" % (SERVER, SERVER_DIR)], check=False)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            print("notice 阈值已更新：%s maxCode %d→%d（备份 notice.json.bak-%s）" % (notice_id, cur, newv, ts))
+    except Exception as exc:
+        print("WARN: notice 阈值维护异常（不影响发版）：", exc)
+
+
 def copy_to_desktop(version):
     os.makedirs(DESKTOP_APK, exist_ok=True)
     keep = {
@@ -442,6 +489,7 @@ def cmd_android(a):
         with timed("prune"):
             prune_remote()
         publish_github(list(files.values()) + manifests)
+        update_notice_nonlatest("android", code)
     if a.desktop_copy:
         with timed("desktop"):
             copy_to_desktop(version)
@@ -453,6 +501,7 @@ def cmd_android(a):
 def cmd_pc(a):
     cur_name, _ = read_version_pc()
     version = a.version or (bump_version(cur_name) if a.bump else cur_name)
+    code = sum(int(x) * m for x, m in zip(version.split("."), (10000, 100, 1)))
     if a.bump:
         with timed("bump"):
             write_version_pc(version)
@@ -471,6 +520,7 @@ def cmd_pc(a):
         with timed("prune"):
             prune_remote()
         publish_github(list(files.values()) + manifests)
+        update_notice_nonlatest("pc", code)
     if getattr(a, "check", False):
         run_check_versions()
     print_timing()
