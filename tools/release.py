@@ -482,6 +482,15 @@ def _manifest_size(server_name, local_path):
     return 0
 
 
+def _server_version(server_name):
+    """取服务器清单 versionName（判断该平台是否已发布到本次目标版本）。"""
+    try:
+        with urllib.request.urlopen(MANIFEST_BASE.rstrip("/") + "/" + server_name, timeout=10) as r:
+            return str(json.loads(r.read().decode("utf-8", "replace")).get("versionName") or "").strip()
+    except Exception:
+        return ""
+
+
 def manifest_sizes_for(pc_name, android_name):
     return {
         "pc": _manifest_size("version-pc.json", os.path.join(ROOT, "dist", "pc", pc_name, "version-pc.json")),
@@ -492,18 +501,28 @@ def manifest_sizes_for(pc_name, android_name):
 
 def verify_download_links(pc_name, android_name, manifest_sizes):
     """发版后校验官网三条下载链接（WEB_BASE + /文件名）：HTTP 200 且 Content-Length==清单 size。
-    2~3 次重试(CDN)；逐条打印 OK/FAIL，FAIL 用醒目 ERROR；返回每项 (ok, code, got_size, exp_size)。
+    保护：仅当"服务器清单 versionName 已==本次目标版本"时才探测该平台；未发布/未上传的平台 SKIP、不提前探测，
+    避免把尚未上传的文件探成 CDN 负缓存 404。2~3 次重试；逐条 OK/FAIL(FAIL 醒目 ERROR)；返回每项 (ok,code,got,exp)。
     不阻断发版：异常只 WARN，不 die。"""
     items = [
-        ("PC  msi", "kaixinguo-%s.msi" % pc_name, manifest_sizes.get("pc", 0)),
-        ("Pad apk", "hongguo-pad-%s.apk" % android_name, manifest_sizes.get("pad", 0)),
-        ("TV  apk", "hongguo-tv-%s.apk" % android_name, manifest_sizes.get("tv", 0)),
+        ("PC  msi", "kaixinguo-%s.msi" % pc_name, manifest_sizes.get("pc", 0), "version-pc.json", pc_name),
+        ("Pad apk", "hongguo-pad-%s.apk" % android_name, manifest_sizes.get("pad", 0), "version-hgpad.json", android_name),
+        ("TV  apk", "hongguo-tv-%s.apk" % android_name, manifest_sizes.get("tv", 0), "version-tv.json", android_name),
     ]
     results = []
     try:
         with timed("dlcheck"):
             print("[dlcheck] 校验官网下载链接（%s）：" % WEB_BASE)
-            for label, fname, exp in items:
+            checked = 0
+            ok_n = 0
+            skipped = 0
+            for label, fname, exp, svname, target in items:
+                sv = _server_version(svname)
+                if sv and target and sv != target:
+                    skipped += 1
+                    print("[dlcheck] SKIP  %s %s（服务器清单 versionName=%s≠目标 %s，该平台未发布到本次版本，跳过不探测）" % (label, fname, sv, target))
+                    continue
+                checked += 1
                 url = WEB_BASE.rstrip("/") + "/" + fname
                 code, got = -1, -1
                 for _attempt in range(3):
@@ -514,14 +533,16 @@ def verify_download_links(pc_name, android_name, manifest_sizes):
                 ok = (code == 200 and exp > 0 and got == exp)
                 results.append((ok, code, got, exp))
                 if ok:
+                    ok_n += 1
                     print("[dlcheck] OK    %s %s  %d bytes" % (label, fname, got))
                 else:
                     print("[dlcheck] ERROR %s %s  HTTP=%s Content-Length=%s 期望=%s  <== 官网下载链接异常，请查 /get/、静态文件、CDN！" % (label, fname, code, got, exp))
-            n_ok = sum(1 for r in results if r[0])
-            if n_ok == len(items):
-                print("[dlcheck] 汇总：3/3 OK (all pass)")
+            if checked == 0:
+                print("[dlcheck] 汇总：本次无可校验项（各平台清单均未到达目标版本，已全部 SKIP，不探测以免污染 CDN）")
+            elif ok_n == checked:
+                print("[dlcheck] 汇总：%d/%d OK (all pass)%s" % (ok_n, checked, ("，另 %d 项 SKIP(未发布)" % skipped) if skipped else ""))
             else:
-                print("[dlcheck] 汇总：%d/%d OK —— 有 FAIL（见上面 ERROR 行），发版继续但请立即排查！" % (n_ok, len(items)))
+                print("[dlcheck] 汇总：%d/%d OK，%d SKIP —— 有 FAIL（见上面 ERROR 行），发版继续但请立即排查！" % (ok_n, checked, skipped))
     except Exception as exc:
         print("[dlcheck] WARN: 官网下载链接校验异常（不影响发版返回码）：", exc)
     return results
