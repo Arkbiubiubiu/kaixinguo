@@ -61,7 +61,6 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
@@ -284,21 +283,10 @@ fun PlayerScreen(
      * ExoPlayer 默认要凑够 2.5 秒才开播，连播时「上一集放完 → 下一集」就是硬生生
      * 卡 2 秒多；本地代理已经把数据放在手边了，没必要等这么久。
      */
-    /**
-     * 解码方式：控制条上可随时切（硬解 ↔ 软解），不用退出到设置。
-     *
-     * 切换必须重建播放器（Media3 不支持运行时换解码器），位置在重建后跳回去，
-     * 用户只需要等一次很短的重新缓冲。设置页里那个开关是它的持久值。
-     */
-    var softMode by remember { mutableStateOf(Store.softDecode) }
-    /** 重建计数：+1 就让 remember 重新造一个播放器 */
+    /** 重建计数：+1 就让 remember 重新造一个播放器（清晰度变化时用；已无软解切换） */
     var decodeGen by remember { mutableStateOf(0) }
-    /** 重建后要跳回的位置（切换前记下来的秒数，毫秒） */
+    /** 重建后要跳回的位置（毫秒） */
     var decodeSeekTo by remember { mutableStateOf(-1L) }
-    /** 当前这一集第一次真正出画的时间（0 = 还没出过画），自动软解兜底用 */
-    var firstFrameAt by remember { mutableStateOf(0L) }
-    /** 这一集是否已经自动切过一次软解，防止来回重建 */
-    var autoSoftTried by remember { mutableStateOf(false) }
     /** 取流超过 3 秒时给用户的解释，避免只看到黑屏转圈 */
     var prepareNote by remember { mutableStateOf("") }
     LaunchedEffect(ps.preparing) {
@@ -326,51 +314,11 @@ fun PlayerScreen(
         val load = DefaultLoadControl.Builder()
             .setBufferDurationsMs(20_000, 60_000, 400, 800)
             .build()
-        // 视频解码器：默认交给厂商硬解；开了「软件解码」就强制走 Google 软解。
-        //
-        // 为什么需要这个开关：部分电视的硬解（实测小米 MiTV 用的
-        // OMX.amlogic.hevc.decoder.awesome）遇到个别 HEVC 流会一直
-        // `wait timeout` + 丢帧，丢帧时没写满的缓冲区直接显示出来就是
-        // 一片片绿块，暂停也定在那一帧。软解慢一点，但输出是准的。
+        // 视频解码：**永远只用硬件解码**（MediaCodec 默认选择），不再提供/自动切软解。
+        // 硬解失败按「播放出错/重试」处理，绝不回退软解。
         val renderers = DefaultRenderersFactory(context)
-        if (softMode) {
-            renderers.setMediaCodecSelector { mime, secure, tunneling ->
-                val all = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
-                if (!mime.startsWith("video/")) {
-                    all
-                } else {
-                    // 名字里带 google / c2.android 的是 AOSP 软解，排到最前面
-                    val soft = all.filter {
-                        it.name.contains("google", true) || it.name.contains("c2.android", true)
-                    }
-                    if (soft.isEmpty()) all else soft + all.filterNot { it in soft }
-                }
-            }
-        }
         ExoPlayer.Builder(context, renderers).setLoadControl(load).build()
             .apply { playWhenReady = true }
-    }
-
-    // 个别剧「有声无画」：硬解不报错，但一帧都不吐（当前这部的漫剧就是这种）。
-    // 兜底：播放器已 READY、音频在走、2.5 秒还没首帧 → 自动切软解重建一次。
-    // 每集只自动切一次（autoSoftTried），换集/换剧会重置。
-    LaunchedEffect(player, softMode) {
-        if (softMode) return@LaunchedEffect
-        while (true) {
-            kotlinx.coroutines.delay(500)
-            if (firstFrameAt != 0L || autoSoftTried) break
-            if (player.playbackState == Player.STATE_READY && player.isPlaying && player.currentPosition > 2500) {
-                autoSoftTried = true
-                android.util.Log.w("nextup", "no frame in ${player.currentPosition}ms -> auto soft decode")
-                runCatching {
-                    android.widget.Toast.makeText(context, "画面异常，已自动切换软解", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                decodeSeekTo = player.currentPosition
-                softMode = true
-                decodeGen += 1
-                break
-            }
-        }
     }
 
     // ---- 换集最后一帧定格 ----
@@ -443,9 +391,6 @@ fun PlayerScreen(
              * 所以没有解码器重建、没有画面定格。要做的只是把状态对齐到新的那一集。
              */
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // 新的一集：重新等首帧（自动软解看门狗按集计时）
-                firstFrameAt = 0L
-                autoSoftTried = false
                 // 换源这一拍解码器已释放、画面是黑的：抓到过片尾帧就立刻盖上。
                 // 加 isPlaying 判断——万一回调晚于新一集出画，宁可不盖，也别糊住正在播的画面
                 val now = System.currentTimeMillis()
@@ -515,8 +460,6 @@ fun PlayerScreen(
             }
 
             override fun onRenderedFirstFrame() {
-                // 这一集真正出画了：自动软解看门狗不用再管
-                firstFrameAt = System.currentTimeMillis()
                 // 新一集真正出画了：撤掉换集时顶着的定格帧
                 if (heldVisible) {
                     android.util.Log.i("nextup", "held frame release after ${System.currentTimeMillis() - heldAt}ms")
@@ -1656,15 +1599,6 @@ fun PlayerScreen(
             dmDensity = dmDensity,
             dmArea = dmArea,
             onSeek = { player.seekTo(it); mark() },
-            softDecode = softMode,
-            onToggleDecode = {
-                // 记下当前位置：重建播放器后要跳回来，不能让人从头看
-                decodeSeekTo = runCatching { player.currentPosition }.getOrDefault(0L)
-                softMode = !softMode
-                Store.softDecode = softMode
-                decodeGen += 1
-                mark()
-            },
             onTogglePlay = {
                 if (player.isPlaying) player.pause() else player.play()
                 mark()

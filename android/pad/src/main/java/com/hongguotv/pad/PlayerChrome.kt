@@ -133,10 +133,6 @@ fun PlayerChrome(
     playFocus: FocusRequester? = null,
     /** 最右侧「详情」按钮：跳详情页。传 null 就不显示这个按钮（Pad 走顶部胶囊） */
     onDetail: (() -> Unit)? = null,
-    /** 当前是不是软件解码：按钮上显示「软解」还是「硬解」 */
-    softDecode: Boolean = false,
-    /** 点一下切一次：硬解 → 软解 → 硬解 */
-    onToggleDecode: () -> Unit = {},
     /** 真实焦点是否停在控制台（按钮行或浮层）上。PlayerScreen 据此决定方向键是快进退还是移焦点。 */
     onChromeFocus: (Boolean) -> Unit = {},
     /** 播放页互动：收藏 / 点赞（与 PC 播放器右侧互动栏对齐，TV 收进「更多」） */
@@ -289,13 +285,6 @@ fun PlayerChrome(
                         style = barText,
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
-                    // 解码方式：硬解/软解一键切。绿块花屏时不用退出到设置，直接点它
-                    TextBtn(
-                        text = if (softDecode) "软解" else "硬解",
-                        height = btnH,
-                        fontSize = if (isTv) 15.sp else 12.sp,
-                        onClick = onToggleDecode,
-                    ) { c -> ChipGlyph(c) }
                     TextBtn(
                         text = if (episodes.isEmpty()) "选集" else "选集 · 共 ${episodes.size} 集",
                         height = btnH,
@@ -742,31 +731,6 @@ private fun ScreenGlyph(color: Color) = Glyph(color) { c ->
         moveTo(w * 0.42f, h * 0.32f); lineTo(w * 0.64f, h * 0.45f); lineTo(w * 0.42f, h * 0.58f); close()
     }
     drawPath(p, c, style = Fill)
-}
-
-/** 解码方式：一颗芯片（硬解/软解共用同一个图标，文字区分）。 */
-@Composable
-private fun ChipGlyph(color: Color) = Glyph(color) { c ->
-    val w = size.width
-    val h = size.height
-    drawRoundRect(
-        color = c,
-        topLeft = Offset(w * 0.22f, h * 0.22f),
-        size = Size(w * 0.56f, h * 0.56f),
-        cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
-        style = lineStroke(),
-    )
-    drawRoundRect(
-        color = c,
-        topLeft = Offset(w * 0.41f, h * 0.41f),
-        size = Size(w * 0.18f, h * 0.18f),
-        cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx()),
-    )
-    val st = 1.4.dp.toPx()
-    drawLine(c, Offset(w * 0.12f, h * 0.5f), Offset(w * 0.22f, h * 0.5f), st)
-    drawLine(c, Offset(w * 0.78f, h * 0.5f), Offset(w * 0.88f, h * 0.5f), st)
-    drawLine(c, Offset(w * 0.5f, h * 0.12f), Offset(w * 0.5f, h * 0.22f), st)
-    drawLine(c, Offset(w * 0.5f, h * 0.78f), Offset(w * 0.5f, h * 0.88f), st)
 }
 
 /** 选集：播放列表（两条线 + 三角）。 */

@@ -180,7 +180,6 @@ fun SettingsScreen() {
                 // 本地 state 承接一下，点完立刻刷新；写盘照旧。
                 var autoNextOn by remember { mutableStateOf(Store.autoNext) }
                 var deleteAfterOn by remember { mutableStateOf(Store.deleteAfterFinish) }
-                var softOn by remember { mutableStateOf(Store.softDecode) }
                 var defSpeed by remember { mutableStateOf(Store.speed) }
                 Box(
                     Modifier
@@ -255,47 +254,6 @@ fun SettingsScreen() {
                             }
                         }
                         Text("最后一集播完，把这部剧从观看记录里移除", color = TextDim, fontSize = 12.sp)
-                        Spacer(Modifier.height(14.dp))
-                        // 软件解码：整行可点（同「自动连播」那条的教训——只点右边的小开关，
-                        // 遥控器上下做几何搜索会直接越过它落到别的控件上）
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    softOn = !softOn
-                                    Store.softDecode = softOn
-                                },
-                        ) {
-                            Text(
-                                "软件解码（画面绿块/花屏时打开）",
-                                color = TextMain,
-                                fontSize = 14.sp,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Box(
-                                Modifier
-                                    .width(46.dp)
-                                    .height(26.dp)
-                                    .clip(RoundedCornerShape(13.dp))
-                                    .background(if (softOn) Red else Color(0x33FFFFFF)),
-                                contentAlignment = Alignment.CenterEnd,
-                            ) {
-                                Box(
-                                    Modifier
-                                        .padding(horizontal = 3.dp)
-                                        .size(20.dp)
-                                        .clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(Color.White),
-                                )
-                            }
-                        }
-                        Text(
-                            "打开＝用软件解码，关闭＝用电视硬件解码。画面出现绿色方块时打开",
-                            color = TextDim,
-                            fontSize = 12.sp,
-                        )
                         Spacer(Modifier.height(14.dp))
                         Text("默认倍速", color = TextMain, fontSize = 14.sp)
                         Spacer(Modifier.height(8.dp))

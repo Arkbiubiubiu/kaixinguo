@@ -77,17 +77,6 @@ object Store : AccountState {
         get() = p().getBoolean("delete_after_finish", false)
         set(v) = p().edit().putBoolean("delete_after_finish", v).apply()
 
-    /**
-     * 软件解码：画面出现**绿块 / 花屏**时打开。
-     *
-     * 有些电视的厂商硬解（实测小米 MiTV 的 Amlogic HEVC 解码器）遇到个别
-     * HEVC 流会不停超时、丢帧，丢帧没填满的缓冲区显示出来就是一片片绿块，
-     * 暂停时也定在那里。打开后强制走 Google 软件解码器，慢一点但画面是准的。
-     */
-    var softDecode: Boolean
-        get() = p().getBoolean("soft_decode", false)
-        set(v) = p().edit().putBoolean("soft_decode", v).apply()
-
     override var maxHeight: Int
         get() = p().getInt("max_height", 1080)
         set(v) = p().edit().putInt("max_height", v).apply()
