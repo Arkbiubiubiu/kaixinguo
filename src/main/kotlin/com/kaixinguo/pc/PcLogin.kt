@@ -279,6 +279,12 @@ object PcLogin {
             runCatching { PcHistoryStore.clearHistory() }
         }
         csrf = ""
+        // 登录成功后后台把本机历史写进服务器桶（best-effort，失败忽略）：供 TV 等只读桶的配对设备读取。
+        runCatching {
+            val t = Thread { runCatching { com.hongguotv.pad.HistoryApi.sync() } }
+            t.isDaemon = true
+            t.start()
+        }
     }
 
     /** 登录后用账号资料接口取红果真昵称刷新（登录响应里的 user_name 常是"用户+数字"兜底）。 */

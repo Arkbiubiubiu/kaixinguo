@@ -133,6 +133,9 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
                 cloud
             }
             if (App.flags["history_v2"] == true) reload()
+            // 登录态：再后台跑一次 HistoryApi.sync() —— 它把「官方 + 服务器桶」合并时
+            // 会带上本机 PcStore 历史，并把合并结果回写服务器桶；TV 等配对设备只读桶，靠这一步才看得到 PC 的历史。
+            launch { withContext(Dispatchers.IO) { runCatching { HistoryApi.sync() } } }
         } else {
             // 未登录没有云端历史：直接读本地（原实现调 historySyncAsync 内部立刻 return，再白等 1.5 秒）
             reload()

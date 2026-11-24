@@ -20,6 +20,8 @@ object PlaybackApi {
 
 object HistoryApi {
     fun official(maxPages: Int = 3): List<JSONObject> = Api.officialHistory(maxPages)
+    /** 历史桶 key：sha256("hgtv-history-v2|"+uid)；未登录/无 uid 返回 null。 */
+    fun historyKey(): String? = Api.historyKey()
     fun sync(): Boolean = Api.historySync()
     fun syncAsync(onDone: (() -> Unit)? = null, force: Boolean = false) = Api.historySyncAsync(onDone, force)
     fun report(seriesId: String, vid: String, episodeIndex: Int, positionMs: Long): Boolean =
