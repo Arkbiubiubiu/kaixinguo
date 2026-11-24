@@ -13,11 +13,10 @@
 
 ## 下载
 
-| 端 | 文件 | 说明 |
-|---|---|---|
-| PC（Windows） | [kaixinguo-1.2.5.msi](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.5/kaixinguo-1.2.5.msi) | 安装包，内含 FFmpeg（GPLv3）与本机取流服务 |
-| 平板 | [pad-pad-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.5/pad-pad-debug.apk) | Android 8.0+ |
-| 电视 | [pad-tv-debug.apk](https://github.com/Arkbiubiubiu/kaixinguo/releases/download/v1.2.5/pad-tv-debug.apk) | Android TV 8.0+ |
+- **官网（推荐 · 自动最新版）**：👉 **https://kxg.fabao.xin/** —— 电脑版 / 平板 / 电视，一键下载安装
+- **GitHub Releases（备用下载）**：https://github.com/Arkbiubiubiu/kaixinguo/releases
+
+> 电脑版下载 `.msi` 双击安装；平板 / 电视下载 `.apk` 安装（Android 8.0+）。也可在软件内「设置 → 检查更新」直接升级到最新版。
 
 | 端 | 技术 | 源码目录 | 状态 |
 |---|---|---|---|
