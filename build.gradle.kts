@@ -34,7 +34,7 @@ val buildPairBase = (findProperty("pairBase") as String?)?.trim().orEmpty()
 
 // 版本号唯一来源：发版只改这一行，packageVersion 和代码里的 BuildInfo 都从这里生成。
 // tools/release.py 可用 -PpcVersion 覆盖，源码仍是默认值。
-val pcVersion = (findProperty("pcVersion") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "1.2.126"
+val pcVersion = (findProperty("pcVersion") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "1.2.127"
 val pcCode = pcVersion.split('.').let { it[0].toInt() * 10000 + it[1].toInt() * 100 + it[2].toInt() }
 
 val generateBuildDefaults = tasks.register("generateBuildDefaults") {
