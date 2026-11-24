@@ -169,15 +169,8 @@ internal fun SettingsPage() {
                     }
                     Text("起播后自动向后预接下来几集的分集档案，切集秒开；0 = 关闭。", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(12.dp))
-                    Text("清晰度上限：${PcStore.maxHeight}P", color = Palette.text, fontSize = 14.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(1080, 720, 540).forEach { h ->
-                            TabChip("${h}P", PcStore.maxHeight == h) { PcStore.maxHeight = h }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text("自动档按这个上限挑清晰度；播放器清晰度菜单里的「自动」同源。", color = Palette.faint, fontSize = 12.sp)
+                    // 流畅度/清晰度不再让用户设置：播放器始终自动最高档（服务端只回 1 档=最高）。
+                    Text("播放清晰度：自动最高档（无需设置）", color = Palette.faint, fontSize = 12.sp)
                     Spacer(Modifier.height(12.dp))
                     // 默认倍速（安卓设置里同一项）：播放器起播用它，播放器里改倍速也会写回这里
                     var rate by remember { mutableStateOf(PcStore.playbackRate) }

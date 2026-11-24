@@ -482,10 +482,8 @@ fun PlayerScreen(
         dmCursor = ""
         dmMore = false
 
-        // 只用「自动」档的预取（指定清晰度时档位可能不同，别硬套）
-        val warmRaw = if (quality == 0) PlaybackPrefetch.take(ep.vid) else null
-        val warm = warmRaw?.takeIf { it.height <= PcStore.maxHeight }
-        if (warmRaw != null && warm == null) warmRaw.release()
+        // 预取条目直接用（始终最高档，无用户上限）
+        val warm = PlaybackPrefetch.take(ep.vid)
         if (warm != null) {
             Log.d("Prefetch", "命中第 $index 集预取（直链" + if (warm.proxy != null) " + 头部）" else "）")
         }
@@ -506,10 +504,9 @@ fun PlayerScreen(
                     }
                 }
                 tiers = list
-                val picked = if (quality > 0) list.firstOrNull { it.height == quality }
-                else list.filter { it.height <= PcStore.maxHeight }.maxByOrNull { it.height }
-                    ?: list.maxByOrNull { it.height }
-                val info = picked?.toPlayInfo() ?: PlaybackApi.play(ep.vid, 1004, PcStore.maxHeight)
+                // 始终最高档（服务端只回 1 档=最高）；不给用户选清晰度。
+                val picked = list.maxByOrNull { it.height }
+                val info = picked?.toPlayInfo() ?: PlaybackApi.play(ep.vid, 1004)
                 val rv = RemoteVideo(info)
                 rv.prepare()
                 val px = StreamProxy(rv)
@@ -1343,9 +1340,12 @@ fun PlayerScreen(
                 Box(Modifier.onGloballyPositioned { val p = it.positionInWindow(); val c = androidx.compose.ui.unit.IntOffset((p.x + it.size.width / 2).toInt(), (p.y + it.size.height / 2).toInt()); btnPos["speed"] = c; btnCenter["speed"] = c }) {
                     SpeedButton(speed, popup == "speed") { popup = if (popup == "speed") null else "speed" }
                 }
-                Box(Modifier.onGloballyPositioned { val p = it.positionInWindow(); val c = androidx.compose.ui.unit.IntOffset((p.x + it.size.width / 2).toInt(), (p.y + it.size.height / 2).toInt()); btnPos["quality"] = c; btnCenter["quality"] = c }) {
-                    QualityButton(quality, tiers, engine?.info?.height ?: 0, popup == "quality", onToggle = { popup = if (popup == "quality") null else "quality" }, onPick = { q -> popup = null; quality = q })
-                }
+                // 清晰度：只读显示当前实际档位（不给用户手动选）
+                CtrlText(
+                    Icons.Filled.PersonalVideo,
+                    (engine?.info?.height ?: 0).let { if (it > 0) "${it}P" else "自动" },
+                    onClick = {},
+                )
                 Box(Modifier.onGloballyPositioned { val p = it.positionInWindow(); btnPos["episodes"] = androidx.compose.ui.unit.IntOffset((p.x + it.size.width).toInt(), p.y.toInt()); btnCenter["episodes"] = androidx.compose.ui.unit.IntOffset((p.x + it.size.width / 2).toInt(), (p.y + it.size.height / 2).toInt()) }) {
                     CtrlText(Icons.AutoMirrored.Filled.List, "选集·全${episodes.size}集") { popup = if (popup == "episodes") null else "episodes" }
                 }
@@ -1437,7 +1437,6 @@ fun PlayerScreen(
                         }
                         when (hit) {
                             "speed" -> popup = if (popup == "speed") null else "speed"
-                            "quality" -> popup = if (popup == "quality") null else "quality"
                             "episodes" -> popup = if (popup == "episodes") null else "episodes"
                             "dmset" -> popup = if (popup == "dmset") null else "dmset"
                             "volume" -> muteToggle()
@@ -1452,19 +1451,6 @@ fun PlayerScreen(
                         // 引擎最多 2x（ffmpeg atempo 上限），菜单里不要再给 3x 这种点了没用的档
                         listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s ->
                             MenuRow(speedLabel(s), speed == s) { popup = null; speed = s; PcStore.playbackRate = s; engine?.setSpeed(s) }
-                        }
-                    }
-                }
-            }
-            if (popup == "quality") {
-                OverlayAt(anchor("quality"), w = 190, centered = true) {
-                    UpMenuCard {
-                        MenuTitle("清晰度")
-                        MenuRow("自动（上限 ${PcStore.maxHeight}P）", quality == 0) { popup = null; quality = 0 }
-                        tiers.sortedByDescending { it.height }.forEach { t ->
-                            MenuRow("${t.height}P" + if (t.codec.isNotBlank()) " · ${t.codec}" else "", quality == t.height) {
-                                popup = null; quality = t.height
-                            }
                         }
                     }
                 }

@@ -283,13 +283,12 @@ fun PlayerChrome(
                         fontSize = if (isTv) 15.sp else 12.sp,
                         onClick = { onMenu(toggle(menu, PlayerMenu.Speed)) },
                     ) { c -> GaugeGlyph(c) }
-                    TextBtn(
-                        text = if (definition > 0) "${definition}P" else "自动",
-                        enabled = definitions.isNotEmpty(),
-                        height = btnH,
-                        fontSize = if (isTv) 15.sp else 12.sp,
-                        onClick = { onMenu(toggle(menu, PlayerMenu.Definition)) },
-                    ) { c -> ScreenGlyph(c) }
+                    // 清晰度：用户不可选，永远自动最高档；这里只**只读显示**当前档位（如 1080P）
+                    Text(
+                        if (definition > 0) "${definition}P" else "自动",
+                        style = barText,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                     // 解码方式：硬解/软解一键切。绿块花屏时不用退出到设置，直接点它
                     TextBtn(
                         text = if (softDecode) "软解" else "硬解",
@@ -362,19 +361,7 @@ fun PlayerChrome(
                     }
                 }
 
-                PlayerMenu.Definition -> PanelSurface(150.dp) {
-                    PanelTitle("清晰度")
-                    MenuRow("自动", checked = definition <= 0, tv = isTv, focusRequester = panelFirst) {
-                        onDefinition(0)
-                        onMenu(PlayerMenu.None)
-                    }
-                    definitions.forEach { h ->
-                        MenuRow("${h}P", checked = definition == h, tv = isTv) {
-                            onDefinition(h)
-                            onMenu(PlayerMenu.None)
-                        }
-                    }
-                }
+                PlayerMenu.Definition -> Unit // 清晰度不再提供手动选择（恒自动最高档，仅只读显示）
 
                 PlayerMenu.Episodes -> EpisodePanel(
                     episodes = episodes,

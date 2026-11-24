@@ -92,11 +92,7 @@ object FeedPreload {
                 return@prefetch null
             }
             val tiers = PlaybackApi.tiers(ep.vid)
-            val cap = Store.maxHeight
-            val playable = tiers.filter { it.playable }
-            val picked = playable.firstOrNull { it.height == cap }
-                ?: playable.firstOrNull { it.height <= cap }
-                ?: playable.firstOrNull()
+            val picked = tiers.filter { it.playable }.firstOrNull() // 恒最高档（用户不可选）
             val info = picked?.toPlayInfo()
                 ?: runCatching { PlaybackApi.play(ep.vid, 1004, 0) }.getOrNull()
                 ?: return@prefetch null

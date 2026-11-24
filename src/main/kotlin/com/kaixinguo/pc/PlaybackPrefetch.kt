@@ -181,9 +181,9 @@ object PlaybackPrefetch {
                 tiers = PlaybackApi.tiers(vid)
             }
         }
-        val picked = tiers.filter { it.height <= maxHeight }.maxByOrNull { it.height }
-            ?: tiers.maxByOrNull { it.height }
-        val info = picked?.toPlayInfo() ?: PlaybackApi.play(vid, 1004, maxHeight)
+        // 始终最高档（服务端只回 1 档=最高；不再按用户上限过滤）
+        val picked = tiers.maxByOrNull { it.height }
+        val info = picked?.toPlayInfo() ?: PlaybackApi.play(vid, 1004)
         if (!prepareHead) {
             return@runCatching Entry(
                 vid, info.height, info, tiers, null, null, System.currentTimeMillis(),

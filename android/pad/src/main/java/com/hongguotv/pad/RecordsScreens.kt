@@ -106,7 +106,7 @@ fun RecordsScreen(
             }
         }
         when (tab) {
-            0 -> HistoryTab(filter, setFilter = { filter = it; UiMemo.recordsFilter = it }, onPlay = onPlay)
+            0 -> HistoryTab(filter, setFilter = { filter = it; UiMemo.recordsFilter = it }, onPlay = onPlay, onOpen = onOpen)
             1 -> ShelfTab(Store.KEY_FAVORITE, onOpen)
             else -> ShelfTab(Store.KEY_LIKE, onOpen)
         }
@@ -114,7 +114,7 @@ fun RecordsScreen(
 }
 
 @Composable
-internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, Int, Long) -> Unit) {
+internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, Int, Long) -> Unit, onOpen: (String) -> Unit) {
     // 先同步读本地历史：列表立刻进组合，滚动位置才能恢复；
     // 云端同步随后原地 diff，不重建列表（原来 loading 期间列表不在组合，滚动会归零）。
     val rows = remember {
@@ -309,7 +309,7 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
                                     else Modifier,
                                 ),
                         ) {
-                            HistoryRow(card, row) {
+                            HistoryRow(card, row, allowDetail = !managing, onOpen = { onOpen(card.seriesId) }) {
                                 if (managing) {
                                     picked = if (sel) picked - card.seriesId else picked + card.seriesId
                                 } else {
@@ -331,14 +331,15 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
 }
 
 @Composable
-internal fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
+internal fun HistoryRow(card: SeriesCard, row: JSONObject, allowDetail: Boolean = true, onOpen: () -> Unit, onPlay: () -> Unit) {
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Panel)
-            .clickable { onPlay() }
+            // TV：整行不做焦点目标（否则行内「详情/继续播放」按钮遥控器选不中）；Pad 触摸仍可整行点播
+            .then(if (isTv) Modifier else Modifier.clickable { onPlay() })
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -386,6 +387,11 @@ internal fun HistoryRow(card: SeriesCard, row: JSONObject, onPlay: () -> Unit) {
             }
         }
         Spacer(Modifier.width(10.dp))
+        // 遥控器可聚焦的「详情」入口（打开本剧 DetailScreen）；与「继续播放」并存。批量管理模式隐藏避免误触
+        if (allowDetail) {
+            OutlinePill("详情") { onOpen() }
+            Spacer(Modifier.width(8.dp))
+        }
         OutlinePill("继续播放") { onPlay() }
     }
 }

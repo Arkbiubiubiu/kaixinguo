@@ -181,7 +181,6 @@ fun SettingsScreen() {
                 var autoNextOn by remember { mutableStateOf(Store.autoNext) }
                 var deleteAfterOn by remember { mutableStateOf(Store.deleteAfterFinish) }
                 var softOn by remember { mutableStateOf(Store.softDecode) }
-                var capHeight by remember { mutableStateOf(Store.maxHeight) }
                 var defSpeed by remember { mutableStateOf(Store.speed) }
                 Box(
                     Modifier
@@ -297,17 +296,6 @@ fun SettingsScreen() {
                             color = TextDim,
                             fontSize = 12.sp,
                         )
-                        Spacer(Modifier.height(14.dp))
-                        Text("默认清晰度上限", color = TextMain, fontSize = 14.sp)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(1080 to "1080P", 720 to "720P", 540 to "540P").forEach { (h, label) ->
-                                TvChip(label, selected = capHeight == h) {
-                                    capHeight = h
-                                    Store.maxHeight = h
-                                }
-                            }
-                        }
                         Spacer(Modifier.height(14.dp))
                         Text("默认倍速", color = TextMain, fontSize = 14.sp)
                         Spacer(Modifier.height(8.dp))

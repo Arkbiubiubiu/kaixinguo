@@ -47,11 +47,8 @@ internal fun buildReady(
         }
     }
     if (!alive()) return null
-    val cap = if (defWant > 0) defWant else Store.maxHeight
-    val playable = ts.filter { it.playable }
-    val picked = playable.firstOrNull { it.height == cap }
-        ?: playable.firstOrNull { it.height <= cap }
-        ?: playable.firstOrNull()
+    // 恒取最高档（用户不可选）；Api.tiers 已按 height 降序，playable 第一个即最高可用档
+    val picked = ts.filter { it.playable }.firstOrNull()
     val info = picked?.toPlayInfo() ?: PlaybackApi.play(ep.vid, 1004, defWant)
     val rv = RemoteVideo(info)
     try {

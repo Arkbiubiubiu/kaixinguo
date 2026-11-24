@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -238,6 +239,8 @@ fun PlayerScreen(
     val watchdog = remember { StallWatchdog() }
 
     val focus = remember { FocusRequester() }
+    /** 错误态「重试」按钮的焦点（TV 上要能默认聚焦、确定=重试） */
+    val failFocus = remember { FocusRequester() }
     val playFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
@@ -306,6 +309,16 @@ fun PlayerScreen(
         delay(3_000)
         if (ps.preparing && prepareNote.isEmpty()) {
             prepareNote = "片源正在准备，首次播放可能需要几十秒…"
+        }
+    }
+    // 错误态：TV 上自动把焦点落到「重试」按钮（确定性可操作，别让遥控器按不到）
+    LaunchedEffect(ps.failed) {
+        if (ps.failed != null && isTv) {
+            repeat(12) {
+                withFrameNanos { }
+                runCatching { failFocus.requestFocus() }
+                delay(40)
+            }
         }
     }
 
@@ -751,13 +764,19 @@ fun PlayerScreen(
             var ts = withContext(Dispatchers.IO) {
                 runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
             }
-            // 全 VVC 集：服务端要先转码才有档位。以前这里直接往下走 play()，失败后
-            // 外层就把这一集判死（预取队列只剩下一集，播完直接跳过去）。必须像预取
-            // 一样等 job，等完再取一次档位。
-            if (ts.isEmpty()) {
+            // 全 VVC 集：服务端先转码才有档位。**转码期间不是错误**——显示"转码中"并自动
+            // 轮询 job / 退避重取（3s→5s→10s），就绪后自动起播，全程无需用户操作；
+            // 只有多轮仍拿不到才视为真失败（交给外层错误态，文案区分转码/网络/无源）。
+            var rounds = 0
+            var sawTranscode = false
+            while (ts.isEmpty() && rounds < 6) {
                 val job = PlaybackApi.pendingJob(ep.vid)
                 if (job != null) {
-                    val done = withContext(Dispatchers.IO) { PlaybackApi.awaitTranscode(job, 60_000L) }
+                    sawTranscode = true
+                    ps.preparing = true
+                    ps.showSpinner = true
+                    prepareNote = "片源正在转码，请稍候…（首次播放可能要几十秒）"
+                    val done = withContext(Dispatchers.IO) { PlaybackApi.awaitTranscode(job, 25_000L) }
                     PlaybackApi.clearPendingJob(ep.vid)
                     if (done) {
                         ts = withContext(Dispatchers.IO) {
@@ -765,13 +784,26 @@ fun PlayerScreen(
                         }
                     }
                 }
+                if (ts.isEmpty()) {
+                    if (!sawTranscode && prepareNote.isEmpty()) prepareNote = "正在准备片源…"
+                    val wait = when (rounds) {
+                        0 -> 3_000L
+                        1 -> 5_000L
+                        else -> 10_000L
+                    }
+                    delay(wait)
+                    ts = withContext(Dispatchers.IO) {
+                        runCatching { PlaybackApi.tiers(ep.vid, priority = true) }.getOrDefault(emptyList())
+                    }
+                }
+                rounds++
+            }
+            if (ts.isEmpty()) {
+                error(if (sawTranscode) "转码还没完成，请稍后重试" else "暂时拿不到播放源，请检查网络后重试")
             }
             ps.tiers = ts
-            val cap = if (defWant > 0) defWant else Store.maxHeight
-            val playableTiers = ts.filter { it.playable }
-            val picked = playableTiers.firstOrNull { it.height == cap }
-                ?: playableTiers.firstOrNull { it.height <= cap }
-                ?: playableTiers.firstOrNull()
+            // 恒取最高档（用户不可选）：Api.tiers 已按 height 降序，playable 的第一个即最高可用档
+            val picked = ts.filter { it.playable }.firstOrNull()
             // 表拿不到（或全是不支持的编码）才退回「让服务器挑一档」
             // 刷剧：后面几部已经预载过（详情 + 档位 + 解密代理头部），直接接管
             val pre = if (feed) FeedPreload.take(seriesId) else null
@@ -831,10 +863,18 @@ fun PlayerScreen(
             episodes.getOrNull(index - 1)?.let { Store.markUnsupported(it.vid) }
             Log.e("Playback", "unsupported codec vid=$badVid series=$seriesId title=$title ep=$index")
         } catch (e: Exception) {
-            val msg = e.message ?: "起播失败"
-            // 刷剧取流失败不再静默连跳下一部（用户分不清是坏片还是断网）；
-            // 停在当前集，给失败提示 + 重试（遥控器「确定」= 重试，见 tvKeys）
-            ps.failed = msg
+            val raw = e.message ?: "起播失败"
+            // 友好化：区分 转码中 / 服务器繁忙 / 网络 / 无可用源
+            val friendly = when {
+                raw.contains("转码") -> raw
+                raw.contains("稍后") || raw.contains("繁忙") || raw.contains("限流") -> "服务器繁忙，请稍后重试"
+                raw.contains("网络") || raw.contains("超时") || raw.contains("连接") ||
+                    raw.contains("timeout", true) || raw.contains("connect", true) -> "网络连接失败，请检查网络后重试"
+                else -> "暂时无法播放这一集（无可用片源），可重试或换一集"
+            }
+            Log.e("Playback", "play fail raw=$raw")
+            // 刷剧取流失败不停在错误弹窗里连跳，给失败提示 + 重试（遥控器「确定」= 重试，见 tvKeys）
+            ps.failed = friendly
             ps.preparing = false
         } finally {
             // 被下一集打断（或起播失败）时，本协程自己建的资源在这里关掉
@@ -1397,6 +1437,14 @@ fun PlayerScreen(
                     }
                     return@onPreviewKeyEvent false
                 }
+                // 错误态：返回键退出；其余交给聚焦的「重试」按钮（确定=重试），别被全屏层吃掉
+                if (ps.failed != null) {
+                    if (ev.key == Key.Back) {
+                        onBack()
+                        return@onPreviewKeyEvent true
+                    }
+                    return@onPreviewKeyEvent false
+                }
                 mark()
                 if (feed) feedKeys(ev) else if (isTv) tvKeys(ev) else padKeys(ev)
             },
@@ -1517,6 +1565,7 @@ fun PlayerScreen(
                     Spacer(Modifier.height(14.dp))
                     Box(
                         Modifier
+                            .focusRequester(failFocus)
                             .background(PanelHi, RoundedCornerShape(10.dp))
                             .clickable { ps.attempt++ }
                             .padding(horizontal = 22.dp, vertical = 10.dp),
@@ -1634,10 +1683,7 @@ fun PlayerScreen(
                 player.setPlaybackSpeed(s)
                 mark()
             },
-            onDefinition = { h ->
-                defWant = h
-                mark()
-            },
+            onDefinition = { /* 已禁用：清晰度恒自动最高档，用户不可手选 */ },
             onPickEpisode = {
                 mark()
                 onSwitch(seriesId, it)
