@@ -44,6 +44,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,6 +59,8 @@ SERVER_DIR = "/srv/hgtv-update"
 DESKTOP_APK = os.path.join(os.path.expanduser("~"), "Desktop", "开心果apk")
 DEFAULT_ENV = os.environ.get("KXG_RELEASE_ENV") or "D:/kaixinguo-backup/private/release.env"
 PAIR_BASE_DEFAULT = os.environ.get("KXG_PAIR_BASE") or "https://dl.fabao.xin:44468"
+WEB_BASE = os.environ.get("KXG_WEB_BASE") or "https://kxg.fabao.xin"
+MANIFEST_BASE = os.environ.get("KXG_BASE") or "http://192.168.1.54:8080"
 
 PROP_KEYS = (
     ("signUrl", "SIGN_URL"),
@@ -118,6 +122,7 @@ def print_timing():
             ("desktop", _sec("desktop")),
             ("check_versions", _sec("check_versions")),
             ("notice", _sec("notice")),
+            ("dlcheck", _sec("dlcheck")),
         )
     )
     build = _sec("build")
@@ -443,6 +448,85 @@ def update_notice_nonlatest(platform, code):
         print("WARN: notice 阈值维护异常（不影响发版）：", exc)
 
 
+def _probe_url(url, timeout=15):
+    """HEAD 优先，失败回退 GET（只取响应头，不读全 body），返回 (http_code, content_length)。"""
+    last = (-1, -1)
+    for method in ("HEAD", "GET"):
+        try:
+            req = urllib.request.Request(url, method=method, headers={"User-Agent": "kxg-release-check"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                code = getattr(r, "status", None) or r.getcode()
+                cl = r.headers.get("Content-Length")
+                return int(code), (int(cl) if cl and str(cl).isdigit() else -1)
+        except urllib.error.HTTPError as he:
+            last = (he.code, -1)
+            if method == "GET":
+                return last
+        except Exception:
+            last = (-1, -1)
+    return last
+
+
+def _manifest_size(server_name, local_path):
+    """取清单 size：优先服务器 version-*.json（官网/更新器同源），失败回退本地 dist 清单。"""
+    try:
+        with urllib.request.urlopen(MANIFEST_BASE.rstrip("/") + "/" + server_name, timeout=10) as r:
+            return int(json.loads(r.read().decode("utf-8", "replace")).get("size") or 0)
+    except Exception:
+        pass
+    try:
+        if os.path.isfile(local_path):
+            return int(json.load(open(local_path, encoding="utf-8")).get("size") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def manifest_sizes_for(pc_name, android_name):
+    return {
+        "pc": _manifest_size("version-pc.json", os.path.join(ROOT, "dist", "pc", pc_name, "version-pc.json")),
+        "pad": _manifest_size("version-hgpad.json", os.path.join(ROOT, "dist", "android", android_name, "version-hgpad.json")),
+        "tv": _manifest_size("version-tv.json", os.path.join(ROOT, "dist", "android", android_name, "version-tv.json")),
+    }
+
+
+def verify_download_links(pc_name, android_name, manifest_sizes):
+    """发版后校验官网三条下载链接（WEB_BASE + /文件名）：HTTP 200 且 Content-Length==清单 size。
+    2~3 次重试(CDN)；逐条打印 OK/FAIL，FAIL 用醒目 ERROR；返回每项 (ok, code, got_size, exp_size)。
+    不阻断发版：异常只 WARN，不 die。"""
+    items = [
+        ("PC  msi", "kaixinguo-%s.msi" % pc_name, manifest_sizes.get("pc", 0)),
+        ("Pad apk", "hongguo-pad-%s.apk" % android_name, manifest_sizes.get("pad", 0)),
+        ("TV  apk", "hongguo-tv-%s.apk" % android_name, manifest_sizes.get("tv", 0)),
+    ]
+    results = []
+    try:
+        with timed("dlcheck"):
+            print("[dlcheck] 校验官网下载链接（%s）：" % WEB_BASE)
+            for label, fname, exp in items:
+                url = WEB_BASE.rstrip("/") + "/" + fname
+                code, got = -1, -1
+                for _attempt in range(3):
+                    code, got = _probe_url(url)
+                    if code == 200 and exp > 0 and got == exp:
+                        break
+                    time.sleep(1.0)
+                ok = (code == 200 and exp > 0 and got == exp)
+                results.append((ok, code, got, exp))
+                if ok:
+                    print("[dlcheck] OK    %s %s  %d bytes" % (label, fname, got))
+                else:
+                    print("[dlcheck] ERROR %s %s  HTTP=%s Content-Length=%s 期望=%s  <== 官网下载链接异常，请查 /get/、静态文件、CDN！" % (label, fname, code, got, exp))
+            n_ok = sum(1 for r in results if r[0])
+            if n_ok == len(items):
+                print("[dlcheck] 汇总：3/3 OK (all pass)")
+            else:
+                print("[dlcheck] 汇总：%d/%d OK —— 有 FAIL（见上面 ERROR 行），发版继续但请立即排查！" % (n_ok, len(items)))
+    except Exception as exc:
+        print("[dlcheck] WARN: 官网下载链接校验异常（不影响发版返回码）：", exc)
+    return results
+
+
 def copy_to_desktop(version):
     os.makedirs(DESKTOP_APK, exist_ok=True)
     keep = {
@@ -490,6 +574,8 @@ def cmd_android(a):
             prune_remote()
         publish_github(list(files.values()) + manifests)
         update_notice_nonlatest("android", code)
+        _pcv = read_version_pc()[0]
+        verify_download_links(_pcv, version, manifest_sizes_for(_pcv, version))
     if a.desktop_copy:
         with timed("desktop"):
             copy_to_desktop(version)
@@ -521,6 +607,8 @@ def cmd_pc(a):
             prune_remote()
         publish_github(list(files.values()) + manifests)
         update_notice_nonlatest("pc", code)
+        _andv = read_version_android()[0]
+        verify_download_links(version, _andv, manifest_sizes_for(version, _andv))
     if getattr(a, "check", False):
         run_check_versions()
     print_timing()
