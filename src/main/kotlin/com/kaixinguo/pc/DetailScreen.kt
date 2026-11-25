@@ -312,7 +312,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                                     val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, seriesId, !d.onlineSubscribed) }.getOrDefault(false)
                                     withContext(Dispatchers.Main) {
                                         message = if (ok) (if (d.onlineSubscribed) "已取消预约" else "预约成功，上线提醒你") else "操作失败（需要登录）"
-                                        if (ok) detail = d.copy(onlineSubscribed = !d.onlineSubscribed)
+                                        if (ok) { detail = d.copy(onlineSubscribed = !d.onlineSubscribed); invalidateReserveAll() }
                                     }
                                 }
                             }
@@ -671,7 +671,7 @@ private fun RelatedBlock(
                                     .clickable {
                                         scope.launch(Dispatchers.IO) {
                                             val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, card.seriesId, !reserved) }.getOrDefault(false)
-                                            withContext(Dispatchers.Main) { if (ok) reserved = !reserved }
+                                            withContext(Dispatchers.Main) { if (ok) { reserved = !reserved; invalidateReserveAll() } }
                                         }
                                     }
                                     .padding(horizontal = 10.dp),

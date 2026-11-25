@@ -116,6 +116,10 @@ fun App() {
         }.firstOrNull() ?: return@LaunchedEffect
         FeedPreload.warm(first.seriesId)
     }
+    // 预约写成功后（任何入口）都清 App 层 UI 预约缓存，保证回到预约页重拉出正确数量
+    LaunchedEffect(Unit) {
+        Api.onReserveChanged = { UiMemo.reserveAt = 0L }
+    }
     // 打赏弹窗：侧栏「打赏」入口，纯展示不接支付，不进路由栈
     var donateOpen by remember { mutableStateOf(false) }
     // 追更未读角标：启动查一次，之后每 20 分钟一轮（与 PC 同周期）；进「追更」页清零

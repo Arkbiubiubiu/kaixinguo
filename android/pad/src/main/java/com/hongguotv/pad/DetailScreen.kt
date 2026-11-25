@@ -159,6 +159,8 @@ fun DetailScreen(
                         actionMsg = "未登录，预约只保存在本机，登录后会同步"
                     }
                 } else {
+                    // 写成功：彻底失效预约缓存 + 乐观增删预约列表卡片（回预约页立即 +1）
+                    ReserveUi.onToggled(card, on)
                     actionMsg = if (on) "已预约，上线会在「预约」里提醒你" else "已取消预约"
                 }
             }
@@ -636,8 +638,9 @@ fun DetailScreen(
                                                 } else {
                                                     "未登录，预约只保存在本机"
                                                 }
-                                            } else if (next) {
-                                                withContext(Dispatchers.Main) {
+                                            } else {
+                                                ReserveUi.onToggled(cardOf(d), next)
+                                                if (next) withContext(Dispatchers.Main) {
                                                     actionMsg = "已预约，上线会在「预约」里提醒你"
                                                 }
                                             }

@@ -680,7 +680,7 @@ internal fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: 
                                     if (!ok) withContext(Dispatchers.Main) {
                                         reserved = !next
                                         Store.toggleCard(Store.KEY_RESERVE, card)
-                                    }
+                                    } else ReserveUi.onToggled(card, next)
                                 }
                             }
                             .padding(horizontal = btnPadH, vertical = btnPadV),

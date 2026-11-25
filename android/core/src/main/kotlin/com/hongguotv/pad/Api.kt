@@ -2492,6 +2492,9 @@ object Api {
     private var reserveCache: Set<String>? = null
     private var reserveCacheAt = 0L
 
+    /** 预约状态变化回调：APP 层用它清自己的 UI 级预约缓存（UiMemo.reserveCards/reserveAt）。 */
+    var onReserveChanged: (() -> Unit)? = null
+
     fun reservedIds(): Set<String> {
         val now = System.currentTimeMillis()
         reserveCache?.let { if (now - reserveCacheAt < 60_000L) return it }
@@ -2507,6 +2510,9 @@ object Api {
         // 关键：预约页用的是 listCached("reserve")（ck = "v2|reserve"? 实际 "$CACHE_SCHEMA|reserve"）3分钟列表缓存，
         // 之前只清了 reserveCache 没清它 → 预约写成功、预约页仍显示旧数量（"假预约/数量不变"根因）。一并失效。
         listCache.remove("$CACHE_SCHEMA|reserve")
+        // 通知 APP 层清自己的 UI 级预约缓存（UiMemo.reserveCards / reserveAt），
+        // 否则预约页同进程回页仍读旧 UI 卡片 → "数量不变/假预约"。
+        runCatching { onReserveChanged?.invoke() }
     }
 
     fun reserveToggle(seriesId: String, on: Boolean): Boolean {
@@ -2638,12 +2644,14 @@ object Api {
         // 电视上单次往返+签名慢，串行叠加就是「预约页明显卡」的根因。
         val pending = java.util.Collections.synchronizedList(ArrayList<SeriesCard>())
         val online = java.util.Collections.synchronizedList(ArrayList<SeriesCard>())
-        val t1 = Thread { runCatching { pending.addAll(fetchReservePage("false")) } }
+        // 总超时用一个 CountDownLatch：两页并发跑，最多等 8 秒（不再 join(12)+join(12) 两段叠加），
+        // 哪页先回是哪页，超时也不阻塞整页太久。
+        val latch = java.util.concurrent.CountDownLatch(2)
+        Thread { runCatching { pending.addAll(fetchReservePage("false")) }; latch.countDown() }
             .apply { isDaemon = true; start() }
-        val t2 = Thread { runCatching { online.addAll(fetchReservePage("true")) } }
+        Thread { runCatching { online.addAll(fetchReservePage("true")) }; latch.countDown() }
             .apply { isDaemon = true; start() }
-        runCatching { t1.join(12_000) }
-        runCatching { t2.join(12_000) }
+        runCatching { latch.await(8, java.util.concurrent.TimeUnit.SECONDS) }
         val out = LinkedHashMap<String, SeriesCard>()
         pending.forEach { out.putIfAbsent(it.seriesId, it) } // 待上线
         online.forEach { out.putIfAbsent(it.seriesId, it) }  // 已上线

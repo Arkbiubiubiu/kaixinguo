@@ -110,25 +110,28 @@ fun FollowReserveScreen(
             loading = false
             return@LaunchedEffect
         }
-        // 一次性拿到完整列表（含封面/热度）再显示、直接可操作；不在 UI 层留半成品做 SWR
-        loading = true
         error = null
-        cards.clear()
         if (!Store.loggedIn) {
             error = if (mode == 0) "追更跟着账号走，请先到「我的」用手机号登录"
             else "预约跟着账号走，请先到「我的」用手机号登录"
             loading = false
             return@LaunchedEffect
         }
+        // C：重拉时**保留旧卡片**（不先清空显示 0）；只有完全没有缓存才转圈。失败则保留旧数据。
+        val hadCache = cards.isNotEmpty()
+        loading = !hadCache
         val result = withContext(Dispatchers.IO) {
-            // 预约页**强制走网络重拉**（绕过 listCached "v2|reserve" 3分钟缓存），确保预约/取消后数量立刻正确
-            runCatching { if (mode == 0) Api.followList() else Api.reserveList() }
+            // B：恢复快路径（3分钟缓存，平时秒开）；正确性靠预约成功后 Api listCache + UiMemo 预约缓存彻底失效
+            runCatching { if (mode == 0) Api.followList() else Api.reserveListCached() }
         }
-        result.onSuccess { cards.addAll(it) }
-        // 失败不能当成「空」——原来那样写，网络抖一下界面就变成
-        // 「你还没追更任何剧」，用户会以为数据丢了
+        result.onSuccess { fresh ->
+            if (hadCache) cards.diffUpdate(fresh) { it.seriesId }
+            else cards.addAll(fresh)
+            error = null
+        }
         result.onFailure {
-            error = if (mode == 0) "追更列表没加载出来" else "预约列表没加载出来"
+            // 有旧卡片就保留（不把界面刷成空/0，避免"加载中"被误读成"预约没了"）
+            if (!hadCache) error = if (mode == 0) "追更列表没加载出来" else "预约列表没加载出来"
         }
         loading = false
         if (cards.isNotEmpty()) {
@@ -142,6 +145,19 @@ fun FollowReserveScreen(
         val total = card.episodeCount
         if (total <= 0) return 0
         return (total - Store.progress(card.seriesId)).coerceAtLeast(0)
+    }
+
+    // 待上线行直接取消预约（写后校验 Ok 才从列表移除；失败保留）
+    fun cancelReserveOne(id: String) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { ShelfRepository.toggle(ShelfKind.Reserve, id, false) }.getOrDefault(false)
+            }
+            if (ok) {
+                ReserveUi.onToggled(null, false)
+                cards.removeAll { it.seriesId == id }
+            }
+        }
     }
 
     val updates = cards.filter { unseen(it) > 0 }
@@ -411,6 +427,8 @@ fun FollowReserveScreen(
                         playable = mode == 0 || !card.upcoming,
                         onPlay = { onPlay(card.seriesId) },
                         onDetail = { onOpen(card.seriesId) },
+                        reserveState = card.reserved || Store.contains(Store.KEY_RESERVE, card.seriesId),
+                        onToggleReserve = if (mode == 1 && card.upcoming) ({ cancelReserveOne(card.seriesId) }) else null,
                     )
                 }
             }
@@ -430,6 +448,8 @@ internal fun LibraryRow(
     playable: Boolean,
     onPlay: () -> Unit,
     onDetail: () -> Unit,
+    reserveState: Boolean = false,
+    onToggleReserve: (() -> Unit)? = null,
 ) {
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
     Row(
@@ -486,6 +506,24 @@ internal fun LibraryRow(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("播放", color = Color.White, fontSize = if (isTv) 15.sp else 13.sp, fontWeight = FontWeight.Medium)
+                }
+            } else if (onToggleReserve != null) {
+                // 待上线：显示预约状态，可直接取消（依写后校验结果回滚/移除）
+                Box(
+                    Modifier
+                        .height(if (isTv) 42.dp else 32.dp)
+                        .clip(RoundedCornerShape(if (isTv) 21.dp else 16.dp))
+                        .background(if (reserveState) Color(0x14FFFFFF) else Red)
+                        .clickable { onToggleReserve() }
+                        .padding(horizontal = if (isTv) 24.dp else 18.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        if (reserveState) "已预约（取消）" else "预约",
+                        color = if (reserveState) Color(0xE6FFFFFF) else Color.White,
+                        fontSize = if (isTv) 15.sp else 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
                 }
             }
             Box(

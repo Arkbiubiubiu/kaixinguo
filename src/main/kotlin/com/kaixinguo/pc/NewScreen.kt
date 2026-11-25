@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -595,7 +595,7 @@ internal fun CalendarRow(item: CalendarItem, onClick: () -> Unit, onPlay: () -> 
                     val ok = withContext(Dispatchers.IO) {
                         runCatching { ShelfRepository.toggle(ShelfKind.Reserve, item.seriesId, target) }.getOrDefault(false)
                     }
-                    if (ok) reserved = target
+                    if (ok) { reserved = target; invalidateReserveAll() }
                 }
             },
         )

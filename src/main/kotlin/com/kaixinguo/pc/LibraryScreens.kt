@@ -638,23 +638,38 @@ internal fun NoticesList(
 
 // ---------------------------------------------------------------- 预约（已上线 / 待上线）
 
+/** 预约/取消成功后：同时失效「Api 列表缓存(listCache v2|reserve)」+「界面内存卡片缓存(PageMemo)」两层。 */
+internal fun invalidateReserveAll() {
+    runCatching { Api.invalidateReserve() }
+    PageMemo.clearReserveMemo()
+}
+
 @Composable
 internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var cards by remember { mutableStateOf(PageMemo.reserveCards) }
     var loading by remember { mutableStateOf(cards.isEmpty()) }
+    var failed by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(PageMemo.reserveTab) } // 0=已上线（旧版默认 tab）
     var search by remember { mutableStateOf(PageMemo.reserveSearch) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
-        loading = true
-        // 进入预约页强制重拉：先清预约列表缓存（含 listCache["v2|reserve"] 与 reserveIds 缓存），再取
-        runCatching { Api.invalidateReserve() }
-        cards = withContext(Dispatchers.IO) { runCatching { Api.reserveListCached() }.getOrDefault(emptyList()) }
-        loading = false
-        if (cards.isNotEmpty()) {
-            PageMemo.reserveCards = cards
-            PageMemo.reserveAt = System.currentTimeMillis()
+        // 快路径：界面缓存还新鲜就直接用（秒开），不裸拉；只有被正确失效后才重拉。
+        if (cards.isNotEmpty() &&
+            System.currentTimeMillis() - PageMemo.reserveAt < PageMemo.RETURN_TTL_MS
+        ) {
+            loading = false
+            return@LaunchedEffect
         }
+        loading = true
+        failed = false
+        val r = withContext(Dispatchers.IO) { runCatching { Api.reserveListCached() } }
+        r.onSuccess { list ->
+            cards = list
+            PageMemo.reserveCards = list
+            PageMemo.reserveAt = System.currentTimeMillis()
+        }.onFailure { failed = true }
+        loading = false
     }
 
     val online = cards.filter { !it.upcoming }
@@ -676,7 +691,12 @@ internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
             ListSearchBox(search, { search = it; PageMemo.reserveSearch = it }, "搜索预约的剧")
         }
         when {
-            loading -> CenterLoading()
+            loading && cards.isEmpty() -> CenterLoading()
+            failed && cards.isEmpty() -> EmptyState(
+                title = "预约列表没加载出来",
+                hint = "检查网络后重新进入本页",
+                icon = Icons.Filled.Refresh,
+            )
             shown.isEmpty() -> EmptyState(
                 title = if (tab == 0) "还没有已上线的预约" else "还没有待上线的预约",
                 hint = "在详情页点「预约」，开播时会提醒你",
@@ -689,16 +709,41 @@ internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
             ) {
                 items(shown, key = { it.seriesId }) { card ->
-                    ReservationRow(card, onOpen = { onOpen(card.seriesId) }, onPlay = { onPlay(card.seriesId) })
+                    ReservationRow(
+                        card,
+                        onOpen = { onOpen(card.seriesId) },
+                        onPlay = { onPlay(card.seriesId) },
+                        onReserve = {
+                            // 待上线：直接取消预约（写后校验 + 两层缓存失效）
+                            scope.launch(Dispatchers.IO) {
+                                val ok = runCatching {
+                                    ShelfRepository.toggle(ShelfKind.Reserve, card.seriesId, false)
+                                }.getOrDefault(false)
+                                withContext(Dispatchers.Main) {
+                                    if (ok) {
+                                        invalidateReserveAll()
+                                        cards = cards.filter { it.seriesId != card.seriesId }
+                                        PageMemo.reserveCards = cards
+                                        PageMemo.reserveAt = System.currentTimeMillis()
+                                    }
+                                }
+                            }
+                        },
+                    )
                 }
             }
         }
     }
 }
 
-/** 预约行卡：封面 | 标题/简介/上线信息 | 播放+详情（已上线）/ 预约态（待上线）。 */
+/** 预约行卡：封面 | 标题/简介/上线信息 | 播放+详情（已上线）/ 已预约+取消（待上线）。 */
 @Composable
-internal fun ReservationRow(card: SeriesCard, onOpen: () -> Unit, onPlay: () -> Unit) {
+internal fun ReservationRow(
+    card: SeriesCard,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    onReserve: (() -> Unit)? = null,
+) {
     var hovered by remember { mutableStateOf(false) }
     Row(
         Modifier
@@ -770,7 +815,10 @@ internal fun ReservationRow(card: SeriesCard, onOpen: () -> Unit, onPlay: () -> 
                     modifier = Modifier.clickable { onOpen() }.padding(horizontal = 10.dp, vertical = 2.dp),
                 )
             } else {
-                Text(card.statusText ?: "待上线", color = Palette.faint, fontSize = 12.sp)
+                Text("已预约", color = Palette.accent, fontSize = 12.sp)
+                if (onReserve != null) {
+                    SecondaryButton("取消预约", onClick = onReserve)
+                }
             }
         }
     }

@@ -211,6 +211,11 @@ internal object PageMemo {
     var reserveSearch = ""
     var reserveCards: List<SeriesCard> = emptyList()
     var reserveAt = 0L
+    /** 预约/取消成功后清掉预约页的界面内存缓存（第二层），下次进预约页快路径未命中→重拉。 */
+    fun clearReserveMemo() {
+        reserveCards = emptyList()
+        reserveAt = 0L
+    }
     val reserveList = androidx.compose.foundation.lazy.LazyListState(0, 0)
 
     // 演职员：资料/作品 + 滚动

@@ -125,3 +125,19 @@ object UiMemo {
     /** 「列表→详情→返回」状态复用窗口：超过这个时间才重新拉首屏。 */
     const val RETURN_TTL_MS = 5 * 60_000L
 }
+
+/**
+ * 预约状态变化的 APP 层统一失效 + 乐观更新。
+ * 外部入口（详情页/排行榜）预约成功后调用：清 Api listCache、触发 reserveAt=0、
+ * 并把卡片就地加/减到 UiMemo.reserveCards —— 这样"预约后立即 +1"无需等网络重拉。
+ */
+object ReserveUi {
+    fun onToggled(card: SeriesCard?, on: Boolean) {
+        Api.invalidateReserve()
+        if (card != null) {
+            UiMemo.reserveCards.removeAll { it.seriesId == card.seriesId }
+            if (on) UiMemo.reserveCards.add(0, card.copy(upcoming = true, reserved = true))
+        }
+        UiMemo.reserveAt = 0L
+    }
+}
