@@ -642,6 +642,8 @@ def main():
     ap.add_argument("--code", type=int)
     ap.add_argument("--bump", action="store_true")
     ap.add_argument("--notes", default="")
+    ap.add_argument("--notes-file", dest="notes_file", default=None,
+                    help="从 UTF-8 文件读取更新说明(notes)，优先于 --notes；避免中文/引号经命令行传参丢失")
     ap.add_argument("--env", default=DEFAULT_ENV)
     ap.add_argument("--url-base", default="https://dl.fabao.xin:44468")
     ap.add_argument("--no-build", action="store_true")
@@ -652,6 +654,8 @@ def main():
                     help="构建时不传 -PsignUrl，使 BuildDefaults.SIGN_URL 为空（每机唯一本地签名版；PLAY_BASES/HISTORY_BASE/PLAY_TOKEN 仍保留）")
     ap.set_defaults(desktop_copy=True)
     a = ap.parse_args()
+    if getattr(a, "notes_file", None):
+        a.notes = open(a.notes_file, encoding="utf-8").read().strip()
     global _WALL0
     _WALL0 = time.perf_counter()
     if a.platform == "android":
