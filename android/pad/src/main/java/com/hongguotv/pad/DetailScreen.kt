@@ -142,6 +142,11 @@ fun DetailScreen(
     // 这时 requestFocus 会抛「FocusRequester is not initialized」，
     // 被 runCatching 吞掉，表现就是「进页面没有焦点」（第一次就踩了这个）。
     val playFocus = remember { FocusRequester() }
+    // 进新剧（seriesId 变化）把详情滚动归 0：UiMemo.detailScroll 是全局的，
+    // 可能留着上一部滚到的位置 → 进页就"早滚"。归 0 保证进页从顶部开始、标题可见。
+    LaunchedEffect(seriesId) {
+        runCatching { UiMemo.detailScroll.scrollTo(0) }
+    }
     // 本次进入页面还没补过焦点。**只有补成功了才清**，不是尝试一次就清。
     var needAutoFocus by remember(seriesId) { mutableStateOf(true) }
     // 本页（含所有子控件）此刻是否已经有焦点。控制条、选集按钮、侧栏之外的地方
@@ -149,26 +154,18 @@ fun DetailScreen(
     var hasAnyFocus by remember(seriesId) { mutableStateOf(false) }
     val anyFocusNow by rememberUpdatedState(hasAnyFocus)
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
-    // 进页面的焦点落点：**等主按钮真正上屏那一刻**再给，不是靠 delay 猜。
-    //
-    // 两条历史教训都在这里：
-    // ① 原来挂在 `LaunchedEffect(loading, detail)` 上等 loading 变 false。可页面
-    //    只要 detail 到手就画出来了，loading 还要等收藏/预约那几个请求 —— 用户已经
-    //    在看页面、已经在按方向键了，它才把手伸过来把焦点抢回「继续看第 N 集」，
-    //    正是反馈的「前一两秒正常，之后被拉回第一项」。
-    // ② 改成 delay(80/240) 猜时机也不行：节点没 attach 时 requestFocus 直接抛
-    //    「not initialized」被吞掉，页面就没焦点，第一下方向键落到返回箭头上。
-    // ③ 只靠 onPlaced 一次仍然不够：那一刻旧页面的焦点可能还没释放（anyFocusNow
-    //    还是 true），跳过一次以后就永远不再补 —— TV 进详情页无落点，第一下方向键
-    //    落到左上角返回箭头。所以改成「成功才清标记」+ 首帧后短轮询补焦点。
-    // onPlaced 是布局完成回调，那一刻节点一定在位，请求一定成功；轮询只是兜底。
+    // 进页焦点落「继续看第X集」按钮（它本就在第一屏可见）；沿用「onPlaced + 成功才清标记 +
+    // 首帧短轮询」保证有效焦点、不被中途抢回。聚焦成功后把 detailScroll 归 0——聚焦可能触发
+    // scroll-to-reveal 把页面滚一下，归 0 后因按钮在第一屏仍可见，焦点不会丢、也不会反复滚。
     val autoFocusPlay: () -> Unit = {
         if (isTv && needAutoFocus && !anyFocusNow) {
-            if (runCatching { playFocus.requestFocus() }.isSuccess) needAutoFocus = false
+            if (runCatching { playFocus.requestFocus() }.isSuccess) {
+                needAutoFocus = false
+                scope.launch { runCatching { UiMemo.detailScroll.scrollTo(0) } }
+            }
         }
     }
-    // 兜底轮询：进页面后旧焦点释放有一次延迟，onPlaced 那一下可能被挡掉。
-    // 每 120ms 试一次，最多 2.4s；本页任何控件拿到焦点、或用户已经开始操作，就停手。
+    // 兜底轮询：旧焦点释放有一次延迟，onPlaced 那一下可能被挡掉；每 120ms 试一次最多 2.4s。
     LaunchedEffect(seriesId) {
         if (!isTv) return@LaunchedEffect
         repeat(20) {
@@ -647,11 +644,9 @@ fun DetailScreen(
                         Box(
                             Modifier
                                 .height(40.dp)
-                                // focusRequester 必须在 clickable **外层**（clickable 内部才是 focusTarget），
-                                // 放到里面 requestFocus 会抛 "not initialized"，被 runCatching 吞掉后
-                                // 表现就是「进页面没有焦点」。
+                                // focusRequester 必须在 clickable 外层（clickable 内部才是 focusTarget）
                                 .focusRequester(playFocus)
-                                // 主按钮第一次真正上屏时给一次焦点（见上方说明）
+                                // 主按钮第一次真正上屏时给一次焦点（进页焦点=继续看）
                                 .onPlaced { autoFocusPlay() }
                                 // clickable 在外、clip 在内：焦点框画在 clickable 层，不会被圆角裁掉
                                 .clickable { onPlay(seriesId, resumeIndex, resumePosition) }
