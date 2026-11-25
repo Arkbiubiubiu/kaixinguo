@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
 )
@@ -146,47 +146,58 @@ internal fun HomePage(
         PageMemo.homeRefresh = refresh
         loading = true
         if (resetWall) heroIndex = 0
+        val type = tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]
+        // 首屏只取 tab/v 主内容（deepen=false）：先显示可操作，不等补页/热度
         val result = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPageCached(tabTypes[tab.coerceIn(0, tabTypes.lastIndex)]) }.getOrNull()
+            runCatching { Api.firstPage(type, deepen = false) }.getOrNull()
         }
-        var cur = result
-        // 墙要「满」：首批不足两屏（约 16 张）时自动续拉，最多补 2 轮（旧版同语义）
-        var rounds = 0
-        while (cur != null && cur.cards.size < 16 && cur.hasMore && rounds < 2) {
-            val next = withContext(Dispatchers.IO) {
-                runCatching {
-                    Api.feedNext(
-                        tabTypes[tab.coerceIn(0, tabTypes.lastIndex)],
-                        cur.cellId, cur.planId, cur.sessionId, cur.nextOffset,
-                        cur.cards.map { it.seriesId },
-                    )
-                }.getOrNull()
-            } ?: break
-            if (next.cards.isEmpty()) break
-            cur = next.copy(cards = cur.cards + next.cards)
-            rounds++
-        }
-        // 列表接口自带的热度是旧值/播放量口径，和详情对不上；
-        // /api/heat 返回的就是详情 hot_score，首屏统一刷一遍再上屏
-        cur = cur?.let { c ->
-            val fixed = withContext(Dispatchers.IO) {
-                runCatching { Api.fillHeat(c.cards) }.getOrDefault(c.cards)
-            }
-            c.copy(cards = fixed)
-        }
-        page = cur
-        cursor = cur
-        error = if (cur == null || cur.cards.isEmpty()) "暂时没能加载出来 · 检查网络后重试" else null
+        page = result
+        cursor = result
+        error = if (result == null || result.cards.isEmpty()) "暂时没能加载出来 · 检查网络后重试" else null
         loading = false
-        if (cur != null && cur.cards.isNotEmpty()) {
-            PageMemo.homePage = cur
-            PageMemo.homeCursor = cur
+        if (result != null && result.cards.isNotEmpty()) {
+            PageMemo.homePage = result
+            PageMemo.homeCursor = result
             PageMemo.homeKey = memoKey
             PageMemo.homeAt = System.currentTimeMillis()
             PageMemo.homeHeroIndex = heroIndex
         }
-        // 换 tab / 换一批回到墙顶（滚动状态是常驻的，不重置会停在上一次的底部）
         if (resetWall) runCatching { wallScroll.scrollTo(0) }
+        // 后台：按与 firstPage(deepen=true) **完全相同**的规则补到 12 张 + fillHeat，再原地替换（不阻塞首屏）。
+        // 最终集合与顺序 = 原 firstPage(deepen=true) 全量。
+        val base: FeedPage = result ?: return@LaunchedEffect
+        launch(Dispatchers.IO) {
+            var p: FeedPage = base
+                var round = 0
+                while (p.cards.size < 12 && p.hasMore && p.cellId.isNotEmpty() && round < 3) {
+                    val next = runCatching {
+                        Api.feedNext(type, p.cellId, p.planId, p.sessionId, p.nextOffset, p.cards.map { it.seriesId })
+                    }.getOrNull() ?: break
+                    val merged = LinkedHashMap<String, SeriesCard>()
+                    p.cards.forEach { merged[it.seriesId] = it }
+                    next.cards.forEach { merged.putIfAbsent(it.seriesId, it) }
+                    if (merged.size <= p.cards.size) break
+                    p = p.copy(
+                        cards = merged.values.toList(),
+                        nextOffset = next.nextOffset,
+                        hasMore = next.hasMore,
+                        sessionId = next.sessionId.ifEmpty { p.sessionId },
+                    )
+                    round++
+                }
+                val heated = runCatching { Api.fillHeat(p.cards) }.getOrDefault(p.cards)
+                val fullCursor = p.copy(cards = heated)
+                withContext(Dispatchers.Main) {
+                    // 只有首屏仍是这一份时才替换（用户没换 tab/换一批/翻页），避免覆盖用户操作
+                    if (page === base) {
+                        page = fullCursor
+                        cursor = fullCursor
+                        PageMemo.homePage = fullCursor
+                        PageMemo.homeCursor = fullCursor
+                        PageMemo.homeAt = System.currentTimeMillis()
+                    }
+                }
+        }
     }
 
     val cards = page?.cards.orEmpty()

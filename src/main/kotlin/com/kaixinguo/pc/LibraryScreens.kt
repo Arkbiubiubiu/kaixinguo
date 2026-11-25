@@ -104,10 +104,13 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
+private class HistPageMsg(val items: List<JSONObject>)
+private class HistLegacyMsg(val items: List<JSONObject>)
+
 @Composable
 internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -> Unit) {
     var rows by remember { mutableStateOf(PcStore.history()) }
-    var cloudRows by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    val cloudRows = remember { androidx.compose.runtime.mutableStateListOf<JSONObject>() }
     var syncing by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf(PageMemo.historySearch) }
     var filter by remember { mutableStateOf(PageMemo.historyFilter) }
@@ -122,25 +125,48 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
 
     LaunchedEffect(Unit, PcStore.loggedIn) {
         syncing = true
-        // 云端历史（read_history/list，官方 App 同源）：登录才有；
-        // 未登录用本地观看记录（旧版双模式同语义）
-        if (PcStore.loggedIn) {
-            cloudRows = withContext(Dispatchers.IO) {
-                val cloud = runCatching { HistoryApi.official(3) }.getOrDefault(emptyList())
-                // 影子对比：只记日志，不改变旧页面数据源。
-                // 用 1500 上限做“展示合并”，否则 PC 的 1374 条会被本地 500 条截断。
-                HistoryShadow.report(cloud, HistoryRepository.merge(PcStore.history(), cloud, 1500))
-                cloud
+        if (!PcStore.loggedIn) {
+            // 未登录只有本机历史（不存在"旧云端快照"问题）
+            rows = PcStore.history()
+            cloudRows.clear()
+            syncing = false
+            return@LaunchedEffect
+        }
+        // 先转圈，绝不预显旧数据；官方第 1 页到 → 立即显示可操作；后续页 diffUpdate 原地追加；桶并行。
+        // 合并一律走 App.state.mergeHistory(累计官方+自建桶)，规则与 historySync 完全一致 → 最终集合==现在 historySync。
+        cloudRows.clear()
+        val channel = kotlinx.coroutines.channels.Channel<Any>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        launch(Dispatchers.IO) {
+            var legacy: List<JSONObject> = emptyList()
+            val legJob = launch(Dispatchers.IO) {
+                legacy = runCatching { Api.historyLegacy() }.getOrDefault(emptyList())
             }
-            if (App.flags["history_v2"] == true) reload()
-            // 登录态：再后台跑一次 HistoryApi.sync() —— 它把「官方 + 服务器桶」合并时
-            // 会带上本机 PcStore 历史，并把合并结果回写服务器桶；TV 等配对设备只读桶，靠这一步才看得到 PC 的历史。
-            launch { withContext(Dispatchers.IO) { runCatching { HistoryApi.sync() } } }
-        } else {
-            // 未登录没有云端历史：直接读本地（原实现调 historySyncAsync 内部立刻 return，再白等 1.5 秒）
-            reload()
+            runCatching {
+                Api.officialHistoryIncremental(3) { items, _ ->
+                    channel.trySend(HistPageMsg(items))
+                }
+            }
+            legJob.join()
+            channel.trySend(HistLegacyMsg(legacy))
+            channel.close()
+        }
+        val acc = ArrayList<JSONObject>()
+        var legacyItems: List<JSONObject> = emptyList()
+        while (true) {
+            val msg = channel.receiveCatching().getOrNull() ?: break
+            when (msg) {
+                is HistPageMsg -> acc.addAll(msg.items)
+                is HistLegacyMsg -> legacyItems = msg.items
+            }
+            val merged = withContext(Dispatchers.IO) {
+                runCatching { App.state.mergeHistory(acc + legacyItems) }.getOrNull()
+            } ?: continue
+            if (cloudRows.isEmpty()) cloudRows.addAll(merged)
+            else cloudRows.diffUpdate(merged) { it.optString("seriesId") }
         }
         syncing = false
+        // 仍把本机历史写进服务器桶（best-effort）：TV 等只读桶的配对设备才看得到 PC 历史。
+        launch { withContext(Dispatchers.IO) { runCatching { HistoryApi.sync() } } }
     }
 
     // 数据源：登录 = 当前账号的云端历史（跨设备）；未登录 = 本地。

@@ -913,7 +913,7 @@ object Api {
     fun reserveListCached(): List<SeriesCard> =
         listCached("reserve") { reserveList() } ?: emptyList()
 
-    fun firstPage(tabType: String, refresh: Boolean = false): FeedPage {
+    fun firstPage(tabType: String, refresh: Boolean = false, deepen: Boolean = true): FeedPage {
         val qs = baseQuery() +
             "&auth_aweme=true&auth_backward=true&bottom_tab_type=7&client_req_type=4" +
             "&device_level=3&disable_digg_stat=false&has_video_cache=false" +
@@ -965,32 +965,34 @@ object Api {
             planId = planId,
         )
         // tab/v 的 offset=0 只回「今日精选」那 3 张，真正的海报墙在第一页 cell/change 里。
-        // 之前是让首页滚动观察者去补，用户看到的就是「先出 3 个，剩下的再蹦出来」。
-        // 这里就地补到 12 张（6 列 × 2 行），首屏一次画满。
-        var round = 0
-        while (page.cards.size < 12 && page.hasMore && page.cellId.isNotEmpty() && round < 3) {
-            val next = runCatching {
-                feedNext(
-                    tabType = tabType,
-                    cellId = page.cellId,
-                    planId = page.planId,
-                    sessionId = page.sessionId,
-                    offset = page.nextOffset,
-                    seen = page.cards.map { it.seriesId },
-                    refresh = refresh,
+        // deepen=true（默认）就地补到 12 张一次画满；首页首屏传 false：先显示主内容，
+        // 补页交给页面在后台按同一规则追加（最终集合/顺序一致，其它调用方默认 true 不变）。
+        if (deepen) {
+            var round = 0
+            while (page.cards.size < 12 && page.hasMore && page.cellId.isNotEmpty() && round < 3) {
+                val next = runCatching {
+                    feedNext(
+                        tabType = tabType,
+                        cellId = page.cellId,
+                        planId = page.planId,
+                        sessionId = page.sessionId,
+                        offset = page.nextOffset,
+                        seen = page.cards.map { it.seriesId },
+                        refresh = refresh,
+                    )
+                }.getOrNull() ?: break
+                val merged = LinkedHashMap<String, SeriesCard>()
+                page.cards.forEach { merged[it.seriesId] = it }
+                next.cards.forEach { merged.putIfAbsent(it.seriesId, it) }
+                if (merged.size <= page.cards.size) break
+                page = page.copy(
+                    cards = merged.values.toList(),
+                    nextOffset = next.nextOffset,
+                    hasMore = next.hasMore,
+                    sessionId = next.sessionId.ifEmpty { page.sessionId },
                 )
-            }.getOrNull() ?: break
-            val merged = LinkedHashMap<String, SeriesCard>()
-            page.cards.forEach { merged[it.seriesId] = it }
-            next.cards.forEach { merged.putIfAbsent(it.seriesId, it) }
-            if (merged.size <= page.cards.size) break
-            page = page.copy(
-                cards = merged.values.toList(),
-                nextOffset = next.nextOffset,
-                hasMore = next.hasMore,
-                sessionId = next.sessionId.ifEmpty { page.sessionId },
-            )
-            round++
+                round++
+            }
         }
         return page
     }
@@ -2006,6 +2008,70 @@ object Api {
     }
 
     /**
+     * 官方历史**分页增量**：字段解析与 [officialHistory] **逐字一致**，只是把"攒齐 3 页再返回"
+     * 改成"每拿到一页立刻 onPage(items, isLast)"，保证最终数据与准确率完全相同。
+     */
+    fun officialHistoryIncremental(maxPages: Int = 3, onPage: (List<JSONObject>, Boolean) -> Unit) {
+        if (!App.state.loggedIn) { onPage(emptyList(), true); return }
+        var offset = 0
+        repeat(maxPages) { p ->
+            val q = JSONArray()
+                .put(JSONArray().put("book_type").put("2"))
+                .put(JSONArray().put("full_field").put("false"))
+                .put(JSONArray().put("is_first_load").put("true"))
+                .put(JSONArray().put("last_min_read_timestamp_ms").put("0"))
+                .put(JSONArray().put("limit").put("0"))
+                .put(JSONArray().put("offset").put(offset.toString()))
+                .put(JSONArray().put("query_soft_deleted").put("false"))
+            val text = runCatching { signedGet("/reading/bookapi/read_history/list/v", q) }.getOrNull()
+            if (text == null) { if (p == 0) onPage(emptyList(), true); return }
+            val root = runCatching { JSONObject(text) }.getOrNull()
+            if (root == null || root.optInt("code", 0) != 0) { if (p == 0) onPage(emptyList(), true); return }
+            val data = root.optJSONObject("data")
+            if (data == null) { if (p == 0) onPage(emptyList(), true); return }
+            val list = data.optJSONArray("data_list")
+            val items = ArrayList<JSONObject>()
+            if (list != null) for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                val sid = o.optString("book_id_str").ifEmpty { o.optString("book_id") }
+                val title = o.optString("book_name")
+                if (sid.isEmpty() || title.isEmpty()) continue
+                items.add(
+                    JSONObject()
+                        .put("seriesId", sid)
+                        .put("title", title)
+                        .put("cover", o.optString("thumb_url"))
+                        .put("episode", o.optInt("vid_index", 0).coerceAtLeast(0) + 1)
+                        .put("total", o.optInt("episode_cnt", 0))
+                        .put("positionMs", o.optLong("current_play_position", 0L))
+                        .put("at", o.optLong("read_timestamp_ms", 0L)),
+                )
+            }
+            val hasMore = data.optBoolean("has_more", false)
+            val isLast = !hasMore || p == maxPages - 1
+            onPage(items, isLast)
+            if (isLast) return
+            offset = data.optInt("next_offset", offset + 500)
+        }
+    }
+
+    /** 自建桶(/api/history) 拉取——与 [historySync] 里那段完全同口径（首 base 非空即返回）。 */
+    fun historyLegacy(): List<JSONObject> {
+        val key = historyKey() ?: return emptyList()
+        val bases = serverBases().map { it.trimEnd('/') } + HISTORY_BASES
+        for (base in bases.distinct()) {
+            val url = "$base/api/history?key=$key"
+            val remoteText = runCatching { get(url) }.getOrNull() ?: continue
+            if (remoteText.isEmpty()) continue
+            return runCatching {
+                val arr = JSONObject(remoteText).optJSONArray("items") ?: JSONArray()
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+            }.getOrDefault(emptyList())
+        }
+        return emptyList()
+    }
+
+    /**
      * 上报观看进度到官方（read_history/update + read_progress/upload）。
      * 这是「数据互通」的写方向：TV 上看到第几集、看到第几秒，
      * 手机上的官方 App / Windows 版侧栏历史都能看到。
@@ -2271,23 +2337,50 @@ object Api {
         }.sortedByDescending { it.second }
         if (pairs.isEmpty()) return emptyList()
 
-        val missing = pairs.map { it.first }.filter { DetailCache.get(it) == null }
-        if (missing.isNotEmpty()) {
-            val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
-            try {
-                val futures = missing.map { id -> pool.submit { runCatching { fetchSeriesData(id) } } }
-                futures.forEach { f ->
-                    runCatching { f.get(30, java.util.concurrent.TimeUnit.SECONDS) }
+        // 去 N+1：不再逐部 fetchSeriesData 补详情，改为**一次** GET /api/shelf-cards?ids=csv 拿全
+        val ids = pairs.map { it.first }
+        val batch = HashMap<String, SeriesCard>()
+        runCatching {
+            val enc = java.net.URLEncoder.encode(ids.joinToString(","), "UTF-8")
+            for (base in serverBases()) {
+                val text = runCatching { get(base.trimEnd('/') + "/api/shelf-cards?ids=" + enc) }.getOrNull()
+                if (text.isNullOrEmpty()) continue
+                val items = runCatching { JSONObject(text).optJSONArray("items") }.getOrNull() ?: continue
+                for (i in 0 until items.length()) {
+                    val o = items.optJSONObject(i) ?: continue
+                    val sid = o.optString("seriesId").ifEmpty { o.optString("series_id") }
+                    if (sid.isEmpty()) continue
+                    batch[sid] = SeriesCard(
+                        seriesId = sid,
+                        title = o.optString("title"),
+                        cover = o.optString("cover"),
+                        episodeCount = o.optInt("total", o.optInt("episode", 0)),
+                        playText = o.optString("playText"),
+                    )
                 }
-            } finally {
-                pool.shutdownNow()
+                if (batch.isNotEmpty()) break
             }
         }
-        return pairs.mapNotNull { (id, _) ->
+        // 按 collect_time 倒序组装：DetailCache 命中走原 cardOfDetail（逐字一致），否则用批量结果
+        val needDetail = ArrayList<String>()
+        val result = pairs.map { (id, _) ->
             val d = DetailCache.get(id)
             if (d != null) cardOfDetail(d)
-            else SeriesCard(seriesId = id, title = "该剧集已下架")
+            else batch[id] ?: run { needDetail.add(id); SeriesCard(seriesId = id, title = "该剧集已下架") }
         }
+        // 批量接口也没给的极少数 id：后台补详情（不阻塞本次返回）
+        if (needDetail.isNotEmpty()) {
+            Thread {
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+                try {
+                    val tasks = needDetail.map { id -> java.util.concurrent.Callable { runCatching { fetchSeriesData(id) } } }
+                    runCatching { pool.invokeAll(tasks, 20, java.util.concurrent.TimeUnit.SECONDS) }
+                } finally {
+                    pool.shutdownNow()
+                }
+            }.apply { isDaemon = true; name = "shelf-detail-bg"; start() }
+        }
+        return result
     }
 
     /**
