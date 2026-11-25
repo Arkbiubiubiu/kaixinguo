@@ -2516,8 +2516,8 @@ object Api {
         val out = LinkedHashMap<String, SeriesCard>()
         pending.forEach { out.putIfAbsent(it.seriesId, it) } // 待上线
         online.forEach { out.putIfAbsent(it.seriesId, it) }  // 已上线
-        // 热度**不阻塞主列表**：先返回合并结果（快），热度由调用方后台用 Api.fillHeat 补。
-        return out.values.toList()
+        // 照原逻辑补齐热度再返回整表（保持"完整列表含封面/热度"再显示）；调用方须在 IO 线程
+        return fillHeat(out.values.toList())
     }
 
     /** 拉一轮预约订阅（is_online=false 待上线 / true 已上线），自带分组标记。 */

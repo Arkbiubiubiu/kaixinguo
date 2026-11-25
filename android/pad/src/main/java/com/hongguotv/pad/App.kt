@@ -116,15 +116,6 @@ fun App() {
         }.firstOrNull() ?: return@LaunchedEffect
         FeedPreload.warm(first.seriesId)
     }
-    // 预约首屏预取：进 App（已登录）后台拉一次预约列表进缓存（低优先、失败静默），第一次点「预约」也快
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(4_000)
-        if (Store.loggedIn) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { Api.reserveListCached() }
-            }
-        }
-    }
     // 打赏弹窗：侧栏「打赏」入口，纯展示不接支付，不进路由栈
     var donateOpen by remember { mutableStateOf(false) }
     // 追更未读角标：启动查一次，之后每 20 分钟一轮（与 PC 同周期）；进「追更」页清零
