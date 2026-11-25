@@ -2503,37 +2503,49 @@ object Api {
      */
     fun reserveList(): List<SeriesCard> {
         if (!App.state.loggedIn) return emptyList()
+        // is_online=false(待上线) / =true(已上线) 两次 signedGet 改成**并发**：
+        // 电视上单次往返+签名慢，串行叠加就是「预约页明显卡」的根因。
+        val pending = java.util.Collections.synchronizedList(ArrayList<SeriesCard>())
+        val online = java.util.Collections.synchronizedList(ArrayList<SeriesCard>())
+        val t1 = Thread { runCatching { pending.addAll(fetchReservePage("false")) } }
+            .apply { isDaemon = true; start() }
+        val t2 = Thread { runCatching { online.addAll(fetchReservePage("true")) } }
+            .apply { isDaemon = true; start() }
+        runCatching { t1.join(12_000) }
+        runCatching { t2.join(12_000) }
         val out = LinkedHashMap<String, SeriesCard>()
-        for (online in listOf("false", "true")) {
-            val query = JSONArray()
-                .put(JSONArray().put("is_online").put(online))
-                .put(JSONArray().put("limit").put("50"))
-                .put(JSONArray().put("offset").put("0"))
-                .put(JSONArray().put("subscribe_offset").put("0"))
-                .put(JSONArray().put("subscribe_order_type").put("0"))
-                .put(JSONArray().put("swipe_type").put("0"))
-                .put(JSONArray().put("tab_type").put("13"))
-                .put(JSONArray().put("need_calendar_schema").put("false"))
-            val text = runCatching { signedGet("/reading/user/subscribe/list/v1/", query) }
-                .getOrNull() ?: continue
-            val items = runCatching {
-                JSONObject(text).optJSONObject("data")?.optJSONArray("subscribe_items")
-            }.getOrNull() ?: continue
-            for (i in 0 until items.length()) {
-                val o = items.optJSONObject(i) ?: continue
-                // 订阅列表同样有两套 schema：今天那批是 subscribe_data.*，
-                // 其它情况直接平铺在条目上（日历页踩过这个坑）
-                val sd = o.optJSONObject("subscribe_data") ?: o
-                val card = toFlatCard(sd) ?: continue
-                // is_online=false 那轮拉到的就是「待上线」，用 upcoming 区分分组
-                out[card.seriesId] = card.copy(
-                    upcoming = online == "false",
-                    reserved = true,
-                )
-            }
+        pending.forEach { out.putIfAbsent(it.seriesId, it) } // 待上线
+        online.forEach { out.putIfAbsent(it.seriesId, it) }  // 已上线
+        // 热度**不阻塞主列表**：先返回合并结果（快），热度由调用方后台用 Api.fillHeat 补。
+        return out.values.toList()
+    }
+
+    /** 拉一轮预约订阅（is_online=false 待上线 / true 已上线），自带分组标记。 */
+    private fun fetchReservePage(online: String): List<SeriesCard> {
+        val query = JSONArray()
+            .put(JSONArray().put("is_online").put(online))
+            .put(JSONArray().put("limit").put("50"))
+            .put(JSONArray().put("offset").put("0"))
+            .put(JSONArray().put("subscribe_offset").put("0"))
+            .put(JSONArray().put("subscribe_order_type").put("0"))
+            .put(JSONArray().put("swipe_type").put("0"))
+            .put(JSONArray().put("tab_type").put("13"))
+            .put(JSONArray().put("need_calendar_schema").put("false"))
+        val text = runCatching { signedGet("/reading/user/subscribe/list/v1/", query) }
+            .getOrNull() ?: return emptyList()
+        val items = runCatching {
+            JSONObject(text).optJSONObject("data")?.optJSONArray("subscribe_items")
+        }.getOrNull() ?: return emptyList()
+        val out = ArrayList<SeriesCard>()
+        for (i in 0 until items.length()) {
+            val o = items.optJSONObject(i) ?: continue
+            // 订阅列表两套 schema：今天那批是 subscribe_data.*，其它情况直接平铺在条目上
+            val sd = o.optJSONObject("subscribe_data") ?: o
+            val card = toFlatCard(sd) ?: continue
+            // is_online=false 那轮拉到的就是「待上线」，用 upcoming 区分分组
+            out.add(card.copy(upcoming = online == "false", reserved = true))
         }
-        // 预约页会显示热度，这批数据是直连上游拿的，统一补一次
-        return fillHeat(out.values.toList())
+        return out
     }
 
     /**

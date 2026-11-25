@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -103,29 +103,51 @@ fun FollowReserveScreen(
 
     LaunchedEffect(mode, reload) {
         val at = if (mode == 0) UiMemo.followAt else UiMemo.reserveAt
-        if (Store.loggedIn && reload == 0 && cards.isNotEmpty() &&
+        val hasCache = cards.isNotEmpty()
+        // 新鲜缓存且非手动重试：直接用，不再请求
+        if (Store.loggedIn && reload == 0 && hasCache &&
             System.currentTimeMillis() - at < UiMemo.RETURN_TTL_MS
         ) {
             loading = false
             return@LaunchedEffect
         }
-        loading = true
         error = null
-        cards.clear()
+        // stale-while-revalidate：有缓存就**秒开、不白屏**，后台再刷新；无缓存才 loading
+        loading = !hasCache
         if (!Store.loggedIn) {
             error = if (mode == 0) "追更跟着账号走，请先到「我的」用手机号登录"
             else "预约跟着账号走，请先到「我的」用手机号登录"
             loading = false
             return@LaunchedEffect
         }
+        if (!hasCache) cards.clear()
         val result = withContext(Dispatchers.IO) {
             runCatching { if (mode == 0) Api.followList() else Api.reserveListCached() }
         }
-        result.onSuccess { cards.addAll(it) }
-        // 失败不能当成「空」——原来那样写，网络抖一下界面就变成
-        // 「你还没追更任何剧」，用户会以为数据丢了
+        result.onSuccess { fresh ->
+            if (hasCache) {
+                // 原地对齐更新（保留滚动/焦点），不整套重建
+                cards.diffUpdate(fresh) { it.seriesId }
+            } else {
+                cards.addAll(fresh)
+            }
+            // 预约：热度后台补，不阻塞首屏（fillHeat 是一次额外往返）
+            if (mode == 1 && fresh.isNotEmpty()) {
+                scope.launch(Dispatchers.IO) {
+                    val heated = runCatching { Api.fillHeat(fresh) }.getOrNull() ?: return@launch
+                    withContext(Dispatchers.Main) {
+                        if (cards.size == heated.size &&
+                            cards.indices.all { cards[it].seriesId == heated[it].seriesId }
+                        ) {
+                            for (i in heated.indices) cards[i] = heated[i]
+                        }
+                    }
+                }
+            }
+        }
+        // 失败不能当「空」：有缓存就保留旧内容；无缓存才给错误态
         result.onFailure {
-            error = if (mode == 0) "追更列表没加载出来" else "预约列表没加载出来"
+            if (!hasCache) error = if (mode == 0) "追更列表没加载出来" else "预约列表没加载出来"
         }
         loading = false
         if (cards.isNotEmpty()) {

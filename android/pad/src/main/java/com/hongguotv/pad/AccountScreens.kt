@@ -86,6 +86,8 @@ fun AccountScreen(
     // key 用 Store.loggedIn：本页内用匹配码登录成功(false→true)也会触发一次。
     LaunchedEffect(Store.loggedIn) {
         if (!Store.loggedIn) return@LaunchedEffect
+        // 登录后后台预取一次预约列表进缓存（低优先、失败静默），第一次点「预约」秒开
+        scope.launch(Dispatchers.IO) { runCatching { Api.reserveListCached() } }
         // 副设备（通过匹配码同步来的，accountSource=pair）不再生成/显示匹配码——它已登录、没法再匹配
         if (Store.accountSource == "pair") return@LaunchedEffect
         val uid = Store.accountUid
