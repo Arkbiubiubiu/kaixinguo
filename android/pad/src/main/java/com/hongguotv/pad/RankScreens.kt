@@ -79,6 +79,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
@@ -554,6 +555,10 @@ internal fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: 
     // 电视：远看要清楚 —— 封面更大、字更大、简介三行、热度贴着标签放同一行。
     // 平板保持原来的紧凑规格（同一组件，按设备分开）。
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
+    // 待上线（无剧集）条目：只给「预约」，不给播放/详情（否则点播放报未上线、点详情报网络错）
+    val upcoming = card.upcoming || card.episodeCount <= 0
+    val scope = rememberCoroutineScope()
+    var reserved by remember(card.seriesId) { mutableStateOf(Store.contains(Store.KEY_RESERVE, card.seriesId)) }
     val rankW = if (isTv) 50.dp else 32.dp
     val rankFont = if (isTv) 33.sp else 24.sp
     val coverW = if (isTv) 132.dp else 88.dp
@@ -659,20 +664,50 @@ internal fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: 
             }
             Spacer(Modifier.height(if (isTv) 4.dp else 2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp)) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Red)
-                        .clickable { onPlay() }
-                        .padding(horizontal = btnPadH, vertical = btnPadV),
-                ) { Text("播放", color = Color.White, fontSize = btnFont, fontWeight = FontWeight.Medium) }
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(8.dp))
-                        .clickable { onOpen() }
-                        .padding(horizontal = btnPadH, vertical = btnPadV),
-                ) { Text("详情", color = Color.White, fontSize = btnFont) }
+                if (upcoming) {
+                    // 待上线：只给「预约」（不提供播放/详情）；写后校验失败回滚
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (reserved) PanelHi else Red)
+                            .clickable {
+                                val next = !reserved
+                                reserved = next
+                                Store.toggleCard(Store.KEY_RESERVE, card)
+                                scope.launch(Dispatchers.IO) {
+                                    val ok = runCatching { ShelfRepository.toggle(ShelfKind.Reserve, card.seriesId, next) }
+                                        .getOrDefault(false)
+                                    if (!ok) withContext(Dispatchers.Main) {
+                                        reserved = !next
+                                        Store.toggleCard(Store.KEY_RESERVE, card)
+                                    }
+                                }
+                            }
+                            .padding(horizontal = btnPadH, vertical = btnPadV),
+                    ) {
+                        Text(
+                            if (reserved) "已预约" else "预约",
+                            color = if (reserved) TextDim else Color.White,
+                            fontSize = btnFont, fontWeight = FontWeight.Medium,
+                        )
+                    }
+                } else {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Red)
+                            .clickable { onPlay() }
+                            .padding(horizontal = btnPadH, vertical = btnPadV),
+                    ) { Text("播放", color = Color.White, fontSize = btnFont, fontWeight = FontWeight.Medium) }
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(8.dp))
+                            // 打开详情前 stash 卡片：待上线详情接口可能 101000/空，DetailScreen 用 stash 兜底显示"待上线+预约"而不是网络错误
+                            .clickable { Api.stashCard(card); onOpen() }
+                            .padding(horizontal = btnPadH, vertical = btnPadV),
+                    ) { Text("详情", color = Color.White, fontSize = btnFont) }
+                }
             }
         }
     }

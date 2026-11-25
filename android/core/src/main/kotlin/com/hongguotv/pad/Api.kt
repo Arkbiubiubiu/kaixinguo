@@ -2504,6 +2504,9 @@ object Api {
     fun invalidateReserve() {
         reserveCache = null
         reserveCacheAt = 0L
+        // 关键：预约页用的是 listCached("reserve")（ck = "v2|reserve"? 实际 "$CACHE_SCHEMA|reserve"）3分钟列表缓存，
+        // 之前只清了 reserveCache 没清它 → 预约写成功、预约页仍显示旧数量（"假预约/数量不变"根因）。一并失效。
+        listCache.remove("$CACHE_SCHEMA|reserve")
     }
 
     fun reserveToggle(seriesId: String, on: Boolean): Boolean {

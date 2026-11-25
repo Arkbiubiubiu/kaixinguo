@@ -100,6 +100,7 @@ fun FollowReserveScreen(
     var tab by remember { mutableStateOf(if (mode == 0) UiMemo.followTab else UiMemo.reserveTab) }
     var query by remember { mutableStateOf(if (mode == 0) UiMemo.followQuery else UiMemo.reserveQuery) }
     val scope = rememberCoroutineScope()
+    val isTv = Store.appContext.packageName.endsWith("nativeapp")
 
     LaunchedEffect(mode, reload) {
         val at = if (mode == 0) UiMemo.followAt else UiMemo.reserveAt
@@ -120,7 +121,8 @@ fun FollowReserveScreen(
             return@LaunchedEffect
         }
         val result = withContext(Dispatchers.IO) {
-            runCatching { if (mode == 0) Api.followList() else Api.reserveListCached() }
+            // 预约页**强制走网络重拉**（绕过 listCached "v2|reserve" 3分钟缓存），确保预约/取消后数量立刻正确
+            runCatching { if (mode == 0) Api.followList() else Api.reserveList() }
         }
         result.onSuccess { cards.addAll(it) }
         // 失败不能当成「空」——原来那样写，网络抖一下界面就变成
@@ -167,7 +169,7 @@ fun FollowReserveScreen(
         ) {
             // 与 PC 一致不显示页面大标题（导航位置由左侧栏高亮表达）
             Spacer(Modifier.weight(1f))
-            if (mode == 1) {
+            if (mode == 1 && !isTv) {
                 // 预约页带搜索（对齐 Windows：搜索预约的剧）
                 BasicTextField(
                     value = query,

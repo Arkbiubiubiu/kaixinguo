@@ -2477,6 +2477,9 @@ object Api {
     fun invalidateReserve() {
         reserveCache = null
         reserveCacheAt = 0L
+        // 根因：预约页用 listCache["v2|reserve"]（3 分钟缓存）；只清 reserveCache 不够 →
+        // 预约/取消虽成功，预约页仍显示旧列表。这里把预约列表缓存也一并清掉。
+        listCache.keys.filter { it.endsWith("|reserve") }.forEach { listCache.remove(it) }
     }
 
     fun reserveToggle(seriesId: String, on: Boolean): Boolean {

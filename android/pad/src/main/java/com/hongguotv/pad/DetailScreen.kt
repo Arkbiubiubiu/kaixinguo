@@ -129,6 +129,12 @@ fun DetailScreen(
         }
     }
 
+    // 焦点回到顶部区（返回/继续看/收藏/追更/展开）时，主动把整页滚回顶部，
+    // 确保标题/封面/简介完整可见（顶部非焦点内容不会被焦点顺序带出来，这是"上不去顶部"的根因）。
+    fun detailScrollTop() {
+        scope.launch { runCatching { UiMemo.detailScroll.scrollTo(0) } }
+    }
+
     /**
      * 相关推荐卡片上的预约开关。
      *
@@ -394,6 +400,7 @@ fun DetailScreen(
                 color = TextMain,
                 fontSize = 18.sp,
                 modifier = Modifier
+                    .onFocusChanged { if (it.isFocused) detailScrollTop() }
                     .clickable { onBack() }
                     .padding(horizontal = 8.dp, vertical = 2.dp),
             )
@@ -550,6 +557,7 @@ fun DetailScreen(
                             color = Red,
                             fontSize = 11.sp,
                             modifier = Modifier
+                                .onFocusChanged { if (it.isFocused) detailScrollTop() }
                                 .clickable { introExpanded = !introExpanded }
                                 .padding(top = 3.dp),
                         )
@@ -612,6 +620,7 @@ fun DetailScreen(
                                     .height(40.dp)
                                     .focusRequester(playFocus)
                                     .onPlaced { autoFocusPlay() }
+                                    .onFocusChanged { if (it.isFocused) detailScrollTop() }
                                     .clickable {
                                         val next = !reserved
                                         reserved = next
@@ -675,6 +684,7 @@ fun DetailScreen(
                                 .focusRequester(playFocus)
                                 // 主按钮第一次真正上屏时给一次焦点（进页焦点=继续看）
                                 .onPlaced { autoFocusPlay() }
+                                .onFocusChanged { if (it.isFocused) detailScrollTop() }
                                 // clickable 在外、clip 在内：焦点框画在 clickable 层，不会被圆角裁掉
                                 .clickable { onPlay(seriesId, resumeIndex, resumePosition) }
                                 .clip(RoundedCornerShape(8.dp))

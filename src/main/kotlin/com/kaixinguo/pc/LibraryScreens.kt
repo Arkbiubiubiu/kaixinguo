@@ -646,13 +646,9 @@ internal fun ReservePage(onOpen: (String) -> Unit, onPlay: (String) -> Unit) {
     var search by remember { mutableStateOf(PageMemo.reserveSearch) }
 
     LaunchedEffect(Unit) {
-        if (cards.isNotEmpty() &&
-            System.currentTimeMillis() - PageMemo.reserveAt < PageMemo.RETURN_TTL_MS
-        ) {
-            loading = false
-            return@LaunchedEffect
-        }
         loading = true
+        // 进入预约页强制重拉：先清预约列表缓存（含 listCache["v2|reserve"] 与 reserveIds 缓存），再取
+        runCatching { Api.invalidateReserve() }
         cards = withContext(Dispatchers.IO) { runCatching { Api.reserveListCached() }.getOrDefault(emptyList()) }
         loading = false
         if (cards.isNotEmpty()) {
