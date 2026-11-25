@@ -13,16 +13,42 @@ object HistoryStore {
     private const val HISTORY_SCHEMA = HistoryRepository.SCHEMA
     // ---------------- 观看历史 ----------------
 
-    /** 历史列表：一部剧一条，按最近真实播放时间倒序。 */
-    fun history(): List<JSONObject> = runCatching {
-        val arr = JSONArray(Store.prefs().getString("history", "[]"))
-        val rows = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-        rows.groupBy { it.optString("seriesId").ifEmpty { it.optString("title") } }.values
-            .mapNotNull { same ->
-                same.maxWithOrNull(compareBy({ it.optLong("at") }, { it.optInt("episode", 0) }))
-            }
-            .sortedByDescending { it.optLong("at") }
-    }.getOrDefault(emptyList())
+    /** 历史列表：一部剧一条，按最近真实播放时间倒序。
+     *  **内存缓存**：解析一次缓存住；写入/合并/清理时 invalidateHistoryCache() 失效重算。
+     *  之前每次调用都从 SharedPreferences 读整份 JSON + groupBy + 排序，列表每张卡 progress() 都触发一次，
+     *  几十张卡=每帧几十次全量解析全在主线程 → 卡死几秒、转圈不转。 */
+    private val cacheLock = Any()
+    private var cachedRows: List<JSONObject>? = null
+    private var cachedProgress: Map<String, Int> = emptyMap()
+
+    /** 历史被写入/合并/清理后调用，下次 history()/progress() 重新解析一次。 */
+    fun invalidateHistoryCache() {
+        synchronized(cacheLock) {
+            cachedRows = null
+            cachedProgress = emptyMap()
+        }
+    }
+
+    fun history(): List<JSONObject> = synchronized(cacheLock) {
+        cachedRows?.let { return it }
+        val rows = runCatching {
+            val arr = JSONArray(Store.prefs().getString("history", "[]"))
+            val raw = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+            raw.groupBy { it.optString("seriesId").ifEmpty { it.optString("title") } }.values
+                .mapNotNull { same ->
+                    same.maxWithOrNull(compareBy({ it.optLong("at") }, { it.optInt("episode", 0) }))
+                }
+                .sortedByDescending { it.optLong("at") }
+        }.getOrDefault(emptyList())
+        cachedRows = rows
+        val m = HashMap<String, Int>(rows.size)
+        rows.forEach {
+            val id = it.optString("seriesId")
+            if (id.isNotEmpty()) m[id] = it.optInt("episode", 0)
+        }
+        cachedProgress = m
+        rows
+    }
 
     /**
      * 记一次**真实播放**后的观看进度。
@@ -61,6 +87,7 @@ object HistoryStore {
                 .putInt("progress_$seriesId", episode)
                 .apply()
             historyStamp.value = System.currentTimeMillis()
+            invalidateHistoryCache()
         }
     }
 
@@ -98,11 +125,11 @@ object HistoryStore {
         if (vid.isEmpty()) 0L
         else lastPos[vid] ?: runCatching { Store.prefs().getLong("pos_$vid", 0L) }.getOrDefault(0L)
 
-    /** 该剧最近看到第几集（历史行为准，旧数据才回落到 progress_ 前缀）。 */
-    fun progress(seriesId: String): Int {
-        val fromHistory = history().firstOrNull { it.optString("seriesId") == seriesId }
-            ?.optInt("episode", 0) ?: 0
-        return if (fromHistory > 0) fromHistory else Store.prefs().getInt("progress_$seriesId", 0)
+    /** 该剧最近看到第几集（历史行为准，旧数据才回落到 progress_ 前缀）。O(1) 查缓存索引，不再全量解析。 */
+    fun progress(seriesId: String): Int = synchronized(cacheLock) {
+        history() // 确保缓存/索引就绪（首次才解析一次）
+        val fromHistory = cachedProgress[seriesId] ?: 0
+        if (fromHistory > 0) fromHistory else Store.prefs().getInt("progress_$seriesId", 0)
     }
 
     /** 历史变化计数：界面靠它感知「别处写入了历史」，不用轮询。 */
@@ -124,11 +151,14 @@ object HistoryStore {
         list.forEach { editor.putInt("progress_${it.optString("seriesId")}", it.optInt("episode")) }
         editor.apply()
         historyStamp.value = System.currentTimeMillis()
+        invalidateHistoryCache()
         return list
     }
 
     fun clearHistory() {
         Store.prefs().edit().remove("history").apply()
+        historyStamp.value = System.currentTimeMillis()
+        invalidateHistoryCache()
     }
 
     /** 补一条历史的封面（早期版本写历史时 cover 写死空串，留下脏数据）。 */
@@ -139,6 +169,7 @@ object HistoryStore {
             arr.put(r)
         }
         Store.prefs().edit().putString("history", arr.toString()).apply()
+        invalidateHistoryCache()
     }
 
     fun removeHistory(seriesId: String) {
@@ -146,6 +177,8 @@ object HistoryStore {
         history().filter { it.optString("seriesId") != seriesId }.forEach { arr.put(it) }
         Store.prefs().edit().putString("history", arr.toString())
             .remove("progress_$seriesId").apply()
+        historyStamp.value = System.currentTimeMillis()
+        invalidateHistoryCache()
     }
 
 }

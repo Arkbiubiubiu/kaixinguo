@@ -63,6 +63,7 @@ object Store : AccountState {
             }
             sp.edit().putString("history", out.toString())
                 .putInt("history_schema", HISTORY_SCHEMA).apply()
+            runCatching { HistoryStore.invalidateHistoryCache() }
         }
     }
 

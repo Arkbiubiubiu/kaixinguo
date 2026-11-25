@@ -116,6 +116,12 @@ fun App() {
         }.firstOrNull() ?: return@LaunchedEffect
         FeedPreload.warm(first.seriesId)
     }
+    // 启动即后台预热历史缓存：首帧渲染不在主线程解析整份历史（progress() 之后全是 O(1) 查表）
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { HistoryStore.history() }
+        }
+    }
     // 预约写成功后（任何入口）都清 App 层 UI 预约缓存，保证回到预约页重拉出正确数量
     LaunchedEffect(Unit) {
         Api.onReserveChanged = { UiMemo.reserveAt = 0L }

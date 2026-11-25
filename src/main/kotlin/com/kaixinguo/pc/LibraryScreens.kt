@@ -109,7 +109,7 @@ private class HistLegacyMsg(val items: List<JSONObject>)
 
 @Composable
 internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -> Unit) {
-    var rows by remember { mutableStateOf(PcStore.history()) }
+    var rows by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     val cloudRows = remember { androidx.compose.runtime.mutableStateListOf<JSONObject>() }
     var syncing by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf(PageMemo.historySearch) }
@@ -122,12 +122,11 @@ internal fun HistoryPage(onOpen: (String) -> Unit, onPlay: (String, Int, Long) -
     fun reload() {
         rows = PcStore.history()
     }
-
     LaunchedEffect(Unit, PcStore.loggedIn) {
         syncing = true
         if (!PcStore.loggedIn) {
-            // 未登录只有本机历史（不存在"旧云端快照"问题）
-            rows = PcStore.history()
+            // 未登录只有本机历史；解析放 IO，主线程只画转圈
+            rows = withContext(Dispatchers.IO) { PcStore.history() }
             cloudRows.clear()
             syncing = false
             return@LaunchedEffect

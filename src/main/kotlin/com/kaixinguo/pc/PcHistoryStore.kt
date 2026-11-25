@@ -9,14 +9,29 @@ import org.json.JSONObject
  * 合并规则由 HistoryRepository 统一，与 Android/服务端同口径。
  */
 object PcHistoryStore {
-    fun history(): List<JSONObject> = runCatching {
-        val arr = JSONArray(PcStore.str("history", "[]"))
-        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-            .groupBy { it.optString("seriesId") }
-            .values
-            .mapNotNull { same -> same.maxWithOrNull(compareBy({ it.optLong("at") }, { it.optInt("episode", 0) })) }
-            .sortedByDescending { it.optLong("at") }
-    }.getOrDefault(emptyList())
+    /** 历史解析结果的内存缓存：避免每次全量 JSONArray 解析（列表/续播每次查都很贵）。写入/合并时失效。 */
+    @Volatile
+    private var cached: List<JSONObject>? = null
+
+    /** 写入/合并后必须调用，下一读取重解析。 */
+    fun invalidateHistoryCache() {
+        cached = null
+    }
+
+    @Synchronized
+    fun history(): List<JSONObject> {
+        cached?.let { return it }
+        val parsed = runCatching {
+            val arr = JSONArray(PcStore.str("history", "[]"))
+            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                .groupBy { it.optString("seriesId") }
+                .values
+                .mapNotNull { same -> same.maxWithOrNull(compareBy({ it.optLong("at") }, { it.optInt("episode", 0) })) }
+                .sortedByDescending { it.optLong("at") }
+        }.getOrDefault(emptyList())
+        cached = parsed
+        return parsed
+    }
 
     fun mergeHistory(remote: List<JSONObject>): List<JSONObject> {
         // 合并规则统一在 HistoryRepository（PC/Android 共用；服务端保持同一套规则）
@@ -25,6 +40,7 @@ object PcHistoryStore {
         list.forEach { arr.put(it) }
         PcStore.put("history", arr.toString())
         list.forEach { PcStore.put("progress_${it.optString("seriesId")}", it.optInt("episode").toString()) }
+        invalidateHistoryCache()
         return list
     }
 
@@ -35,6 +51,7 @@ object PcHistoryStore {
             arr.put(r)
         }
         PcStore.put("history", arr.toString())
+        invalidateHistoryCache()
     }
 
     // ---------------- 额外：播放进度 / 收藏追更 ----------------
@@ -65,6 +82,7 @@ object PcHistoryStore {
             PcStore.put("history", arr.toString())
             PcStore.put("progress_$seriesId", episode.toString())
         }
+        invalidateHistoryCache()
     }
 
     fun posOf(vid: String): Long = PcStore.str("pos_$vid", "0").toLongOrNull() ?: 0L
@@ -82,6 +100,7 @@ object PcHistoryStore {
         PcStore.put("history", arr.toString())
         PcStore.props.remove("progress_$seriesId")
         PcStore.save()
+        invalidateHistoryCache()
     }
 
     fun clearHistory() {
@@ -89,5 +108,6 @@ object PcHistoryStore {
         PcStore.props.keys.filter { it.toString().startsWith("progress_") || it.toString().startsWith("pos_") }
             .forEach { PcStore.props.remove(it) }
         PcStore.save()
+        invalidateHistoryCache()
     }
 }

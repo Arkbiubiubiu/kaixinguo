@@ -128,9 +128,10 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
                 val cloudEp = mine?.optInt("episode", 0) ?: 0
                 val cloudPos = mine?.optLong("positionMs", 0L) ?: 0L
                 // 本机历史：登录/云端无记录时也能续播（以前只用云端，未登录永远从第1集开始）
-                val localRow = runCatching {
-                    PcStore.history().firstOrNull { it.optString("seriesId") == seriesId }
-                }.getOrNull()
+                // 解析可能较大，挪到 IO，避免主线程卡顿（列表解析已加内存缓存）
+                val localRow = withContext(Dispatchers.IO) {
+                    runCatching { PcStore.history().firstOrNull { it.optString("seriesId") == seriesId } }.getOrNull()
+                }
                 val localEp = localRow?.optInt("episode", 0) ?: 0
                 val localPos = localRow?.optLong("positionMs", 0L) ?: 0L
                 val cloudValid = cloudEp > 1 && cloudPos > 3_000
