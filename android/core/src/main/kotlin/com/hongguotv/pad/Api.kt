@@ -2030,6 +2030,71 @@ object Api {
     }
 
     /**
+     * 官方历史**分页增量**：按 offset/next_offset 逐页拉，**每拿到一页立刻** onPage(items, isLast)
+     * 回调（不攒满再回调）。字段解析与 [officialHistory] **逐字一致**（seriesId/title/cover/
+     * episode/total/positionMs/at），只是把"攒齐3页再返回"改成"一页一回调"，保证准确率相同。
+     */
+    fun officialHistoryIncremental(maxPages: Int = 3, onPage: (List<JSONObject>, Boolean) -> Unit) {
+        if (!App.state.loggedIn) { onPage(emptyList(), true); return }
+        var offset = 0
+        repeat(maxPages) { p ->
+            val q = JSONArray()
+                .put(JSONArray().put("book_type").put("2"))
+                .put(JSONArray().put("full_field").put("false"))
+                .put(JSONArray().put("is_first_load").put("true"))
+                .put(JSONArray().put("last_min_read_timestamp_ms").put("0"))
+                .put(JSONArray().put("limit").put("0"))
+                .put(JSONArray().put("offset").put(offset.toString()))
+                .put(JSONArray().put("query_soft_deleted").put("false"))
+            val text = runCatching { signedGet("/reading/bookapi/read_history/list/v", q) }.getOrNull()
+            if (text == null) { if (p == 0) onPage(emptyList(), true); return }
+            val root = runCatching { JSONObject(text) }.getOrNull()
+            if (root == null || root.optInt("code", 0) != 0) { if (p == 0) onPage(emptyList(), true); return }
+            val data = root.optJSONObject("data")
+            if (data == null) { if (p == 0) onPage(emptyList(), true); return }
+            val list = data.optJSONArray("data_list")
+            val items = ArrayList<JSONObject>()
+            if (list != null) for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                val sid = o.optString("book_id_str").ifEmpty { o.optString("book_id") }
+                val title = o.optString("book_name")
+                if (sid.isEmpty() || title.isEmpty()) continue
+                items.add(
+                    JSONObject()
+                        .put("seriesId", sid)
+                        .put("title", title)
+                        .put("cover", o.optString("thumb_url"))
+                        .put("episode", o.optInt("vid_index", 0).coerceAtLeast(0) + 1)
+                        .put("total", o.optInt("episode_cnt", 0))
+                        .put("positionMs", o.optLong("current_play_position", 0L))
+                        .put("at", o.optLong("read_timestamp_ms", 0L)),
+                )
+            }
+            val hasMore = data.optBoolean("has_more", false)
+            val isLast = !hasMore || p == maxPages - 1
+            onPage(items, isLast)
+            if (isLast) return
+            offset = data.optInt("next_offset", offset + 500)
+        }
+    }
+
+    /** 自建桶(/api/history) 拉取——与 [historySync] 里那段**完全同口径**（首 base 非空即返回）。 */
+    fun historyLegacy(): List<JSONObject> {
+        val key = historyKey() ?: return emptyList()
+        val bases = serverBases().map { it.trimEnd('/') } + HISTORY_BASES
+        for (base in bases.distinct()) {
+            val url = "$base/api/history?key=$key"
+            val remoteText = runCatching { get(url) }.getOrNull() ?: continue
+            if (remoteText.isEmpty()) continue
+            return runCatching {
+                val arr = JSONObject(remoteText).optJSONArray("items") ?: JSONArray()
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+            }.getOrDefault(emptyList())
+        }
+        return emptyList()
+    }
+
+    /**
      * 上报观看进度到官方（read_history/update + read_progress/upload）。
      * 这是「数据互通」的写方向：TV 上看到第几集、看到第几秒，
      * 手机上的官方 App / Windows 版侧栏历史都能看到。

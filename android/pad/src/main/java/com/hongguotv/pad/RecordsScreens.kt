@@ -113,6 +113,9 @@ fun RecordsScreen(
     }
 }
 
+private class HistPageMsg(val items: List<JSONObject>, val isLast: Boolean)
+private class HistLegacyMsg(val items: List<JSONObject>)
+
 @Composable
 internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, Int, Long) -> Unit, onOpen: (String) -> Unit) {
     // 先同步读本地历史：列表立刻进组合，滚动位置才能恢复；
@@ -131,19 +134,45 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
             rows.addAll(Store.history())
         }
         loading = false
-        // 云端合并：historySync 内部是「拉云端 → mergeHistory（最近一次真实播放者胜）→ 回写」
-        // 注意：这里两处都不能 rows.clear() + addAll()
-        // —— 本地历史是立刻显示的，用户这时候已经在列表里按方向键了。
-        // 云端同步要一两秒，回来一整表重建的话，item 节点全销毁，焦点当场丢，
-        // 表现就是「看历史看着看着，焦点自己跳回第一条」。改成原地对齐更新。
-        if (Store.loggedIn) {
-            val ok = withContext(Dispatchers.IO) { runCatching { HistoryApi.sync() }.getOrDefault(false) }
-            syncFailed = !ok
-            if (ok) {
-                rows.diffUpdate(Store.history()) { it.optString("seriesId") }
+        if (!Store.loggedIn) return@LaunchedEffect
+        // 分页增量：官方第1页到 → 立即显示可操作；后续页 diffUpdate 原地追加；自建桶并行合并。
+        // 合并一律用 App.state.mergeHistory(累计官方 + 自建桶)，规则与 historySync 完全一致，
+        // 所以最终集合 == 现在 historySync（只是分几批显示真实官方数据，不是旧缓存快照）。
+        val channel = kotlinx.coroutines.channels.Channel<Any>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        launch(Dispatchers.IO) {
+            var legacy: List<JSONObject> = emptyList()
+            val legJob = launch(Dispatchers.IO) {
+                legacy = runCatching { Api.historyLegacy() }.getOrDefault(emptyList())
             }
+            runCatching {
+                Api.officialHistoryIncremental(3) { items, _ ->
+                    channel.trySend(HistPageMsg(items, false))
+                }
+            }
+            legJob.join()
+            channel.trySend(HistLegacyMsg(legacy))
+            channel.close()
         }
-        // 老数据里 cover 是空的（早期写历史时传了空串），进来顺手补一次
+        val acc = ArrayList<JSONObject>()
+        var legacyItems: List<JSONObject> = emptyList()
+        var anyReal = false
+        while (true) {
+            val msg = channel.receiveCatching().getOrNull() ?: break
+            when (msg) {
+                is HistPageMsg -> acc.addAll(msg.items)
+                is HistLegacyMsg -> legacyItems = msg.items
+            }
+            val merged = withContext(Dispatchers.IO) {
+                runCatching { App.state.mergeHistory(acc + legacyItems) }.getOrNull()
+            } ?: continue
+            if (merged.isNotEmpty()) anyReal = true
+            // 首次有数据一次性铺；之后原地对齐追加，不 clear/不重建（保焦点与滚动）
+            if (rows.isEmpty()) rows.addAll(merged)
+            else rows.diffUpdate(merged) { it.optString("seriesId") }
+        }
+        // 失败/中断：保留已显示的真实页；只有确实一条没拿到才标记失败态
+        syncFailed = !anyReal
+        // 老数据里 cover 为空顺手补一次（保持原行为）
         if (rows.any { it.optString("cover").isEmpty() }) {
             val fixed = withContext(Dispatchers.IO) { runCatching { HistoryApi.backfillCovers() }.getOrDefault(0) }
             if (fixed > 0) {
