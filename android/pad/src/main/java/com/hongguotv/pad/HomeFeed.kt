@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -192,38 +192,23 @@ fun HomeScreen(
         }
 
         // 首屏最多试 3 次：服务器忙/上游风控时退避重试。
-        // 之前失败一次就把 cursor 留空，下面的翻页 collect 因 cursor==null
-        // 直接返回，首页就永远只有首屏那几张卡。
         var attempt = 0
+        var shownPage: FeedPage? = null
         while (attempt < 3) {
+            // 首屏只取 tab/v 主内容（deepen=false）：**不等补页/热度**，先显示可操作
             val page = withContext(Dispatchers.IO) {
-                runCatching { Api.firstPage(tab.tabType) }.getOrNull()
+                runCatching { Api.firstPage(tab.tabType, deepen = false) }.getOrNull()
             }
             if (page != null && page.cards.isNotEmpty()) {
-                val fixed = withContext(Dispatchers.IO) {
-                    runCatching { Api.fillHeat(page.cards) }.getOrDefault(page.cards)
-                }
-                // 关键：**有缓存时不动屏幕上的列表**。
-                //
-                // 原来这里无条件 cards.clear() + 换新内容，于是「开 App 用缓存先画出来
-                // → 一两秒后网络回来整页换掉」：用户刚翻到第 2、3 排找片，
-                // 列表突然变了，前面看的全没了。推荐内容是随机的，换完根本找不回原位置。
-                //
-                // 现在有缓存就只把新首屏写进磁盘，等下次进推荐页（切 tab / 重启）才生效；
-                // 只有完全没有缓存（冷启动第一次）才直接用网络结果铺屏。
-                // 换一批（refreshNonce>0）也强制用网络结果铺屏——用户明确要「换新的」
-                // 冷启动/停在顶部时用网络快照替换缓存：服务端 tab/v 现在是 15 分钟共享快照，
-                // 这样 PC / 安卓 / TV 在同一个窗口里看到的是同一批内容。
-                // 用户已经往下翻时不替换（避免看着看着列表被换掉）。
+                // 有缓存时不动屏幕上的列表（避免看着看着被换掉）；冷启动/换一批/在顶部才替换
                 val atTop = runCatching { grid.firstVisibleItemIndex == 0 }.getOrDefault(true)
                 if (cached.isEmpty() || refreshNonce > 0 || atTop) {
                     cards.clear()
-                    cards.addAll(fixed)
+                    cards.addAll(page.cards)
                 }
-                // 游标照常更新：继续下滑翻页时用新的 offset，翻页那边会按 seriesId 去重
                 cursor = page
                 hasMore = page.hasMore
-                withContext(Dispatchers.IO) { FeedCache.save(key, fixed.toList()) }
+                shownPage = page
                 break
             }
             attempt++
@@ -231,7 +216,7 @@ fun HomeScreen(
         }
         if (cursor == null && cached.isEmpty()) error = "首页没加载出来（网络问题）"
         loading = false
-        // 记下这一屏，返回时直接复用（分页游标/是否还有更多也一起存）
+        // 记下这一屏，返回时直接复用
         if (cards.isNotEmpty()) {
             UiMemo.homeTabName = tab.name
             UiMemo.homeKey = key
@@ -239,9 +224,60 @@ fun HomeScreen(
             UiMemo.homeCursor = cursor
             UiMemo.homeHasMore = hasMore
         }
-        // hero 默认主角：切 tab 后无条件回到本 tab 第一张（焦点未动时也翻面）
+        // hero 默认主角
         heroCard = cards.firstOrNull()
         UiMemo.homeHeroId = heroCard?.seriesId.orEmpty()
+
+        // 后台按**与 firstPage(deepen=true) 完全相同的规则**补到 12 张 + 补热度，
+        // 再 diffUpdate 原地追加（不重建/不阻塞首屏）。最终集合与顺序 = 原 firstPage 全量。
+        val base = shownPage
+        if (base != null) {
+            launch(Dispatchers.IO) {
+                var p: FeedPage = base!!
+                var round = 0
+                while (p.cards.size < 12 && p.hasMore && p.cellId.isNotEmpty() && round < 3) {
+                    val next = runCatching {
+                        Api.feedNext(
+                            tabType = tab.tabType,
+                            cellId = p.cellId,
+                            planId = p.planId,
+                            sessionId = p.sessionId,
+                            offset = p.nextOffset,
+                            seen = p.cards.map { it.seriesId },
+                        )
+                    }.getOrNull() ?: break
+                    val merged = LinkedHashMap<String, SeriesCard>()
+                    p.cards.forEach { merged[it.seriesId] = it }
+                    next.cards.forEach { merged.putIfAbsent(it.seriesId, it) }
+                    if (merged.size <= p.cards.size) break
+                    p = p.copy(
+                        cards = merged.values.toList(),
+                        nextOffset = next.nextOffset,
+                        hasMore = next.hasMore,
+                        sessionId = next.sessionId.ifEmpty { p.sessionId },
+                    )
+                    round++
+                }
+                val heated = runCatching { Api.fillHeat(p.cards) }.getOrDefault(p.cards)
+                val snapshot = withContext(Dispatchers.Main) {
+                    // 原地替换已有卡的热度（不重建列表、保焦点/滚动）
+                    val byId = heated.associateBy { it.seriesId }
+                    for (i in cards.indices) byId[cards[i].seriesId]?.let { cards[i] = it }
+                    // 追加补页新卡（保持补页顺序）
+                    val known = cards.map { it.seriesId }.toMutableSet()
+                    heated.forEach { if (it.seriesId !in known) { cards.add(it); known.add(it.seriesId) } }
+                    // 游标只前进不回退：若用户已下滑翻到更后面，别被后台补页的旧游标覆盖
+                    if ((cursor?.nextOffset ?: -1) < p.nextOffset) {
+                        cursor = p
+                        hasMore = p.hasMore
+                        UiMemo.homeCursor = p
+                        UiMemo.homeHasMore = p.hasMore
+                    }
+                    cards.toList()
+                }
+                withContext(Dispatchers.IO) { runCatching { FeedCache.save(key, snapshot) } }
+            }
+        }
     }
 
     // 焦点移到末尾附近就续一页。debounce 防止一路划到底时连发多次。

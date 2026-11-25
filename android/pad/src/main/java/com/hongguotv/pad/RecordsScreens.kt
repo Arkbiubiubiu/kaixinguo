@@ -118,23 +118,23 @@ private class HistLegacyMsg(val items: List<JSONObject>)
 
 @Composable
 internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, Int, Long) -> Unit, onOpen: (String) -> Unit) {
-    // 先同步读本地历史：列表立刻进组合，滚动位置才能恢复；
-    // 云端同步随后原地 diff，不重建列表（原来 loading 期间列表不在组合，滚动会归零）。
-    val rows = remember {
-        mutableStateListOf<JSONObject>().apply { runCatching { addAll(Store.history()) } }
-    }
-    var loading by remember { mutableStateOf(rows.isEmpty()) }
+    // 不预显任何旧数据：rows 置空、先转圈；等最新官方第1页(+桶) merge 出结果再显示。
+    val rows = remember { mutableStateListOf<JSONObject>() }
+    var loading by remember { mutableStateOf(true) }
     var syncFailed by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(reload) {
-        if (rows.isEmpty()) {
-            loading = true
+        // 转圈等最新数据；绝不预填/预显示 Store.history() 旧数据
+        loading = true
+        rows.clear()
+        if (!Store.loggedIn) {
+            // 未登录没有云端，只显示本机历史（不存在"旧云端快照"问题）
             rows.addAll(Store.history())
+            loading = false
+            return@LaunchedEffect
         }
-        loading = false
-        if (!Store.loggedIn) return@LaunchedEffect
         // 分页增量：官方第1页到 → 立即显示可操作；后续页 diffUpdate 原地追加；自建桶并行合并。
         // 合并一律用 App.state.mergeHistory(累计官方 + 自建桶)，规则与 historySync 完全一致，
         // 所以最终集合 == 现在 historySync（只是分几批显示真实官方数据，不是旧缓存快照）。
@@ -166,12 +166,17 @@ internal fun HistoryTab(filter: Int, setFilter: (Int) -> Unit, onPlay: (String, 
                 runCatching { App.state.mergeHistory(acc + legacyItems) }.getOrNull()
             } ?: continue
             if (merged.isNotEmpty()) anyReal = true
-            // 首次有数据一次性铺；之后原地对齐追加，不 clear/不重建（保焦点与滚动）
-            if (rows.isEmpty()) rows.addAll(merged)
-            else rows.diffUpdate(merged) { it.optString("seriesId") }
+            // 首次有数据一次性铺（=最新官方第1页+桶的合并结果）；之后原地对齐追加，不 clear/不重建
+            if (rows.isEmpty()) {
+                rows.addAll(merged)
+                loading = false
+            } else {
+                rows.diffUpdate(merged) { it.optString("seriesId") }
+            }
         }
         // 失败/中断：保留已显示的真实页；只有确实一条没拿到才标记失败态
         syncFailed = !anyReal
+        loading = false
         // 老数据里 cover 为空顺手补一次（保持原行为）
         if (rows.any { it.optString("cover").isEmpty() }) {
             val fixed = withContext(Dispatchers.IO) { runCatching { HistoryApi.backfillCovers() }.getOrDefault(0) }

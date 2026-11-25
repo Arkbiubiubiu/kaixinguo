@@ -939,7 +939,7 @@ object Api {
     fun reserveListCached(): List<SeriesCard> =
         listCached("reserve") { reserveList() } ?: emptyList()
 
-    fun firstPage(tabType: String, refresh: Boolean = false): FeedPage {
+    fun firstPage(tabType: String, refresh: Boolean = false, deepen: Boolean = true): FeedPage {
         val qs = baseQuery() +
             "&auth_aweme=true&auth_backward=true&bottom_tab_type=7&client_req_type=4" +
             "&device_level=3&disable_digg_stat=false&has_video_cache=false" +
@@ -991,32 +991,34 @@ object Api {
             planId = planId,
         )
         // tab/v 的 offset=0 只回「今日精选」那 3 张，真正的海报墙在第一页 cell/change 里。
-        // 之前是让首页滚动观察者去补，用户看到的就是「先出 3 个，剩下的再蹦出来」。
-        // 这里就地补到 12 张（6 列 × 2 行），首屏一次画满。
-        var round = 0
-        while (page.cards.size < 12 && page.hasMore && page.cellId.isNotEmpty() && round < 3) {
-            val next = runCatching {
-                feedNext(
-                    tabType = tabType,
-                    cellId = page.cellId,
-                    planId = page.planId,
-                    sessionId = page.sessionId,
-                    offset = page.nextOffset,
-                    seen = page.cards.map { it.seriesId },
-                    refresh = refresh,
+        // deepen=true（默认）就地补到 12 张（6 列×2 行）一次画满；首页首屏传 false：
+        // 先把 tab/v 主内容显示出来，补页交给页面在后台按同一规则追加（最终集合/顺序一致）。
+        if (deepen) {
+            var round = 0
+            while (page.cards.size < 12 && page.hasMore && page.cellId.isNotEmpty() && round < 3) {
+                val next = runCatching {
+                    feedNext(
+                        tabType = tabType,
+                        cellId = page.cellId,
+                        planId = page.planId,
+                        sessionId = page.sessionId,
+                        offset = page.nextOffset,
+                        seen = page.cards.map { it.seriesId },
+                        refresh = refresh,
+                    )
+                }.getOrNull() ?: break
+                val merged = LinkedHashMap<String, SeriesCard>()
+                page.cards.forEach { merged[it.seriesId] = it }
+                next.cards.forEach { merged.putIfAbsent(it.seriesId, it) }
+                if (merged.size <= page.cards.size) break
+                page = page.copy(
+                    cards = merged.values.toList(),
+                    nextOffset = next.nextOffset,
+                    hasMore = next.hasMore,
+                    sessionId = next.sessionId.ifEmpty { page.sessionId },
                 )
-            }.getOrNull() ?: break
-            val merged = LinkedHashMap<String, SeriesCard>()
-            page.cards.forEach { merged[it.seriesId] = it }
-            next.cards.forEach { merged.putIfAbsent(it.seriesId, it) }
-            if (merged.size <= page.cards.size) break
-            page = page.copy(
-                cards = merged.values.toList(),
-                nextOffset = next.nextOffset,
-                hasMore = next.hasMore,
-                sessionId = next.sessionId.ifEmpty { page.sessionId },
-            )
-            round++
+                round++
+            }
         }
         return page
     }
@@ -2360,23 +2362,52 @@ object Api {
         }.sortedByDescending { it.second }
         if (pairs.isEmpty()) return emptyList()
 
-        val missing = pairs.map { it.first }.filter { DetailCache.get(it) == null }
-        if (missing.isNotEmpty()) {
-            val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
-            try {
-                val futures = missing.map { id -> pool.submit { runCatching { fetchSeriesData(id) } } }
-                futures.forEach { f ->
-                    runCatching { f.get(30, java.util.concurrent.TimeUnit.SECONDS) }
+        // 去 N+1：不再逐部 fetchSeriesData 补详情，改为**一次** GET /api/shelf-cards?ids=csv 拿全
+        val ids = pairs.map { it.first }
+        val batch = HashMap<String, SeriesCard>()
+        runCatching {
+            val enc = java.net.URLEncoder.encode(ids.joinToString(","), "UTF-8")
+            for (base in serverBases()) {
+                val text = runCatching { get(base.trimEnd('/') + "/api/shelf-cards?ids=" + enc) }.getOrNull()
+                if (text.isNullOrEmpty()) continue
+                val items = runCatching { JSONObject(text).optJSONArray("items") }.getOrNull() ?: continue
+                for (i in 0 until items.length()) {
+                    val o = items.optJSONObject(i) ?: continue
+                    val sid = o.optString("seriesId").ifEmpty { o.optString("series_id") }
+                    if (sid.isEmpty()) continue
+                    batch[sid] = SeriesCard(
+                        seriesId = sid,
+                        title = o.optString("title"),
+                        cover = o.optString("cover"),
+                        episodeCount = o.optInt("total", o.optInt("episode", 0)),
+                        playText = o.optString("playText"),
+                    )
                 }
-            } finally {
-                pool.shutdownNow()
+                if (batch.isNotEmpty()) break
             }
         }
-        return pairs.mapNotNull { (id, _) ->
+        // 按 collect_time 倒序组装：已在 DetailCache 的用 cardOfDetail（与现在逐字一致），否则用批量结果
+        val needDetail = ArrayList<String>()
+        val result = pairs.map { (id, _) ->
             val d = DetailCache.get(id)
             if (d != null) cardOfDetail(d)
-            else SeriesCard(seriesId = id, title = "该剧集已下架")
+            else batch[id] ?: run { needDetail.add(id); SeriesCard(seriesId = id, title = "该剧集已下架") }
         }
+        // 批量接口也没给的极少数 id：后台补详情预热（不阻塞本次返回）
+        if (needDetail.isNotEmpty()) {
+            Thread {
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+                try {
+                    val tasks = needDetail.map { id ->
+                        java.util.concurrent.Callable { runCatching { fetchSeriesData(id) } }
+                    }
+                    runCatching { pool.invokeAll(tasks, 20, java.util.concurrent.TimeUnit.SECONDS) }
+                } finally {
+                    pool.shutdownNow()
+                }
+            }.apply { isDaemon = true; name = "shelf-detail-bg"; start() }
+        }
+        return result
     }
 
     /**
