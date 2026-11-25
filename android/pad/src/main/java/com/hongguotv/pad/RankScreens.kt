@@ -1,4 +1,4 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -572,7 +572,9 @@ internal fun RankCard(card: SeriesCard, index: Int, onOpen: () -> Unit, onPlay: 
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Panel)
-            .clickable { onOpen() }
+            // TV：整行不做焦点目标（否则行内「播放/详情」按钮遥控器选不中，只能被整行吞成详情）；
+            // Pad 触摸仍可整行点播=详情。
+            .then(if (isTv) Modifier else Modifier.clickable { onOpen() })
             .padding(if (isTv) 16.dp else 14.dp),
         verticalAlignment = Alignment.Top,
     ) {

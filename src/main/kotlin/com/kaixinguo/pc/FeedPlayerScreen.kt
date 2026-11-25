@@ -120,11 +120,8 @@ private const val FEED_PER_OTHER = 16
 private const val FEED_WARM_COUNT = 4
 
 /** 跨天去重：优先过滤最近推过的；过滤后不足 12 就放宽用整页。 */
-private fun pickFeed(raw: List<SeriesCard>, seen: Set<String>): List<SeriesCard> {
-    val distinct = raw.filter { it.seriesId.isNotBlank() }.distinctBy { it.seriesId }
-    val fresh = distinct.filter { it.seriesId !in seen }
-    return if (fresh.size >= 12) fresh else distinct
-}
+private fun pickFeed(raw: List<SeriesCard>): List<SeriesCard> =
+    raw.filter { it.seriesId.isNotBlank() }.distinctBy { it.seriesId }
 
 /** 在 [pool] 上把某分类深翻到 target 张或翻满 maxPages 页；返回最后游标。 */
 private fun deepFill(
@@ -240,19 +237,12 @@ private const val RANK_GENRE_HUMAN = "human"
 private const val RANK_HOT_HUMAN = "human_hot_play"
 private const val RANK_NEW_HUMAN = "human_new_rank"
 
-/** 剔除集合：①登录时云端历史 ②本地历史 ③预约列表里「已上线」的剧（未上线不剔）。 */
+/** 剔除集合：只剔除**本机真看过**的（PcStore.history 里 positionMs ≥ 3000 的 seriesId）。
+ *  不再拉 official/预约（提速），feedSeen 也不再永久剔除（没看过的在榜上还能再刷到）。 */
 private suspend fun buildFeedExcludeSet(): Set<String> = withContext(Dispatchers.IO) {
     val ex = HashSet<String>()
-    if (PcStore.loggedIn) {
-        runCatching { HistoryApi.official(3) }.getOrDefault(emptyList())
-            .forEach { ex.add(it.optString("seriesId")) }
-    }
     runCatching { PcStore.history() }.getOrDefault(emptyList())
-        .forEach { ex.add(it.optString("seriesId")) }
-    if (PcStore.loggedIn) {
-        runCatching { Api.reserveListCached() }.getOrDefault(emptyList())
-            .forEach { if (!it.upcoming) ex.add(it.seriesId) }
-    }
+        .forEach { if (it.optLong("positionMs", 0L) >= 3_000L) ex.add(it.optString("seriesId")) }
     ex.remove("")
     ex
 }
@@ -274,10 +264,10 @@ private fun fetchRankTwoPages(genre: String, sub: String, into: LinkedHashMap<St
 }
 
 /**
- * 36/39 候选池：热播榜(前) + 新剧榜(后) 合并去重 → 剔除 ①②③ + 跨天 seen →
- * 不足 12 用 feed 流（同样先剔除 ①②③）补足到 48。返回 (卡片, feed 兜底游标)。
+ * 36/39 候选池：热播榜(前) + 新剧榜(后) 合并去重 → 剔除本机真看过的 →
+ * 不足 12 用 feed 流（同样先剔除本机真看过的）补足到 48。返回 (卡片, feed 兜底游标)。
  */
-private suspend fun buildRankPool(type: String, seen: Set<String>): Pair<List<SeriesCard>, FeedPage?> =
+private suspend fun buildRankPool(type: String): Pair<List<SeriesCard>, FeedPage?> =
     withContext(Dispatchers.IO) {
         val genre = if (type == "36") RANK_GENRE_COMIC else RANK_GENRE_HUMAN
         val hotSub = if (type == "36") RANK_HOT_COMIC else RANK_HOT_HUMAN
@@ -285,7 +275,7 @@ private suspend fun buildRankPool(type: String, seen: Set<String>): Pair<List<Se
         val pool = LinkedHashMap<String, SeriesCard>()
         fetchRankTwoPages(genre, hotSub, pool)   // 热播在前
         fetchRankTwoPages(genre, newSub, pool)   // 新剧在后
-        val exclude = buildFeedExcludeSet() + seen
+        val exclude = buildFeedExcludeSet()
         var cards = pool.values.filter { it.seriesId !in exclude }
         var cursor: FeedPage? = null
         if (cards.size < 12) {
@@ -329,28 +319,25 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         feedCursor = null
 
         val type = feedTypes[tab]
-        val seen = PcStore.feedSeenIds().toHashSet()
 
         if (type == "16") {
             // 推荐(16)：完全不变 —— feed 流秒开 + 后台深翻补池。
             val first = withContext(Dispatchers.IO) {
                 runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
             }
-            val firstShown = pickFeed(first?.cards.orEmpty(), seen).shuffled()
+            val firstShown = pickFeed(first?.cards.orEmpty()).shuffled()
             cards = firstShown
             feedCursor = first
             cursor = 0
-            PcStore.recordFeedSeen(firstShown.map { it.seriesId })
             loading = false
             launch {
                 kotlinx.coroutines.delay(500) // 先让首帧起来，别抢带宽
                 val (fullPool, deepCursor) =
                     buildFeedPool(type, feedTypes, first, FEED_POOL_MIN, FEED_MAX_PAGES, FEED_PER_OTHER)
                 val existingNow = cards.map { it.seriesId }.toHashSet()
-                val appended = fullPool.filter { it.seriesId !in existingNow && it.seriesId !in seen }.shuffled()
+                val appended = fullPool.filter { it.seriesId !in existingNow }.shuffled()
                 if (appended.isNotEmpty()) {
                     cards = cards + appended
-                    PcStore.recordFeedSeen(appended.map { it.seriesId })
                 }
                 if (deepCursor != null) {
                     val oldOffset = feedCursor?.nextOffset ?: -1
@@ -360,12 +347,11 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         } else {
             // 漫剧(36)/真人剧(39)：从「热播榜 + 新剧榜」取候选（不再用 feed 流顺序），并剔除已看/已预约上线。
             val (poolCards, poolCursor) = withContext(Dispatchers.IO) {
-                runCatching { buildRankPool(type, seen) }.getOrElse { emptyList<SeriesCard>() to null }
+                runCatching { buildRankPool(type) }.getOrElse { emptyList<SeriesCard>() to null }
             }
             cards = poolCards
             feedCursor = poolCursor
             cursor = 0
-            PcStore.recordFeedSeen(poolCards.map { it.seriesId })
             loading = false
         }
 
@@ -397,8 +383,7 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
                 moreLoading = true
                 val type = feedTypes[tab]
                 scope.launch(Dispatchers.IO) {
-                    val seenNow = PcStore.feedSeenIds().toHashSet()
-                    val exclude = runCatching { buildFeedExcludeSet() }.getOrDefault(emptySet()) + seenNow
+                    val exclude = runCatching { buildFeedExcludeSet() }.getOrDefault(emptySet())
                     val (fb, cur) = runCatching {
                         buildFeedPool(type, listOf(type), null, FEED_POOL_MIN, FEED_MAX_PAGES, 0)
                     }.getOrElse { emptyList<SeriesCard>() to null }

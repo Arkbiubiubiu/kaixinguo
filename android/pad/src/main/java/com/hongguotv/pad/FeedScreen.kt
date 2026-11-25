@@ -180,18 +180,14 @@ fun FeedScreen(
         val first = withContext(Dispatchers.IO) {
             runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
         }
-        val seen0 = Store.feedSeenIds.toSet()
         val rawFirst = first?.cards ?: emptyList()
-        // 优先没用"最近推过"的；全被过滤光就退回整首屏，保证有内容
-        val firstDisplay = rawFirst.filter { it.seriesId !in seen0 }.shuffled()
-            .ifEmpty { rawFirst.shuffled() }
+        // 不再跨会话/跨天按 feedSeen 剔除（会持久导致"刷到过就永不出现"）；首屏直接打乱显示，
+        // 同一趟列表内靠 putIfAbsent/known 去重即可。
+        val firstDisplay = rawFirst.shuffled()
         if (firstDisplay.isNotEmpty()) {
             cards = firstDisplay
             page = first
             cursor = 0
-            Store.feedSeenIds = seen0.toMutableList().apply {
-                firstDisplay.forEach { c -> val id = c.seriesId; remove(id); add(id) }
-            }
             withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, firstDisplay) } }
         } else {
             cards = emptyList()
@@ -211,31 +207,22 @@ fun FeedScreen(
                 val pool = built.first
                 val primaryLast = built.second
                 val shownIds = cards.map { it.seriesId }.toSet()
-                val seenNow = Store.feedSeenIds.toSet()
-                val unseen = pool.values
-                    .filter { it.seriesId !in shownIds && it.seriesId !in seenNow }
-                    .shuffled()
-                val fallback = pool.values
+                // 同一趟列表内去重（不落盘、不跨会话）：只排除已经出现在 cards 里的
+                val poolValues = pool.values
                     .filter { it.seriesId !in shownIds }
                     .shuffled()
-                // 赋值前再按"此刻的 cards"过滤一次，避免和用户 step() 追加的重复
                 val shownNow = cards.map { it.seriesId }.toSet()
-                val appended = (if (unseen.isNotEmpty()) unseen else fallback)
-                    .filter { it.seriesId !in shownNow }
+                val appended = poolValues.filter { it.seriesId !in shownNow }
                 if (appended.isNotEmpty()) {
                     cards = cards + appended // append 到尾部
                     if (primaryLast != null) page = primaryLast // 更新 step 尾部续翻游标
-                    Store.feedSeenIds = Store.feedSeenIds.toMutableList().apply {
-                        appended.forEach { c -> val id = c.seriesId; remove(id); add(id) }
-                    }
                     withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, cards) } }
                 }
             }
         }
         } else {
-            // ---- 36/39：热播榜 + 新剧榜 候选，剔除已看/已预约上线/跨天seen；不足 12 用 feed 池补足 48 ----
-            val seen0 = Store.feedSeenIds.toSet()
-            val excluded = withContext(Dispatchers.IO) { runCatching { buildExcludeIds(seen0) }.getOrDefault(seen0) }
+            // ---- 36/39：热播榜 + 新剧榜 候选，剔除「本机真看过(positionMs>=3s)」；不足 12 用 feed 池补足 48 ----
+            val excluded = withContext(Dispatchers.IO) { runCatching { buildExcludeIds() }.getOrDefault(emptySet()) }
             val rank = withContext(Dispatchers.IO) { runCatching { buildRankCandidates(type) }.getOrDefault(emptyList()) }
             val picked = ArrayList<SeriesCard>()
             val have = HashSet<String>()
@@ -261,9 +248,6 @@ fun FeedScreen(
                 cards = picked
                 page = feedLast // rank 池无游标：走 feed 兜底续翻（见 step 的 page==null 分支）
                 cursor = 0
-                Store.feedSeenIds = seen0.toMutableList().apply {
-                    picked.forEach { c -> val id = c.seriesId; remove(id); add(id) }
-                }
                 withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, picked) } }
             } else {
                 cards = emptyList()
@@ -298,15 +282,14 @@ fun FeedScreen(
                 moreLoading = true
                 scope.launch {
                     val excluded = withContext(Dispatchers.IO) {
-                        runCatching { buildExcludeIds(Store.feedSeenIds.toSet()) }
-                            .getOrDefault(Store.feedSeenIds.toSet())
+                        runCatching { buildExcludeIds() }.getOrDefault(emptySet())
                     }
                     val fb = withContext(Dispatchers.IO) {
                         runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
                     }
                     if (fb != null && fb.cards.isNotEmpty()) {
                         val known = cards.map { it.seriesId }.toSet()
-                        // 和 rank 同一套剔除：已看 / 已预约上线 / 跨天 seen 不再推出来
+                        // 同一套剔除：只屏蔽本机真看过的，其余都保留
                         val add = fb.cards.filter { it.seriesId !in known && it.seriesId !in excluded }
                         page = fb
                         if (add.isNotEmpty()) {
@@ -527,22 +510,16 @@ private fun buildRankCandidates(type: String): List<SeriesCard> {
     return out.values.toList()
 }
 
-/** 剔除并集：①云端官方历史 ②本地历史 ③预约且已上线(!upcoming) ④跨天 feed_seen。 */
-private fun buildExcludeIds(extraSeen: Set<String>): Set<String> {
+/** 剔除集合：**只取本机真看过的**（Store.history 里 positionMs>=3000ms 的 seriesId）；
+ *  仅点开0秒 / 仅刷到（无真实播放位置）不算。不再为剔除去拉官方历史/预约，也不跨会话记 feedSeen。 */
+private fun buildExcludeIds(): Set<String> {
     val ids = HashSet<String>()
     runCatching {
-        if (Store.loggedIn) Api.officialHistory(3).forEach { r ->
-            r.optString("seriesId").takeIf { it.isNotBlank() }?.let { ids.add(it) }
-        }
-    }
-    runCatching {
         Store.history().forEach { r ->
-            r.optString("seriesId").takeIf { it.isNotBlank() }?.let { ids.add(it) }
+            if (r.optLong("positionMs", 0L) >= 3_000L) {
+                r.optString("seriesId").takeIf { it.isNotBlank() }?.let { ids.add(it) }
+            }
         }
     }
-    runCatching {
-        if (Store.loggedIn) Api.reserveList().forEach { c -> if (!c.upcoming) ids.add(c.seriesId) }
-    }
-    ids.addAll(extraSeen)
     return ids
 }

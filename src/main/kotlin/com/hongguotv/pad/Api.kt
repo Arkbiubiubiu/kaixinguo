@@ -2498,7 +2498,11 @@ object Api {
         val ok = writeOk(signedPost("/reading/bookapi/search/uncover_subscribe/v", body))
         // 列表接口按账号聚合，写完必须让缓存失效，否则卡片状态还是旧的
         invalidateReserve()
-        return ok
+        if (!ok) return false
+        // 写后校验：上游对"错 id"也回 code=0 但静默不写（假预约）→ 强拉预约 id 集合确认真的生效，
+        // 不符就返回 false（UI 回滚 + 提示"预约没成功"），绝不只凭 code=0。
+        val ids = runCatching { reserveIds() }.getOrNull() ?: return ok
+        return if (on) seriesId in ids else seriesId !in ids
     }
 
     /**

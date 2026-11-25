@@ -247,15 +247,17 @@ fun FollowReserveScreen(
                     val ids = picked.toList()
                     busy = true
                     scope.launch {
-                        withContext(Dispatchers.IO) {
-                            ids.forEach { id ->
-                                runCatching {
+                        // 逐条取消并**校验结果**（后台已做"写后重拉确认"）；失败的不从列表移除，避免假取消
+                        val failed = withContext(Dispatchers.IO) {
+                            ids.filter { id ->
+                                val ok = runCatching {
                                     if (mode == 0) ShelfRepository.toggle(ShelfKind.Follow, id, false)
                                     else ShelfRepository.toggle(ShelfKind.Reserve, id, false)
-                                }
-                            }
+                                }.getOrDefault(false)
+                                !ok
+                            }.toSet()
                         }
-                        cards.removeAll { it.seriesId in picked }
+                        cards.removeAll { it.seriesId in picked && it.seriesId !in failed }
                         picked = emptySet()
                         busy = false
                         managing = false

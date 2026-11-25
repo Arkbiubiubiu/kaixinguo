@@ -36,6 +36,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -43,6 +44,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +65,7 @@ import kotlinx.coroutines.withContext
  * 顶部「← 标题」→ 头部（封面 + 元信息行 + 标签 + 按钮行）→ 备案号 →
  * 简介（两行折叠 + 展开）→ 演职员圆头像 → 「选集 N / 剧评 / 相关推荐 N」三 tab。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DetailScreen(
     seriesId: String,
@@ -104,6 +110,24 @@ fun DetailScreen(
     var resumeIdx by remember(seriesId) { mutableStateOf(0) }
     var actionMsg by remember(seriesId) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // 滚动触发阈值：焦点元素底边超过"视口高度 − 下边距(96dp)"才向下滚动；
+    // 顶部区(返回/继续看/收藏/追更/出品方/展开)都在阈值线以上 → 不滚、页面不动。
+    // 用自定义 BringIntoViewSpec 接管"聚焦自动滚动"，不再默认把页面往上抬。
+    val detailThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
+    val detailBringSpec = remember(detailThresholdPx) {
+        object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+                val limit = containerSize - detailThresholdPx
+                return when {
+                    size > containerSize -> offset                      // 元素比视口还高：露出顶部
+                    offset < 0f -> offset                                // 在视口上方：向上滚露出
+                    offset + size > limit -> (offset + size) - limit     // 接近/低于底部阈值才向下滚
+                    else -> 0f                                           // 顶部区内：不滚
+                }
+            }
+        }
+    }
 
     /**
      * 相关推荐卡片上的预约开关。
@@ -384,6 +408,9 @@ fun DetailScreen(
             )
         }
 
+        // ---------- 整页一个滚动容器：封面/标题/按钮排/简介/选集/相关 全在同一滚动流，上下一齐浮 ----------
+        // 用自定义 BringIntoViewSpec 调低滚动阈值：焦点在顶部区时不下滚，接近视口底部才跟随。
+        CompositionLocalProvider(LocalBringIntoViewSpec provides detailBringSpec) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -407,7 +434,7 @@ fun DetailScreen(
                     )
                 }
                 Spacer(Modifier.width(18.dp))
-                Column(Modifier.weight(1f).fillMaxHeight()) {
+                Column(Modifier.weight(1f)) {
                     // 标题（PC 同款：在封面右侧信息区最上方，大字号）
                     Text(
                         d.title,
@@ -793,6 +820,7 @@ fun DetailScreen(
             }
             Spacer(Modifier.height(30.dp))
         }
+        } // CompositionLocalProvider(LocalBringIntoViewSpec)
     }
 
         /**

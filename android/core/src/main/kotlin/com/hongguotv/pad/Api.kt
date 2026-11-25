@@ -2525,7 +2525,39 @@ object Api {
         val ok = writeOk(signedPost("/reading/bookapi/search/uncover_subscribe/v", body))
         // 列表接口按账号聚合，写完必须让缓存失效，否则卡片状态还是旧的
         invalidateReserve()
-        return ok
+        if (!ok) return false
+        // **写后强制重拉校验**：uncover_subscribe 对错 id 也会回 code=0 但静默不写（"假预约"）。
+        // 绝不只凭 code0 当成功——重拉一次账号真实预约 id 集合，确认「on 时在 / off 时不在」。
+        val ids = fetchReserveIdsStrict() ?: return false
+        return if (on) seriesId in ids else seriesId !in ids
+    }
+
+    /** 强制网络重拉预约 series_id 集合（不走缓存）；任一请求失败返回 null（无法校验 → 调用方按失败处理）。 */
+    private fun fetchReserveIdsStrict(): Set<String>? {
+        val out = LinkedHashSet<String>()
+        for (online in listOf("false", "true")) {
+            val query = JSONArray()
+                .put(JSONArray().put("is_online").put(online))
+                .put(JSONArray().put("limit").put("50"))
+                .put(JSONArray().put("offset").put("0"))
+                .put(JSONArray().put("subscribe_offset").put("0"))
+                .put(JSONArray().put("subscribe_order_type").put("0"))
+                .put(JSONArray().put("swipe_type").put("0"))
+                .put(JSONArray().put("tab_type").put("13"))
+                .put(JSONArray().put("need_calendar_schema").put("false"))
+            val text = runCatching { signedGet("/reading/user/subscribe/list/v1/", query) }.getOrNull()
+                ?: return null
+            val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
+            if (root.optInt("code", -1) != 0) return null
+            val items = root.optJSONObject("data")?.optJSONArray("subscribe_items") ?: return null
+            for (i in 0 until items.length()) {
+                val o = items.optJSONObject(i) ?: continue
+                val sid = o.optJSONObject("subscribe_data")?.optString("series_id").orEmpty()
+                    .ifEmpty { o.optString("item_id") }
+                if (sid.isNotEmpty()) out.add(sid)
+            }
+        }
+        return out
     }
 
     /**
