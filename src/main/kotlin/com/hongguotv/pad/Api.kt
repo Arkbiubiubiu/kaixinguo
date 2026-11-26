@@ -997,6 +997,91 @@ object Api {
         return page
     }
 
+    /** 官方刷剧 feed 结果：本批卡片 + 续推要回传的 rec_filter_info / filter_ids。 */
+    class FeedCellResult(
+        val cards: List<SeriesCard>,
+        val recFilterInfos: List<JSONObject>,
+        val filterIds: List<String>,
+        val hasMore: Boolean,
+    )
+
+    /**
+     * 官方刷剧 feed：GET /reading/bookapi/bookmall/cell/change/v（cell_id 按分类）。
+     * 解析 data.cell_view.cell_data[].video_data[].video_detail → 卡片；
+     * 同时收集 rec_filter_info（续推回传）与 filter_ids（filter_id_map 值 + rec_group_id 扁平去重）。
+     */
+    fun feedCell(
+        tabType: String,
+        filterIds: List<String>,
+        recFilterInfos: List<JSONObject>,
+        refresh: Boolean = false,
+    ): FeedCellResult {
+        val cellId = when (tabType) {
+            "16" -> "7294257141911650341" // 推荐
+            "36" -> "7597343008509411390" // 漫剧
+            "39" -> "7650476176527343678" // 真人剧
+            else -> return FeedCellResult(emptyList(), recFilterInfos, filterIds, false)
+        }
+        val recJson = JSONArray().also { a -> recFilterInfos.forEach { a.put(it) } }.toString()
+        val encodedRec = java.net.URLEncoder.encode(recJson, "UTF-8")
+        val params = linkedMapOf(
+            "cell_id" to cellId,
+            "change_type" to "0",
+            "limit" to "0",
+            "tag_id" to "0",
+            "inner_category_id" to "0",
+            "total_chapter_num" to "0",
+            "video_tab_cold_start" to "0",
+            "client_template" to "7",
+            "sub_genre" to "0",
+            "related_book_id" to "0",
+            "inner_algo" to "0",
+            "filter_ids" to filterIds.joinToString(","),
+            "rec_filter_info_list" to encodedRec,
+        )
+        val qs = baseQuery() + params.entries.joinToString("") { "&${it.key}=${it.value}" }
+        val url = "$HOST/reading/bookapi/bookmall/cell/change/v?$qs"
+        val text = viaServerUrl(url, refresh) ?: runCatching { get(url) }.getOrNull()
+            ?: return FeedCellResult(emptyList(), recFilterInfos, filterIds, false)
+        val data = runCatching { JSONObject(text).optJSONObject("data") }.getOrNull()
+            ?: return FeedCellResult(emptyList(), recFilterInfos, filterIds, false)
+
+        val cards = LinkedHashMap<String, SeriesCard>()
+        val newRec = ArrayList<JSONObject>(recFilterInfos)
+        val newFilters = LinkedHashSet<String>(filterIds)
+        fun collectFilterMap(obj: JSONObject?) {
+            obj?.let { m -> m.keys().forEach { k -> m.optString(k).takeIf { it.isNotEmpty() }?.let(newFilters::add) } }
+        }
+        val cellData = data.optJSONObject("cell_view")?.optJSONArray("cell_data")
+        if (cellData != null) for (i in 0 until cellData.length()) {
+            val cell = cellData.optJSONObject(i) ?: continue
+            collectFilterMap(cell.optJSONObject("filter_id_map"))
+            cell.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let(newFilters::add)
+            (cell.opt("rec_filter_info") as? JSONObject)?.let { newRec.add(it) }
+            val vids = cell.optJSONArray("video_data") ?: continue
+            for (j in 0 until vids.length()) {
+                val v = vids.optJSONObject(j) ?: continue
+                val vd = v.optJSONObject("video_detail") ?: continue
+                // 跳过 pugc
+                if (vd.optBoolean("is_pugc", false) || v.optBoolean("is_pugc", false) ||
+                    v.optString("video_type").equals("pugc", true) ||
+                    vd.optString("video_type").equals("pugc", true)
+                ) continue
+                (v.opt("rec_filter_info") as? JSONObject)?.let { newRec.add(it) }
+                collectFilterMap(v.optJSONObject("filter_id_map"))
+                v.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let(newFilters::add)
+                val card = runCatching { toCard(v) }.getOrNull() ?: continue
+                if (card.seriesId.isNotBlank()) cards.putIfAbsent(card.seriesId, card)
+            }
+        }
+        return FeedCellResult(
+            cards = cards.values.toList(),
+            recFilterInfos = newRec,
+            filterIds = newFilters.toList(),
+            hasMore = data.optBoolean("has_more", true),
+        )
+    }
+
     /** tab 接口拿不到时的兜底 cell/plan（老 cell 仍在服务）。 */
     private val TAB_IDS = mapOf(
         "16" to ("7294257141911650341" to "7294257258253254693"),

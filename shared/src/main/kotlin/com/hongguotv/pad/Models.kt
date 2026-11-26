@@ -1,4 +1,6 @@
-﻿package com.hongguotv.pad
+package com.hongguotv.pad
+
+import org.json.JSONObject
 
 /**
  * 数据模型。字段名与顺序按反编译出来的原工程还原
@@ -107,8 +109,15 @@ data class FeedPage(
     val dataAgeSec: Double = 0.0,
 )
 
-data class FilterItem(val id: String, val label: String)
+/** 官方刷剧 cell/change 的增量结果：本页卡片 + 累计 filter_ids / rec_filter_info（用于续推）。 */
+data class FeedCellPage(
+    val cards: List<SeriesCard> = emptyList(),
+    val filterIds: List<String> = emptyList(),
+    val recFilterInfo: List<JSONObject> = emptyList(),
+    val hasMore: Boolean = true,
+)
 
+data class FilterItem(val id: String, val label: String)
 data class FilterRow(val key: String, val name: String, val items: List<FilterItem>)
 
 /** 排行榜筛选面板里的一个选项（如「主题情节 · 重生」）。id 为空表示「总榜」。 */

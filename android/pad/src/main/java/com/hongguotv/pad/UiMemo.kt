@@ -20,6 +20,8 @@ object UiMemo {
     var feedCursor: Int = 0
     var feedCards: List<SeriesCard> = emptyList()
     var feedPage: FeedPage? = null
+    var feedFilterIds: List<String> = emptyList()
+    var feedRecFilterInfo: List<org.json.JSONObject> = emptyList()
     /** 从刷剧进详情/评论再返回：这一次保留现场；从菜单重新进刷剧必须现拉 */
     var feedReturnKeep: Boolean = false
     /** 刷剧里连续「取流失败」跳过的部数：超过 2 部就停在错误页，避免网络断了还一路狂跳 */

@@ -1051,6 +1051,83 @@ object Api {
         refresh = refresh,
     )
 
+    /**
+     * 官方刷剧：cell/change/v 按 cell_id 拉一格；带 filter_ids + rec_filter_info_list 续推。
+     * 解析 cell_view.cell_data[] → video_data[].video_detail → SeriesCard；收集 filter、rec_filter_info。
+     */
+    fun feedCell(
+        cellId: String,
+        filterIds: List<String> = emptyList(),
+        recFilterInfo: List<JSONObject> = emptyList(),
+        refresh: Boolean = true,
+    ): FeedCellPage {
+        if (cellId.isEmpty()) return FeedCellPage(filterIds = filterIds, recFilterInfo = recFilterInfo, hasMore = false)
+        val params = linkedMapOf(
+            "cell_id" to cellId, "change_type" to "0", "limit" to "0", "tag_id" to "0",
+            "inner_category_id" to "0", "total_chapter_num" to "0", "video_tab_cold_start" to "0",
+            "client_template" to "7", "sub_genre" to "0", "related_book_id" to "0", "inner_algo" to "0",
+        )
+        var qs = baseQuery() + params.entries.joinToString("") { "&${it.key}=${it.value}" }
+        if (filterIds.isNotEmpty()) {
+            qs += "&filter_ids=" + java.net.URLEncoder.encode(filterIds.joinToString(","), "UTF-8")
+        }
+        if (recFilterInfo.isNotEmpty()) {
+            val arr = JSONArray()
+            recFilterInfo.forEach { arr.put(it) }
+            qs += "&rec_filter_info_list=" + java.net.URLEncoder.encode(arr.toString(), "UTF-8")
+        }
+        val path = "/reading/bookapi/bookmall/cell/change/v"
+        val text = viaServerUrl("$HOST$path?$qs", refresh)
+            ?: runCatching { get("$HOST$path?$qs") }.getOrNull()
+            ?: return FeedCellPage(filterIds = filterIds, recFilterInfo = recFilterInfo, hasMore = false)
+        val data = runCatching { JSONObject(text).optJSONObject("data") }.getOrNull()
+            ?: return FeedCellPage(filterIds = filterIds, recFilterInfo = recFilterInfo, hasMore = false)
+        val cards = LinkedHashMap<String, SeriesCard>()
+        val outFilter = LinkedHashSet<String>(filterIds)
+        val outRec = ArrayList<JSONObject>(recFilterInfo)
+        val cellData = data.optJSONObject("cell_view")?.optJSONArray("cell_data")
+            ?: data.optJSONArray("cell_data")
+        val cells = ArrayList<JSONObject>()
+        if (cellData != null) for (i in 0 until cellData.length()) cellData.optJSONObject(i)?.let { cells.add(it) }
+        if (cells.isEmpty()) {
+            val view = data.optJSONObject("cell_view")
+            if (view != null && view.has("video_data")) cells.add(view) else if (data.has("video_data")) cells.add(data)
+        }
+        for (cell in cells) {
+            val vdArr = cell.optJSONArray("video_data")
+            if (vdArr != null && vdArr.length() > 0) {
+                for (i in 0 until vdArr.length()) {
+                    val vo = vdArr.optJSONObject(i) ?: continue
+                    val c = toCard(vo) ?: continue // 跳过 pugc/无 series 卡
+                    if (c.seriesId.isEmpty()) continue
+                    cards.putIfAbsent(c.seriesId, c)
+                }
+            }
+            val extra = cell.optJSONObject("cell_extra_data")
+            if (extra != null) {
+                when (val rec = extra.opt("rec_filter_info")) {
+                    is JSONObject -> outRec.add(rec)
+                    is JSONArray -> for (i in 0 until rec.length()) rec.optJSONObject(i)?.let { outRec.add(it) }
+                    is String -> if (rec.isNotBlank()) runCatching { JSONObject(rec) }.getOrNull()?.let { outRec.add(it) }
+                }
+                extra.optJSONObject("filter_id_map")?.let { fm ->
+                    fm.keys().forEach { k -> fm.optString(k).takeIf { it.isNotEmpty() }?.let { outFilter.add(it) } }
+                }
+                extra.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let { outFilter.add(it) }
+            }
+            cell.optJSONObject("filter_id_map")?.let { fm ->
+                fm.keys().forEach { k -> fm.optString(k).takeIf { it.isNotEmpty() }?.let { outFilter.add(it) } }
+            }
+            cell.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let { outFilter.add(it) }
+        }
+        return FeedCellPage(
+            cards = cards.values.toList(),
+            filterIds = outFilter.toList(),
+            recFilterInfo = outRec,
+            hasMore = data.optBoolean("has_more", true) && cards.isNotEmpty(),
+        )
+    }
+
     private fun firstCellId(arr: JSONArray?): String {
         if (arr == null) return ""
         for (i in 0 until arr.length()) {

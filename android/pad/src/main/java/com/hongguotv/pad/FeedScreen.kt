@@ -134,11 +134,16 @@ fun FeedScreen(
     // 三端默认漫剧；与 PC 一致：漫剧 / 真人剧 / 推荐。
     // 上游真实 tab：36=漫剧、39=真人剧、16=推荐；3/4/2 是已失效的旧 id。
     val feedTypes = listOf("36", "39", "16")
+    // 官方刷剧 cell_id：漫剧 / 真人剧 / 推荐（与 feedTypes 顺序一致）
+    val feedCellIds = listOf("7597343008509411390", "7650476176527343678", "7294257141911650341")
     val isTv = Store.appContext.packageName.endsWith("nativeapp")
     var tab by remember { mutableStateOf(UiMemo.feedTab) }
     var cards by remember { mutableStateOf(UiMemo.feedCards) }
     var cursor by remember { mutableStateOf(UiMemo.feedCursor) }
     var page by remember { mutableStateOf(UiMemo.feedPage) }
+    // 官方 feed 续推游标：累计 filter_ids + rec_filter_info（用于下一页 feedCell）
+    var filterIds by remember { mutableStateOf(UiMemo.feedFilterIds) }
+    var recInfos by remember { mutableStateOf(UiMemo.feedRecFilterInfo) }
     // 首次进入先显示 loading，绝不先画旧列表。
     var loading by remember { mutableStateOf(true) }
     var reload by remember { mutableStateOf(0) }
@@ -173,87 +178,48 @@ fun FeedScreen(
         page = null
         FeedPreload.clear()
         val cacheKey = "feed_${feedTypes[tab]}"
-        val type = feedTypes[tab]
+        val cellId = feedCellIds.getOrElse(tab) { feedCellIds[0] }
+        filterIds = emptyList()
+        recInfos = emptyList()
 
-        if (type == "16") {
-        // ---- ① 首屏秒开：只拉第一页，跨天去重后立即开播；不再等深翻凑池 ----
-        val first = withContext(Dispatchers.IO) {
-            runCatching { Api.firstPage(type, refresh = true) }.getOrNull()
+        // ---- 官方 feed 首屏：feedCell(cell_id, 空 filter) ----
+        val res = withContext(Dispatchers.IO) {
+            runCatching { Api.feedCell(cellId, emptyList(), emptyList()) }.getOrNull()
         }
-        val rawFirst = first?.cards ?: emptyList()
-        // 不再跨会话/跨天按 feedSeen 剔除（会持久导致"刷到过就永不出现"）；首屏直接打乱显示，
-        // 同一趟列表内靠 putIfAbsent/known 去重即可。
-        val firstDisplay = rawFirst.shuffled()
-        if (firstDisplay.isNotEmpty()) {
-            cards = firstDisplay
-            page = first
+        filterIds = res?.filterIds ?: emptyList()
+        recInfos = res?.recFilterInfo ?: emptyList()
+        val firstCards = res?.cards ?: emptyList()
+        if (firstCards.isNotEmpty()) {
+            cards = firstCards
+            page = FeedPage(cards = firstCards, hasMore = res?.hasMore ?: true, cellId = cellId)
             cursor = 0
-            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, firstDisplay) } }
+            withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, firstCards) } }
         } else {
             cards = emptyList()
             page = null
         }
-        loading = false // 立即开播，深翻放后台
+        loading = false // 首屏到即开播
 
-        // ---- ② 后台继续深翻补池，完成后 append 到尾部 ----
-        // 不打断当前播放：不清空、不重排、不动 cursor，只往 cards 尾部加"没出现过的、优先没见过"的剧。
-        // BUG①修复：只有「推荐(16)」才跨分类补；具体分类(36漫剧 / 39真人剧)只深翻本类，避免类型串台。
-        val extraTypes = if (type == "16") feedTypes.filter { it != type } else emptyList()
-        if (first != null) {
+        // ---- 后台继续 feedCell 累计 filter 续推补池（不打断当前播放，追加到尾部） ----
+        if (firstCards.isNotEmpty()) {
             launch {
-                val built = withContext(Dispatchers.IO) {
-                    buildFeedPool(type, extraTypes, first)
-                }
-                val pool = built.first
-                val primaryLast = built.second
-                val shownIds = cards.map { it.seriesId }.toSet()
-                // 同一趟列表内去重（不落盘、不跨会话）：只排除已经出现在 cards 里的
-                val poolValues = pool.values
-                    .filter { it.seriesId !in shownIds }
-                    .shuffled()
-                val shownNow = cards.map { it.seriesId }.toSet()
-                val appended = poolValues.filter { it.seriesId !in shownNow }
-                if (appended.isNotEmpty()) {
-                    cards = cards + appended // append 到尾部
-                    if (primaryLast != null) page = primaryLast // 更新 step 尾部续翻游标
+                var guard = 0
+                while (cards.size < FEED_POOL_TARGET && guard < 8) {
+                    guard++
+                    val more = withContext(Dispatchers.IO) {
+                        runCatching { Api.feedCell(cellId, filterIds, recInfos) }.getOrNull()
+                    } ?: break
+                    filterIds = more.filterIds
+                    recInfos = more.recFilterInfo
+                    val known = cards.map { it.seriesId }.toSet()
+                    val add = more.cards.filter { it.seriesId !in known }
+                    if (add.isEmpty()) break
+                    cards = cards + add
                     withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, cards) } }
+                    if (!more.hasMore) break
                 }
+                page = page?.copy(hasMore = true, cellId = cellId)
             }
-        }
-        } else {
-            // ---- 36/39：热播榜 + 新剧榜 候选，剔除「本机真看过(positionMs>=3s)」；不足 12 用 feed 池补足 48 ----
-            val excluded = withContext(Dispatchers.IO) { runCatching { buildExcludeIds() }.getOrDefault(emptySet()) }
-            val rank = withContext(Dispatchers.IO) { runCatching { buildRankCandidates(type) }.getOrDefault(emptyList()) }
-            val picked = ArrayList<SeriesCard>()
-            val have = HashSet<String>()
-            for (c in rank) {
-                if (c.seriesId in excluded || !have.add(c.seriesId)) continue
-                picked.add(c)
-            }
-            var feedLast: FeedPage? = null
-            if (picked.size < 12) {
-                val built = withContext(Dispatchers.IO) {
-                    runCatching { buildFeedPool(type, emptyList(), null) }.getOrNull()
-                }
-                if (built != null) {
-                    feedLast = built.second
-                    for (c in built.first.values) {
-                        if (picked.size >= 48) break
-                        if (c.seriesId in excluded || !have.add(c.seriesId)) continue
-                        picked.add(c)
-                    }
-                }
-            }
-            if (picked.isNotEmpty()) {
-                cards = picked
-                page = feedLast // rank 池无游标：走 feed 兜底续翻（见 step 的 page==null 分支）
-                cursor = 0
-                withContext(Dispatchers.IO) { runCatching { FeedCache.save(cacheKey, picked) } }
-            } else {
-                cards = emptyList()
-                page = null
-            }
-            loading = false
         }
     }
 
@@ -268,59 +234,32 @@ fun FeedScreen(
         UiMemo.feedCursor = cursor
         UiMemo.feedCards = cards
         UiMemo.feedPage = page
+        UiMemo.feedFilterIds = filterIds
+        UiMemo.feedRecFilterInfo = recInfos
     }
 
-    /** 换剧：-1 上一部 / +1 下一部；走到列表尾自动续一页（rank 池无游标时走 feed 兜底，别崩）。 */
+    /** 换剧：-1 上一部 / +1 下一部；走到列表尾用 feedCell 累计 filter 续推下一页。 */
     fun step(dir: Int) {
         val next = cursor + dir
         if (next < 0) return
         if (next >= cards.size) {
             if (moreLoading) return
-            val c = page
-            if (c == null) {
-                // rank 池没有游标：拉一页 feed 兜底续上，别卡死/崩
-                moreLoading = true
-                scope.launch {
-                    val excluded = withContext(Dispatchers.IO) {
-                        runCatching { buildExcludeIds() }.getOrDefault(emptySet())
-                    }
-                    val fb = withContext(Dispatchers.IO) {
-                        runCatching { Api.firstPage(feedTypes[tab], refresh = true) }.getOrNull()
-                    }
-                    if (fb != null && fb.cards.isNotEmpty()) {
-                        val known = cards.map { it.seriesId }.toSet()
-                        // 同一套剔除：只屏蔽本机真看过的，其余都保留
-                        val add = fb.cards.filter { it.seriesId !in known && it.seriesId !in excluded }
-                        page = fb
-                        if (add.isNotEmpty()) {
-                            cards = cards + add
-                            cursor = next.coerceAtMost(cards.lastIndex)
-                        }
-                    }
-                    moreLoading = false
-                }
-                return
-            }
-            if (!c.hasMore) return
             moreLoading = true
+            val cellId = feedCellIds.getOrElse(tab) { feedCellIds[0] }
             scope.launch {
-                val np = withContext(Dispatchers.IO) {
-                    runCatching {
-                        Api.feedNext(
-                            feedTypes[tab], c.cellId, c.planId, c.sessionId, c.nextOffset,
-                            cards.map { it.seriesId }, refresh = true,
-                        )
-                    }.getOrNull()
+                val more = withContext(Dispatchers.IO) {
+                    runCatching { Api.feedCell(cellId, filterIds, recInfos) }.getOrNull()
                 }
-                if (np != null && np.cards.isNotEmpty()) {
+                if (more != null) {
+                    filterIds = more.filterIds
+                    recInfos = more.recFilterInfo
                     val known = cards.map { it.seriesId }.toSet()
-                    cards = cards + np.cards.filter { it.seriesId !in known }
-                    page = np
-                    cursor = next.coerceAtMost(cards.lastIndex)
-                } else {
-                    page = c.copy(hasMore = false)
+                    val add = more.cards.filter { it.seriesId !in known }
+                    if (add.isNotEmpty()) cards = cards + add
+                    if (!more.hasMore) page = page?.copy(hasMore = false)
                 }
                 moreLoading = false
+                if (next < cards.size) cursor = next
             }
             return
         }
