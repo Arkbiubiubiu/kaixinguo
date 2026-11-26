@@ -233,6 +233,13 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         cursor = next
     }
 
+    // 提前预取：距离列表尾 ≤3 部时就在后台续推下一页，避免"到最后一部才卡一下再蹦新剧"
+    LaunchedEffect(cursor, cards.size, hasMore, moreLoading) {
+        if (cards.isNotEmpty() && hasMore && !moreLoading && cursor >= cards.size - 3) {
+            loadMore()
+        }
+    }
+
     val current = cards.getOrNull(cursor)
     when {
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

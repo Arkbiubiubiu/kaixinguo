@@ -148,6 +148,8 @@ fun FeedScreen(
     var loading by remember { mutableStateOf(true) }
     var reload by remember { mutableStateOf(0) }
     var moreLoading by remember { mutableStateOf(false) }
+    // 首屏后台补池是否仍在进行（补池期间不叠加"提前预取"，避免并发重复拉）
+    var poolFilling by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // TV：进刷剧先弹「分类选择」（方向键已被换剧/进详情占用，没有别的切换入口）。
@@ -203,6 +205,7 @@ fun FeedScreen(
         // ---- 后台继续 feedCell 累计 filter 续推补池（不打断当前播放，追加到尾部） ----
         if (firstCards.isNotEmpty()) {
             launch {
+                poolFilling = true
                 var guard = 0
                 while (cards.size < FEED_POOL_TARGET && guard < 8) {
                     guard++
@@ -219,6 +222,7 @@ fun FeedScreen(
                     if (!more.hasMore) break
                 }
                 page = page?.copy(hasMore = true, cellId = cellId)
+                poolFilling = false
             }
         }
     }
@@ -226,6 +230,34 @@ fun FeedScreen(
     // 预载后面若干部（FeedPreload.AHEAD=8）：换剧时直接用准备好的解密代理，起播几乎无感
     LaunchedEffect(cursor, cards) {
         if (cards.isNotEmpty()) FeedPreload.request(cards, cursor + 1)
+    }
+
+    // 提前预取：光标距列表尾≤3部时，后台 feedCell(累计filter) 续推一页；
+    // 用户滑到倒数第3部就开始补，真正到底时新剧已就位、不卡/不突兀。moreLoading 防重入、hasMore 判断。
+    LaunchedEffect(cursor, cards.size, tab, poolFilling) {
+        if (poolFilling || cards.isEmpty()) return@LaunchedEffect
+        if (cursor < cards.size - 3) return@LaunchedEffect
+        if (moreLoading) return@LaunchedEffect
+        if (page?.hasMore == false) return@LaunchedEffect
+        moreLoading = true
+        val cellId = feedCellIds.getOrElse(tab) { feedCellIds[0] }
+        val more = withContext(Dispatchers.IO) {
+            runCatching { Api.feedCell(cellId, filterIds, recInfos) }.getOrNull()
+        }
+        if (more != null) {
+            filterIds = more.filterIds
+            recInfos = more.recFilterInfo
+            val known = cards.map { it.seriesId }.toSet()
+            val add = more.cards.filter { it.seriesId !in known }
+            if (add.isNotEmpty()) {
+                cards = cards + add
+                withContext(Dispatchers.IO) {
+                    runCatching { FeedCache.save("feed_${feedTypes[tab]}", cards) }
+                }
+            }
+            if (!more.hasMore) page = page?.copy(hasMore = false)
+        }
+        moreLoading = false
     }
 
     // 位置随变随记：进详情时这一页会离开组合，这些状态只能存在单例里
