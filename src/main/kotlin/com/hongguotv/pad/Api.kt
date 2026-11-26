@@ -1052,22 +1052,43 @@ object Api {
         fun collectFilterMap(obj: JSONObject?) {
             obj?.let { m -> m.keys().forEach { k -> m.optString(k).takeIf { it.isNotEmpty() }?.let(newFilters::add) } }
         }
+        // 收集一条 rec_filter_info（可能是 JSONObject / 数组 / 字符串），并把它内含的 filter_id_map/rec_group_id 也并进 filter_ids
+        fun addRecAndFilter(v: Any?) {
+            val list = ArrayList<org.json.JSONObject>()
+            when (v) {
+                is org.json.JSONObject -> list.add(v)
+                is JSONArray -> for (k in 0 until v.length()) v.optJSONObject(k)?.let { list.add(it) }
+                is String -> if (v.isNotBlank()) runCatching { org.json.JSONObject(v) }.getOrNull()?.let { list.add(it) }
+            }
+            for (r in list) {
+                newRec.add(r)
+                collectFilterMap(r.optJSONObject("filter_id_map"))
+                r.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let(newFilters::add)
+            }
+        }
         val cellData = data.optJSONObject("cell_view")?.optJSONArray("cell_data")
         if (cellData != null) for (i in 0 until cellData.length()) {
             val cell = cellData.optJSONObject(i) ?: continue
+            // 官方续推过滤信息在 cell_extra_data 下（rec_filter_info / filter_id_map / rec_group_id）
+            val extra = cell.optJSONObject("cell_extra_data")
+            if (extra != null) {
+                addRecAndFilter(extra.opt("rec_filter_info"))
+                collectFilterMap(extra.optJSONObject("filter_id_map"))
+                extra.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let(newFilters::add)
+            }
+            // 兼容个别结构把过滤信息直接挂在 cell 上
+            addRecAndFilter(cell.opt("rec_filter_info"))
             collectFilterMap(cell.optJSONObject("filter_id_map"))
             cell.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let(newFilters::add)
-            (cell.opt("rec_filter_info") as? JSONObject)?.let { newRec.add(it) }
             val vids = cell.optJSONArray("video_data") ?: continue
             for (j in 0 until vids.length()) {
                 val v = vids.optJSONObject(j) ?: continue
                 val vd = v.optJSONObject("video_detail") ?: continue
-                // 跳过 pugc
                 if (vd.optBoolean("is_pugc", false) || v.optBoolean("is_pugc", false) ||
                     v.optString("video_type").equals("pugc", true) ||
                     vd.optString("video_type").equals("pugc", true)
                 ) continue
-                (v.opt("rec_filter_info") as? JSONObject)?.let { newRec.add(it) }
+                addRecAndFilter(v.opt("rec_filter_info"))
                 collectFilterMap(v.optJSONObject("filter_id_map"))
                 v.optString("rec_group_id").takeIf { it.isNotEmpty() }?.let(newFilters::add)
                 val card = runCatching { toCard(v) }.getOrNull() ?: continue

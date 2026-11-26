@@ -210,8 +210,9 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
                 if (res != null) {
                     val add = res.cards.filter { it.seriesId !in have }
                     if (add.isNotEmpty()) cards = cards + add
-                    res.filterIds.forEach { if (it !in filterIds) filterIds.add(it) }
-                    res.recFilterInfos.forEach { recInfos.add(it) }
+                    // feedCell 返回的是“含本批在内”的累计 filter；直接替换，避免重复累加膨胀
+                    filterIds.clear(); filterIds.addAll(res.filterIds)
+                    recInfos.clear(); recInfos.addAll(res.recFilterInfos)
                     hasMore = res.hasMore && res.cards.isNotEmpty()
                 } else {
                     hasMore = false
