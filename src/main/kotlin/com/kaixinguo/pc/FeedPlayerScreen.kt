@@ -107,6 +107,13 @@ import org.json.JSONObject
 import java.io.File
 import kotlin.math.roundToInt
 
+/** 刷剧每步计时日志（写本地文件，供定位“卡在某处/某请求多久”）。 */
+object FeedTrace {
+    @Volatile var enabled = true
+    private val file = java.io.File("C:/kaixinguo-feed-trace.log")
+    fun log(m: String) { if (!enabled) return; runCatching { file.appendText("${System.currentTimeMillis()}\t$m\n") } }
+}
+
 private const val FEED_WARM_COUNT = 4
 
 /** 预取后面几部：详情 + 首集档位预热，有限并发 ≤2，best-effort。 */
@@ -171,6 +178,8 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         filterIds.clear()
         recInfos.clear()
         val type = feedTypes[tab]
+        FeedTrace.log("S1 start tab=$type")
+        val t0s1 = System.currentTimeMillis()
         val res = withContext(Dispatchers.IO) {
             runCatching { Api.feedCell(type, emptyList(), emptyList()) }.getOrNull()
         }
@@ -180,11 +189,15 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
             recInfos.addAll(res.recFilterInfos)
             hasMore = res.hasMore
         }
+        FeedTrace.log("S1 done ms=${System.currentTimeMillis() - t0s1} n=${cards.size} hasMore=$hasMore f=${filterIds.size} rec=${recInfos.size} resNull=${res == null}")
         loading = false
         // 预取后面几部（详情 + 首集档位预热），首屏之后再预热，别在首屏阶段抢。
         launch {
             kotlinx.coroutines.delay(2_000)
+            FeedTrace.log("WARM start")
+            val tw = System.currentTimeMillis()
             warmUpcomingFeed(cards, cursor + 1, FEED_WARM_COUNT)
+            FeedTrace.log("WARM done ms=${System.currentTimeMillis() - tw}")
         }
     }
 
@@ -198,14 +211,17 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
 
     /** 到底/不够：feedCell(累计 filter_ids + rec_filter_info) 追加，不重置当前播放。 */
     fun loadMore() {
-        if (moreLoading || !hasMore) return
+        if (moreLoading || !hasMore) { FeedTrace.log("LM skip cur=$cursor size=${cards.size} more=$moreLoading has=$hasMore"); return }
         moreLoading = true
         val type = feedTypes[tab]
         val fIds = filterIds.toList()
         val recs = recInfos.toList()
         val have = cards.map { it.seriesId }.toHashSet()
         scope.launch(Dispatchers.IO) {
+            FeedTrace.log("LM start cur=$cursor size=${cards.size} f=${filterIds.size} rec=${recInfos.size}")
+            val t0 = System.currentTimeMillis()
             val res = runCatching { Api.feedCell(type, fIds, recs) }.getOrNull()
+            val ms = System.currentTimeMillis() - t0
             withContext(Dispatchers.Main) {
                 if (res != null) {
                     val add = res.cards.filter { it.seriesId !in have }
@@ -214,8 +230,10 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
                     filterIds.clear(); filterIds.addAll(res.filterIds)
                     recInfos.clear(); recInfos.addAll(res.recFilterInfos)
                     hasMore = res.hasMore && res.cards.isNotEmpty()
+                    FeedTrace.log("LM done ms=$ms got=${res.cards.size} add=${add.size} newSize=${cards.size} hasMore=$hasMore")
                 } else {
                     hasMore = false
+                    FeedTrace.log("LM NULL ms=$ms -> hasMore=false")
                 }
                 moreLoading = false
             }
@@ -227,15 +245,17 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         val next = cursor + dir
         if (next < 0) return
         if (next >= cards.size) {
+            FeedTrace.log("WHEEL end cur=$cursor size=${cards.size} more=$moreLoading has=$hasMore next=$next")
             if (hasMore) loadMore()
             return
         }
         cursor = next
     }
 
-    // 提前预取：距离列表尾 ≤3 部时就在后台续推下一页，避免"到最后一部才卡一下再蹦新剧"
-    LaunchedEffect(cursor, cards.size, hasMore, moreLoading) {
-        if (cards.isNotEmpty() && hasMore && !moreLoading && cursor >= cards.size - 3) {
+    // 提前预取：保持领先约 6 部（距尾≤5部就在后台续推），别到最后一部才卡一下再蹦新剧
+    LaunchedEffect(cursor, cards.size, hasMore) {
+        if (cards.isNotEmpty() && hasMore && !moreLoading && cursor >= cards.size - 5) {
+            FeedTrace.log("PRE trigger cur=$cursor size=${cards.size}")
             loadMore()
         }
     }
