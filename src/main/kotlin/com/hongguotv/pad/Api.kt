@@ -321,6 +321,13 @@ object Api {
         if (App.state.loggedIn) payload.put("cookie", App.state.accountCookies)
         val bases = serverBases()
         if (bases.isEmpty()) return null
+        // 1) 先固定用“上次成功的那个入口”（只一个）；它这次仍成功就直接用，绝不再试一堆
+        val pref = preferredBase
+        if (pref != null && bases.contains(pref)) {
+            val r = postFetch(pref, payload, readTimeoutMs = timeoutMs.toInt())
+            if (r != null && r.text.isNotEmpty()) return r.text
+        }
+        // 2) 还没有优选入口 / 或优选入口这次失败：才并发抢答一次，选最快并锁定它
         val result = java.util.concurrent.atomic.AtomicReference<String?>(null)
         bases.forEach { base ->
             Thread {
