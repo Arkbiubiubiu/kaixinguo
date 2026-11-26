@@ -250,28 +250,17 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         cursor = next
     }
 
-    // 首屏后**主动补货到约 24 部**（后台逐页 feedCell，不打断当前播放）——彻底不依赖“到底/预取”条件
-    LaunchedEffect(tab, loading) {
-        if (loading) return@LaunchedEffect
-        if (cards.isEmpty() || !hasMore) { FeedTrace.log("FILL skip empty=${cards.isEmpty()} hasMore=$hasMore"); return@LaunchedEffect }
-        kotlinx.coroutines.delay(1_500) // 先让第一部起播，别一进来就抢网络把首帧卡住
-        FeedTrace.log("FILL start size=${cards.size} hasMore=$hasMore")
-        var guard = 0
-        while (hasMore && cards.size < 18 && guard < 4) {
-            guard++
-            val before = cards.size
-            val ok = fillOne()
-            if (!ok || cards.size == before) break
-            kotlinx.coroutines.delay(400)
-        }
-        FeedTrace.log("FILL done size=${cards.size} hasMore=$hasMore")
-    }
-
-    // 接近列表尾（距尾≤5）继续续推
-    LaunchedEffect(cursor, cards.size) {
-        if (cards.isNotEmpty() && !moreLoading && cursor >= cards.size - 5) {
-            FeedTrace.log("PRE trigger cur=$cursor size=${cards.size}")
-            loadMore()
+    // 预取策略（按用户要求）：首屏只放 9 部、尽快能看；当刷到“距尾≤3部”时后台补下一批9部
+    // （第6部→后台补10~18；第15部→补19~27）。用常驻轮询确保一定触发，不依赖 LaunchedEffect 的时机。
+    LaunchedEffect(tab) {
+        FeedTrace.log("POLL start tab=$tab")
+        while (true) {
+            kotlinx.coroutines.delay(700)
+            if (loading || cards.isEmpty() || !hasMore || moreLoading) continue
+            if (cursor >= cards.size - 4) {          // 距列表尾 ≤3 部就补
+                FeedTrace.log("PRE poll cur=$cursor size=${cards.size}")
+                fillOne()
+            }
         }
     }
 
