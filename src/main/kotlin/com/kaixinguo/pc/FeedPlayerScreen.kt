@@ -110,7 +110,7 @@ import kotlin.math.roundToInt
 /** 刷剧每步计时日志（写本地文件，供定位“卡在某处/某请求多久”）。 */
 object FeedTrace {
     @Volatile var enabled = true
-    private val file = java.io.File("C:/kaixinguo-feed-trace.log")
+    private val file = java.io.File(System.getProperty("java.io.tmpdir"), "kaixinguo-feed-trace.log")
     fun log(m: String) { if (!enabled) return; runCatching { file.appendText("${System.currentTimeMillis()}\t$m\n") } }
 }
 
@@ -209,38 +209,36 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         PageMemo.feedPage = null
     }
 
-    /** 到底/不够：feedCell(累计 filter_ids + rec_filter_info) 追加，不重置当前播放。 */
-    fun loadMore() {
-        if (moreLoading || !hasMore) { FeedTrace.log("LM skip cur=$cursor size=${cards.size} more=$moreLoading has=$hasMore"); return }
+    /** 拉一页续推（feedCell 累计 filter），返回是否真的新增了剧（真主页可调用）。 */
+    suspend fun fillOne(): Boolean {
+        if (moreLoading || !hasMore) { FeedTrace.log("FILLB skip more=$moreLoading has=$hasMore size=${cards.size}"); return false }
         moreLoading = true
         val type = feedTypes[tab]
         val fIds = filterIds.toList()
         val recs = recInfos.toList()
         val have = cards.map { it.seriesId }.toHashSet()
-        scope.launch(Dispatchers.IO) {
-            FeedTrace.log("LM start cur=$cursor size=${cards.size} f=${filterIds.size} rec=${recInfos.size}")
-            val t0 = System.currentTimeMillis()
-            val res = runCatching { Api.feedCell(type, fIds, recs) }.getOrNull()
-            val ms = System.currentTimeMillis() - t0
-            withContext(Dispatchers.Main) {
-                if (res != null) {
-                    val add = res.cards.filter { it.seriesId !in have }
-                    if (add.isNotEmpty()) cards = cards + add
-                    // feedCell 返回的是“含本批在内”的累计 filter；直接替换，避免重复累加膨胀
-                    filterIds.clear(); filterIds.addAll(res.filterIds)
-                    recInfos.clear(); recInfos.addAll(res.recFilterInfos)
-                    hasMore = res.hasMore && res.cards.isNotEmpty()
-                    FeedTrace.log("LM done ms=$ms got=${res.cards.size} add=${add.size} newSize=${cards.size} hasMore=$hasMore")
-                } else {
-                    hasMore = false
-                    FeedTrace.log("LM NULL ms=$ms -> hasMore=false")
-                }
-                moreLoading = false
-            }
+        FeedTrace.log("LM start cur=$cursor size=${cards.size} f=${fIds.size} rec=${recs.size}")
+        val t0 = System.currentTimeMillis()
+        val res = runCatching { withContext(Dispatchers.IO) { Api.feedCell(type, fIds, recs) } }.getOrNull()
+        val ms = System.currentTimeMillis() - t0
+        if (res != null) {
+            val add = res.cards.filter { it.seriesId !in have }
+            if (add.isNotEmpty()) cards = cards + add
+            // feedCell 返回的是“含本批在内”的累计 filter；直接替换，避免重复累加膨胀
+            filterIds.clear(); filterIds.addAll(res.filterIds)
+            recInfos.clear(); recInfos.addAll(res.recFilterInfos)
+            hasMore = res.hasMore && res.cards.isNotEmpty()
+            FeedTrace.log("LM done ms=$ms got=${res.cards.size} add=${add.size} newSize=${cards.size} hasMore=$hasMore")
+        } else {
+            hasMore = false
+            FeedTrace.log("LM NULL ms=$ms -> hasMore=false")
         }
+        moreLoading = false
+        return res != null && cards.size > have.size
     }
+    fun loadMore() { scope.launch { fillOne() } }
 
-    // 滚轮换剧（旧版 onWheelStep 同语义）：向下=下一部，向上=上一部；到底续推官方 feed
+    // 滚轮换剧：向下=下一部，向上=上一部；到底续推官方 feed
     fun wheelStep(dir: Int) {
         val next = cursor + dir
         if (next < 0) return
@@ -252,9 +250,24 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         cursor = next
     }
 
-    // 提前预取：保持领先约 6 部（距尾≤5部就在后台续推），别到最后一部才卡一下再蹦新剧
-    LaunchedEffect(cursor, cards.size, hasMore) {
-        if (cards.isNotEmpty() && hasMore && !moreLoading && cursor >= cards.size - 5) {
+    // 首屏后**主动补货到约 24 部**（后台逐页 feedCell，不打断当前播放）——彻底不依赖“到底/预取”条件
+    LaunchedEffect(tab, loading) {
+        if (loading) return@LaunchedEffect
+        if (cards.isEmpty() || !hasMore) { FeedTrace.log("FILL skip empty=${cards.isEmpty()} hasMore=$hasMore"); return@LaunchedEffect }
+        FeedTrace.log("FILL start size=${cards.size} hasMore=$hasMore")
+        var guard = 0
+        while (hasMore && cards.size < 24 && guard < 12) {
+            guard++
+            val before = cards.size
+            val ok = fillOne()
+            if (!ok || cards.size == before) break
+        }
+        FeedTrace.log("FILL done size=${cards.size} hasMore=$hasMore")
+    }
+
+    // 接近列表尾（距尾≤5）继续续推
+    LaunchedEffect(cursor, cards.size) {
+        if (cards.isNotEmpty() && !moreLoading && cursor >= cards.size - 5) {
             FeedTrace.log("PRE trigger cur=$cursor size=${cards.size}")
             loadMore()
         }
