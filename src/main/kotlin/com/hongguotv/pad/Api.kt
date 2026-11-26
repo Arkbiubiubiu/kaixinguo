@@ -1144,6 +1144,12 @@ object Api {
         "39" to ("7650476176527343678" to "7650476689721409598"),
     )
 
+    /** 走通的 offset 通道：按分类用内置 cell/plan 拉一页（offset=0 首屏；续推带 session+offset）。 */
+    fun feedOffsetPage(tabType: String, sessionId: String, offset: Int, seen: Collection<String>, refresh: Boolean = false): FeedPage {
+        val ids = TAB_IDS[tabType] ?: return FeedPage()
+        return feedNext(tabType, ids.first, ids.second, sessionId, offset, seen, refresh)
+    }
+
     fun feedNext(
         tabType: String,
         cellId: String,

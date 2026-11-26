@@ -110,7 +110,7 @@ import kotlin.math.roundToInt
 /** 刷剧每步计时日志（写本地文件，供定位“卡在某处/某请求多久”）。 */
 object FeedTrace {
     @Volatile var enabled = true
-    private val file = java.io.File(System.getProperty("java.io.tmpdir"), "kaixinguo-feed-trace.log")
+    private val file = java.io.File(System.getProperty("user.home"), "kaixinguo-feed-trace.log")
     fun log(m: String) { if (!enabled) return; runCatching { file.appendText("${System.currentTimeMillis()}\t$m\n") } }
 }
 
@@ -156,9 +156,9 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
     var loading by remember { mutableStateOf(true) }
     var moreLoading by remember { mutableStateOf(false) }
     var hasMore by remember { mutableStateOf(true) }
-    // 官方 feed 续推状态：累计 filter_ids + rec_filter_info（回传给 feedCell）
-    val filterIds = remember { androidx.compose.runtime.mutableStateListOf<String>() }
-    val recInfos = remember { androidx.compose.runtime.mutableStateListOf<JSONObject>() }
+    // offset 翻页状态（走通的旧通道）：会话号 + 下一偏移
+    var feedSession by remember { mutableStateOf("") }
+    var feedOffset by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(tab) {
@@ -175,21 +175,21 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         cards = emptyList()
         cursor = 0
         hasMore = true
-        filterIds.clear()
-        recInfos.clear()
+        feedSession = ""
+        feedOffset = 0
         val type = feedTypes[tab]
         FeedTrace.log("S1 start tab=$type")
         val t0s1 = System.currentTimeMillis()
         val res = withContext(Dispatchers.IO) {
-            runCatching { Api.feedCell(type, emptyList(), emptyList()) }.getOrNull()
+            runCatching { Api.feedOffsetPage(type, "", 0, emptyList()) }.getOrNull()
         }
         if (res != null) {
             cards = res.cards
-            filterIds.addAll(res.filterIds)
-            recInfos.addAll(res.recFilterInfos)
+            feedSession = res.sessionId
+            feedOffset = res.nextOffset
             hasMore = res.hasMore
         }
-        FeedTrace.log("S1 done ms=${System.currentTimeMillis() - t0s1} n=${cards.size} hasMore=$hasMore f=${filterIds.size} rec=${recInfos.size} resNull=${res == null}")
+        FeedTrace.log("S1 done ms=${System.currentTimeMillis() - t0s1} n=${cards.size} hasMore=$hasMore off=$feedOffset sessionEmpty=${feedSession.isEmpty()} resNull=${res == null}")
         loading = false
         // 预取后面几部（详情 + 首集档位预热），首屏之后再预热，别在首屏阶段抢。
         launch {
@@ -214,21 +214,19 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         if (moreLoading || !hasMore) { FeedTrace.log("FILLB skip more=$moreLoading has=$hasMore size=${cards.size}"); return false }
         moreLoading = true
         val type = feedTypes[tab]
-        val fIds = filterIds.toList()
-        val recs = recInfos.toList()
-        val have = cards.map { it.seriesId }.toHashSet()
-        FeedTrace.log("LM start cur=$cursor size=${cards.size} f=${fIds.size} rec=${recs.size}")
+        val seen = cards.map { it.seriesId }
+        val have = seen.toHashSet()
+        FeedTrace.log("LM start cur=$cursor size=${cards.size} off=$feedOffset")
         val t0 = System.currentTimeMillis()
-        val res = runCatching { kotlinx.coroutines.withTimeout(6_000) { withContext(Dispatchers.IO) { Api.feedCell(type, fIds, recs) } } }.getOrNull()
+        val res = runCatching { kotlinx.coroutines.withTimeout(9_000) { withContext(Dispatchers.IO) { Api.feedOffsetPage(type, feedSession, feedOffset, seen) } } }.getOrNull()
         val ms = System.currentTimeMillis() - t0
         if (res != null) {
             val add = res.cards.filter { it.seriesId !in have }
             if (add.isNotEmpty()) cards = cards + add
-            // feedCell 返回的是“含本批在内”的累计 filter；直接替换，避免重复累加膨胀
-            filterIds.clear(); filterIds.addAll(res.filterIds)
-            recInfos.clear(); recInfos.addAll(res.recFilterInfos)
-            hasMore = res.hasMore && res.cards.isNotEmpty()
-            FeedTrace.log("LM done ms=$ms got=${res.cards.size} add=${add.size} newSize=${cards.size} hasMore=$hasMore")
+            if (res.sessionId.isNotEmpty()) feedSession = res.sessionId
+            if (res.nextOffset > feedOffset) feedOffset = res.nextOffset
+            hasMore = res.hasMore
+            FeedTrace.log("LM done ms=$ms got=${res.cards.size} add=${add.size} newSize=${cards.size} hasMore=$hasMore off=$feedOffset")
         } else {
             // 超时/失败：保留 hasMore，稍后再试（不要因一次抖动就停掉续推）
             FeedTrace.log("LM NULL/timeout ms=$ms keepHasMore=$hasMore")
@@ -250,7 +248,27 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         cursor = next
     }
 
-    // 预取策略（按用户要求）：首屏只放 9 部、尽快能看；当刷到“距尾≤3部”时后台补下一批9部
+    // 自测：设环境变量 KXG_FEEDAUTO=1 时，自动把当前剧一集集往下换，模拟“刷到后面”，供无人自动化验证
+    LaunchedEffect(Unit) {
+        if (System.getenv("KXG_FEEDAUTO") != "1") return@LaunchedEffect
+        kotlinx.coroutines.delay(1_800)
+        FeedTrace.log("AUTO begin cards=${cards.size}")
+        var i = 0
+        while (i < 20) {
+            i++
+            if (cursor < cards.size - 1) {
+                wheelStep(1)
+            } else {
+                FeedTrace.log("AUTO atEnd cur=$cursor size=${cards.size} -> loadMore")
+                loadMore()
+                kotlinx.coroutines.delay(2_200)
+                if (cursor < cards.size - 1) wheelStep(1)
+            }
+            FeedTrace.log("AUTO step=$i cur=$cursor size=${cards.size} hasMore=$hasMore")
+            kotlinx.coroutines.delay(900)
+        }
+        FeedTrace.log("AUTO end cur=$cursor size=${cards.size}")
+    }
     // （第6部→后台补10~18；第15部→补19~27）。用常驻轮询确保一定触发，不依赖 LaunchedEffect 的时机。
     LaunchedEffect(tab) {
         FeedTrace.log("POLL start tab=$tab")

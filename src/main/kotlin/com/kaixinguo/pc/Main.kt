@@ -628,6 +628,11 @@ private fun AppRoot() {
         }
     }
 
+    // 自测：环境变量 KXG_FEEDAUTO=1 时启动直接进「刷剧」，供无人自动化验证刷剧
+    LaunchedEffect(Unit) {
+        if (System.getenv("KXG_FEEDAUTO") == "1") runCatching { RouteHolder.select("刷剧") }
+    }
+
     // 找剧筛选面板接口慢（2–8 秒），启动时先在后台暖一次
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { runCatching { Api.findRowsCached("landpage") } }
