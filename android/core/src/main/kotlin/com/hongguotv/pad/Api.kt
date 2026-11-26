@@ -1128,6 +1128,34 @@ object Api {
         )
     }
 
+    /**
+     * 官方刷剧·offset 续推通道（PC 已验证：rec 通道客户端发不到→12s 超时；offset 通道 1.5s 出卡）。
+     * 用内置 cell/plan(TAB_IDS) + feedNext；单页 9 秒超时，超时/失败返回 hasMore=true 让调用方稍后重试。
+     */
+    fun feedOffsetPage(
+        tabType: String,
+        sessionId: String = "",
+        offset: Int = 0,
+        seen: Collection<String> = emptyList(),
+        refresh: Boolean = true,
+    ): FeedPage {
+        val ids = TAB_IDS[tabType]
+            ?: return FeedPage(sessionId = sessionId, nextOffset = offset, hasMore = false)
+        val holder = arrayOfNulls<FeedPage>(1)
+        val t = Thread {
+            holder[0] = runCatching {
+                feedNext(tabType, ids.first, ids.second, sessionId, offset, seen, refresh)
+            }.getOrNull()
+        }
+        t.isDaemon = true
+        t.start()
+        runCatching { t.join(9_000) }
+        return holder[0] ?: FeedPage(
+            sessionId = sessionId, nextOffset = offset, hasMore = true,
+            cellId = ids.first, planId = ids.second,
+        )
+    }
+
     private fun firstCellId(arr: JSONArray?): String {
         if (arr == null) return ""
         for (i in 0 until arr.length()) {
