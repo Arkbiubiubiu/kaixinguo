@@ -283,7 +283,7 @@ object Api {
     private data class FetchReply(val text: String, val ageSec: Double)
 
     /** POST 一次 /api/fetch，按 Content-Encoding 解 gzip，返回 text 与数据年龄。 */
-    private fun postFetch(base: String, payload: JSONObject): FetchReply? = runCatching {
+    private fun postFetch(base: String, payload: JSONObject, readTimeoutMs: Int = 25_000): FetchReply? = runCatching {
         val conn = URL(base.trimEnd('/') + "/api/fetch").open()
         try {
             conn.requestMethod = "POST"
@@ -292,7 +292,7 @@ object Api {
             conn.setRequestProperty("Accept-Encoding", "gzip")
             // 内网地址不在同网段时别死等；但签名接口首包要 1.4s+，2 秒会误杀
             conn.connectTimeout = if (base.contains("192.168.")) 4_000 else 6_000
-            conn.readTimeout = 25_000
+            conn.readTimeout = readTimeoutMs
             conn.doOutput = true
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = conn.responseCode
@@ -310,6 +310,33 @@ object Api {
             conn.disconnect()
         }
     }.getOrNull()
+
+    /**
+     * 多入口并发抢答：同时向所有 serverBases 发 /api/fetch，谁先成功用谁，**最多等 timeoutMs**。
+     * 坏/不通的入口不再让整体干等（每个入口 readTimeout 也只给 timeoutMs），彻底消除“某个坏入口干等25秒”的卡顿。
+     */
+    private fun viaServerUrlRace(url: String, refresh: Boolean = false, timeoutMs: Long = 6_000): String? {
+        val payload = JSONObject().put("url", url).put("ua", UA)
+        if (refresh) payload.put("refresh", true)
+        if (App.state.loggedIn) payload.put("cookie", App.state.accountCookies)
+        val bases = serverBases()
+        if (bases.isEmpty()) return null
+        val result = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        bases.forEach { base ->
+            Thread {
+                val r = postFetch(base, payload, readTimeoutMs = timeoutMs.toInt())
+                if (r != null && r.text.isNotEmpty() && result.get() == null) {
+                    if (result.compareAndSet(null, r.text)) preferredBase = base
+                }
+            }.apply { isDaemon = true; start() }
+        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            result.get()?.let { return it }
+            try { Thread.sleep(40) } catch (_: InterruptedException) {}
+        }
+        return result.get()
+    }
 
     /** 代签服务地址（设置页可改，默认局域网 9100）。 */
     private fun signBase(): String =
@@ -1041,7 +1068,7 @@ object Api {
         )
         val qs = baseQuery() + params.entries.joinToString("") { "&${it.key}=${it.value}" }
         val url = "$HOST/reading/bookapi/bookmall/cell/change/v?$qs"
-        val text = viaServerUrl(url, refresh) ?: runCatching { get(url) }.getOrNull()
+        val text = viaServerUrlRace(url, refresh)   // 多入口并发抢答+6s封顶，坏入口不再干等
             ?: return FeedCellResult(emptyList(), recFilterInfos, filterIds, false)
         val data = runCatching { JSONObject(text).optJSONObject("data") }.getOrNull()
             ?: return FeedCellResult(emptyList(), recFilterInfos, filterIds, false)
