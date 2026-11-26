@@ -48,6 +48,13 @@ import urllib.error
 import urllib.request
 import zipfile
 
+# 控制台强制 UTF-8（errors=replace），避免打印含中文/特殊字符的命令行在 GBK 控制台崩溃
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANDROID = os.path.join(ROOT, "android")
 SDK = os.environ.get("ANDROID_HOME") or "D:/AndroidDev/sdk"
