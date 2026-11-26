@@ -193,7 +193,7 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         loading = false
         // 预取后面几部（详情 + 首集档位预热），首屏之后再预热，别在首屏阶段抢。
         launch {
-            kotlinx.coroutines.delay(2_000)
+            kotlinx.coroutines.delay(6_000)
             FeedTrace.log("WARM start")
             val tw = System.currentTimeMillis()
             warmUpcomingFeed(cards, cursor + 1, FEED_WARM_COUNT)
@@ -219,7 +219,7 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
         val have = cards.map { it.seriesId }.toHashSet()
         FeedTrace.log("LM start cur=$cursor size=${cards.size} f=${fIds.size} rec=${recs.size}")
         val t0 = System.currentTimeMillis()
-        val res = runCatching { withContext(Dispatchers.IO) { Api.feedCell(type, fIds, recs) } }.getOrNull()
+        val res = runCatching { kotlinx.coroutines.withTimeout(6_000) { withContext(Dispatchers.IO) { Api.feedCell(type, fIds, recs) } } }.getOrNull()
         val ms = System.currentTimeMillis() - t0
         if (res != null) {
             val add = res.cards.filter { it.seriesId !in have }
@@ -230,8 +230,8 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
             hasMore = res.hasMore && res.cards.isNotEmpty()
             FeedTrace.log("LM done ms=$ms got=${res.cards.size} add=${add.size} newSize=${cards.size} hasMore=$hasMore")
         } else {
-            hasMore = false
-            FeedTrace.log("LM NULL ms=$ms -> hasMore=false")
+            // 超时/失败：保留 hasMore，稍后再试（不要因一次抖动就停掉续推）
+            FeedTrace.log("LM NULL/timeout ms=$ms keepHasMore=$hasMore")
         }
         moreLoading = false
         return res != null && cards.size > have.size
@@ -254,13 +254,15 @@ internal fun FeedPlayerPage(onDetail: (String) -> Unit, onComments: (String) -> 
     LaunchedEffect(tab, loading) {
         if (loading) return@LaunchedEffect
         if (cards.isEmpty() || !hasMore) { FeedTrace.log("FILL skip empty=${cards.isEmpty()} hasMore=$hasMore"); return@LaunchedEffect }
+        kotlinx.coroutines.delay(1_500) // 先让第一部起播，别一进来就抢网络把首帧卡住
         FeedTrace.log("FILL start size=${cards.size} hasMore=$hasMore")
         var guard = 0
-        while (hasMore && cards.size < 24 && guard < 12) {
+        while (hasMore && cards.size < 18 && guard < 4) {
             guard++
             val before = cards.size
             val ok = fillOne()
             if (!ok || cards.size == before) break
+            kotlinx.coroutines.delay(400)
         }
         FeedTrace.log("FILL done size=${cards.size} hasMore=$hasMore")
     }
