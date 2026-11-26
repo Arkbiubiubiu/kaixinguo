@@ -51,3 +51,7 @@ UX-REVIEW.md
 
 # libmpv 二进制（本机构建资产，GPL/LGPL 见 NOTICE）
 android/pad/mpvlibs/
+tools/__pycache__/
+**/__pycache__/
+docs/qa/
+tools/_ref/
