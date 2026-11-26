@@ -419,7 +419,7 @@ fun DetailScreen(seriesId: String, initialTab: Int = 0, onBack: () -> Unit, onPl
             Spacer(Modifier.height(14.dp))
 
             when (tab) {
-                0 -> EpisodeGrid(d?.episodes.orEmpty(), continueIndex) { ep -> onPlay(ep, 0L) }
+                0 -> EpisodeGrid(d?.episodes.orEmpty(), continueIndex) { ep -> onPlay(ep, -1L) }
                 1 -> ReviewsBlock(reviews, seriesId)
                 else -> RelatedBlock(related, loading = !relatedLoaded, onOpenSeries = onOpenSeason)
             }

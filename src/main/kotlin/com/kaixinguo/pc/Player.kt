@@ -570,11 +570,22 @@ fun PlayerScreen(
             runCatching { eng.probe() }
             eng.setVolume(if (muted) 0f else volume)
             eng.setSpeed(speed)
-            // 首次进入这一集：优先用调用方给的位置（历史点进来），其次本地进度
-            // 刷剧（embedded）是预览连播：每一部都从第一秒开始，不接上次进度
-            val resume = if (embedded) 0L
-            else if (index == startIndex && startMs > 0) startMs
-            else PcStore.posOf(ep.vid).takeIf { it > 3_000 } ?: 0L
+            // 起播位置（A/B/C 治本）：
+            // - 显式选集（Detail 传 startMs=-1）→ 一律从头，**不回落 posOf**（否则近尾瞬跳+连播级联）；
+            // - 非首集（自动连播/上一集/下一集，index!=startIndex）→ 一律从 0；
+            // - 首集且带显式秒数（历史页/继续看）→ 用该秒数（正常续播）；
+            // - 首集无显式秒数（首页/找剧等"续播意图"）→ 用 posOf，但**≥95% 时长视为近尾不续播，改 0**。
+            val durMs = runCatching { eng.info?.durationMs ?: 0L }.getOrDefault(0L)
+            val resume = when {
+                embedded -> 0L
+                index != startIndex -> 0L
+                startMs > 0L -> startMs
+                startMs < 0L -> 0L
+                else -> {
+                    val p = PcStore.posOf(ep.vid)
+                    if (p > 3_000L && (durMs <= 0L || p < durMs * 95 / 100)) p else 0L
+                }
+            }
             eng.start(resume)
         }
         eng.onEnded = {
@@ -603,7 +614,8 @@ fun PlayerScreen(
                     loading = false
                 }
                 index < episodes.size -> {
-                    if (PcStore.autoNextEpisode) index += 1
+                    // B②：只有本集确实播过 ≥3s 才自动连播；否则（近尾瞬跳/没真播）不 autoNext，杜绝级联跳过。
+                    if (PcStore.autoNextEpisode && playedThisEpisode >= 3_000L) index += 1
                 }
                 PcStore.deleteAfterFinish -> {
                     // 旧版「看完自动删除」：最后一集播完把这条历史抹掉

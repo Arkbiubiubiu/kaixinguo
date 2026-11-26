@@ -659,10 +659,24 @@ fun PlayerScreen(
                 player.prepare()
                 // 从历史/继续看进来时优先用历史行里的秒数（可能是另一台设备刚报的）；
                 // 同一进程内切集才用本机这一集的续播点。
-                val wantedAt = if (index == startIndex && startMs > 0L) startMs else Store.posOf(ep.vid)
-                val resume = if (feed) 0L else wantedAt.takeIf {
-                    it > 2_000 && (hit.remote.total <= 0 || it < hit.remote.total - 5_000)
+                // 起播定位：显式选集/继续看严格用 startMs（0=从头），**绝不回落 Store.posOf**；
+                // 自动连播/切下一集一律从 0 开始。只有"同集换清晰度"才保留当前进度。
+                val wantedAt = when {
+                    feed -> 0L
+                    index == ps.preparedIndex && ps.preparedVid == ep.vid ->
+                        runCatching { player.currentPosition }.getOrDefault(0L)
+                    index == startIndex -> startMs
+                    else -> 0L
+                }
+                // resume 仅在"时长已知(total>0) 且 明显没到片尾(<total-5s)"时使用；total<=0 一律从头
+                val resume = wantedAt.takeIf {
+                    it > 2_000 && hit.remote.total > 0 && it < hit.remote.total - 5_000
                 } ?: 0L
+                Log.i(
+                    "nextup",
+                    "PLAY hit index=$index startIndex=$startIndex startMs=$startMs wanted=$wantedAt " +
+                        "total=${hit.remote.total} resume=$resume vid=${ep.vid.takeLast(8)}",
+                )
                 if (resume > 0) player.seekTo(resume)
                 player.play()
                 val prev = live
@@ -688,19 +702,18 @@ fun PlayerScreen(
 
         ps.preparing = true
         ps.showSpinner = true
-        // 同一切清晰度要保住播放进度；换集才从头开始
+        // 同一切清晰度要保住播放进度；换集/连播一律从头
         // 刷剧是「预览连播」：每一部都从第一秒开始，不接上次进度
-        val localPos = if (feed) 0L else Store.posOf(ep.vid)
-        val keepAt = if (feed) 0L else if (index == ps.preparedIndex) {
-            runCatching { player.currentPosition }.getOrDefault(0L)
-        } else if (index == startIndex && startMs > 0L) {
-            // 从历史/继续看进来：用历史行里的秒数。它可能是另一台设备刚写的，
-            // 比本机旧档案更新，所以不能再让 localPos 把它压掉。
-            startMs
-        } else {
-            // 换集：回到这一集上次看到的位置（同一进程内看过才有），没有就从头
-            localPos
+        val keepAt = when {
+            feed -> 0L
+            // 同一集换清晰度：保留当前播放位置
+            index == ps.preparedIndex -> runCatching { player.currentPosition }.getOrDefault(0L)
+            // 显式选集/继续看：严格用 startMs（0=从头），**不再回落 Store.posOf 到片尾**
+            index == startIndex -> startMs
+            // 自动连播/切下一集：从 0 开始（已播完的集不该续到片尾再瞬跳）
+            else -> 0L
         }
+        Log.i("nextup", "PLAY miss index=$index startIndex=$startIndex startMs=$startMs keepAt=$keepAt vid=${ep.vid.takeLast(8)}")
         var created: Pair<RemoteVideo, StreamProxy>? = null
         try {
             // 档位表一次拿全（含直链/编码），切清晰度直接用表里的地址，不再请求上游
@@ -780,7 +793,8 @@ fun PlayerScreen(
             player.setPlaybackSpeed(speed)
             player.prepare()
             // 只剩最后 5 秒的「上次位置」没意义，直接从头
-            if (keepAt > 2_000 && (rv.total <= 0 || keepAt < rv.total - 5_000)) player.seekTo(keepAt)
+            // 仅"时长已知(total>0) 且 未到片尾"才续播；total<=0 一律从头（避免时长未知时误续到片尾瞬跳）
+            if (keepAt > 2_000 && rv.total > 0 && keepAt < rv.total - 5_000) player.seekTo(keepAt)
             player.play()
 
             // 新的已经跑起来了，这时才关旧的
