@@ -47,6 +47,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.border
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -65,7 +68,7 @@ import kotlinx.coroutines.withContext
  * 顶部「← 标题」→ 头部（封面 + 元信息行 + 标签 + 按钮行）→ 备案号 →
  * 简介（两行折叠 + 展开）→ 演职员圆头像 → 「选集 N / 剧评 / 相关推荐 N」三 tab。
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun DetailScreen(
     seriesId: String,
@@ -738,6 +741,43 @@ fun DetailScreen(
                 Text(d.recordNumber, color = RecordDim, fontSize = 12.sp)
             }
 
+            // ---------- 本剧系列：顶部胶囊行（PC 样式；含待上线季 count=0）----------
+            if (seasons.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("本剧系列", color = TextDim, fontSize = 12.sp)
+                    Spacer(Modifier.width(12.dp))
+                    FlowRow(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        seasons.forEach { s ->
+                            val cur = s.seriesId == seriesId
+                            val label = (if (s.index > 0) "第 ${s.index} 季" else s.title) +
+                                (if (s.count > 0) " · ${s.count} 集" else "")
+                            if (cur) {
+                                // 当前季：高亮、不可点、也不作为焦点陷阱（不加 clickable/focusable）
+                                Box(
+                                    Modifier
+                                        .height(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Red.copy(alpha = 0.16f))
+                                        .border(1.dp, Red.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(label, color = Color(0xFFFF6B6D), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
+                            } else {
+                                // 其它季：可点击/可遥控器聚焦 → 进该季详情
+                                TvChip(label, selected = false) { onOpen(s.seriesId) }
+                            }
+                        }
+                    }
+                }
+            }
+
             // ---------- 三 tab：选集 N / 剧评 N / 相关推荐 N ----------
             // **PC 同款：外框容器 + 选中胶囊**（PC 的 TabsList 是 bg-muted 圆角
             // 容器，选中 trigger 更亮一档）。之前误判去掉了外框，特写对比确认
@@ -792,31 +832,9 @@ fun DetailScreen(
                 )
                 else -> {
                     val groups = buildList {
-                        if (seasons.size > 1) {
-                            add(
-                                RelatedGroup(
-                                    "本剧系列 · " + seasons.size + " 季",
-                                    seasons.map { s ->
-                                        SeriesCard(
-                                            seriesId = s.seriesId,
-                                            title = s.title,
-                                            cover = s.cover,
-                                            episodeCount = s.count,
-                                            season = s.index.takeIf { it > 0 }?.toString(),
-                                            fromOther = s.fromOther,
-                                            // 还没上线的季（没有剧集）：标成「待上线」，
-                                            // 这样卡片下面才会出现「预约」按钮。
-                                            // 以前这里恒为 false，未上线的季就只剩一张空卡片，
-                                            // 而同一个季在「相关作品」里却带预约按钮 —— 前言不搭后语。
-                                            upcoming = s.count <= 0,
-                                        )
-                                    },
-                                ),
-                            )
-                        }
                         // 「相关作品」里把本剧各季剔掉：上游推荐位本来就把同一部剧的各季
                         // 一起塞进来，不去重的话两组前几项完全一样，看着像重复了两遍。
-                        // 剔完剩下的才是真正的「同 IP 其它作品」。
+                        // 剔完剩下的才是真正的「同 IP 其它作品」。（本剧系列已移到顶部胶囊行，这里不再加卡片组）
                         val seasonIds = seasons.map { it.seriesId }.toSet()
                         relatedGroups.forEach { g ->
                             val rest = g.items.filter { it.seriesId !in seasonIds }
