@@ -602,7 +602,13 @@ fun PlayerScreen(
                 runCatching { eng.positionMs }.getOrDefault(0L),
                 runCatching { eng.playbackElapsedMs() }.getOrDefault(0L),
             )
-            val finished = dur <= 0L || pos >= dur * 95 / 100
+            // 真播完 = 解码进程自然读到结尾(exit=0) / 时长为0 / 位置到片尾95%。
+            // 单靠“位置≥95%时长”不够：探测时长常比实际内容长，会让“已播完”判成“未播完”→重试重播本集。
+            val finished = eng.lastEndExitCode == 0 || dur <= 0L || pos >= dur * 95 / 100
+            runCatching {
+                java.io.File(System.getProperty("user.home"), "kaixinguo-player-trace.log")
+                    .appendText("${System.currentTimeMillis()}\tEND idx=$index dur=$dur pos=$pos exit=${eng.lastEndExitCode} finished=$finished played=$playedThisEpisode autoNext=${PcStore.autoNextEpisode}\n")
+            }
             when {
                 !finished && !retryUsed -> {
                     // 每集自动重试一次（用户不用动），走 2s/5s/10s 退避，别立刻连续猛重试

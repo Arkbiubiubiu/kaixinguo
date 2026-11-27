@@ -76,6 +76,11 @@ class VideoEngine(private val sourceUrl: String) {
     @Volatile
     private var stopping = false
 
+    /** 本次结束的解码进程退出码：0=自然读到结尾(真播完)；非0=异常中断。供播放器判断“是否该跳下一集”。 */
+    @Volatile
+    var lastEndExitCode: Int = -999
+        private set
+
     /** 本次起播是否已经画出第一帧（冷启动首帧可能很慢，未画出前不按“落后”丢帧）。 */
     @Volatile
     private var firstPainted = false
@@ -254,6 +259,7 @@ class VideoEngine(private val sourceUrl: String) {
                     // 兜底：某集始终产不出任何帧（坏视频轨/解码失败）且解码进程已结束，
                     // 也要触发播完/自动连播，别因为 firstPainted 永远 false 而卡住不动。
                     if (!stopping && queue.isEmpty() && videoProc?.isAlive == false) {
+                        lastEndExitCode = runCatching { videoProc?.exitValue() }.getOrNull() ?: -999
                         playing = false
                         onEnded?.invoke()
                         return
@@ -275,6 +281,7 @@ class VideoEngine(private val sourceUrl: String) {
                     } else if (queue.isEmpty() && videoProc?.isAlive == false) {
                         // 解码进程结束且队列空 → 播完
                         if (!stopping) {
+                            lastEndExitCode = runCatching { videoProc?.exitValue() }.getOrNull() ?: -999
                             playing = false
                             onEnded?.invoke()
                             return
