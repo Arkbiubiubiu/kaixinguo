@@ -81,6 +81,14 @@ class VideoEngine(private val sourceUrl: String) {
     var lastEndExitCode: Int = -999
         private set
 
+    /**
+     * 用户“是否想播放”的意图：起播/继续=true；主动暂停=false。
+     * 为什么不用瞬时的 playing：换集/上一次快进后有一小段“首帧未出、playing 仍为 false”的窗口，
+     * 若快进刚好落在这窗口里，用 playing 会被误当成“本来就暂停”→ 不续播、卡在暂停态（时好时坏）。
+     */
+    @Volatile
+    private var userIntendsPlay = false
+
     /** 本次起播是否已经画出第一帧（冷启动首帧可能很慢，未画出前不按“落后”丢帧）。 */
     @Volatile
     private var firstPainted = false
@@ -131,7 +139,15 @@ class VideoEngine(private val sourceUrl: String) {
 
     // ---------------- 控制 ----------------
 
+    private fun tracePlay(msg: String) {
+        runCatching {
+            java.io.File(System.getProperty("user.home"), "kaixinguo-player-trace.log")
+                .appendText("${System.currentTimeMillis()}\t$msg\n")
+        }
+    }
+
     fun start(atMs: Long = 0L) {
+        userIntendsPlay = true
         scope.launch { playFrom(atMs.coerceAtLeast(0L)) }
     }
 
@@ -176,6 +192,7 @@ class VideoEngine(private val sourceUrl: String) {
     }
 
     fun pause() {
+        userIntendsPlay = false
         if (!playing) return
         pausedAtMs = positionMs
         playing = false
@@ -190,12 +207,15 @@ class VideoEngine(private val sourceUrl: String) {
 
     fun seekTo(ms: Long) {
         val target = ms.coerceIn(0L, maxOf(0L, (info?.durationMs ?: 0L) - 500))
-        val wasPlaying = playing
+        // 用“意图”而非瞬时 playing 判断，避免首帧门控窗口内快进被误判成暂停。
+        val wasPlaying = userIntendsPlay
+        val playingBefore = playing
         stopping = true
         stopProcesses()
         pausedAtMs = target
         positionMs = target
         playing = false
+        tracePlay("SEEK target=$target intendsPlay=$wasPlaying playingBefore=$playingBefore resume=$wasPlaying")
         if (wasPlaying) start(target) else frame = frame
     }
 
@@ -215,6 +235,7 @@ class VideoEngine(private val sourceUrl: String) {
     }
 
     fun release() {
+        userIntendsPlay = false
         stopping = true
         stopProcesses()
         scope.cancel()
